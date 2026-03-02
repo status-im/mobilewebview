@@ -1,0 +1,381 @@
+#include "MobileWebView/mobilewebviewbackend.h"
+#include "mobilewebviewbackend_p.h"
+#include "webchanneltransport.h"
+#include "origin_utils.h"
+
+#include <QUuid>
+#include <QDebug>
+#include <mutex>
+
+// =============================================================================
+// MobileWebViewBackendPrivate - Common implementation
+// =============================================================================
+
+MobileWebViewBackendPrivate::MobileWebViewBackendPrivate(MobileWebViewBackend *q)
+    : q_ptr(q)
+{
+}
+
+MobileWebViewBackendPrivate::~MobileWebViewBackendPrivate()
+{
+}
+
+void MobileWebViewBackendPrivate::setLoading(bool loading)
+{
+    if (m_loading != loading) {
+        m_loading = loading;
+        emit q_ptr->loadingChanged();
+    }
+}
+
+void MobileWebViewBackendPrivate::setLoaded(bool loaded)
+{
+    if (m_loaded != loaded) {
+        m_loaded = loaded;
+        emit q_ptr->loadedChanged();
+    }
+}
+
+void MobileWebViewBackendPrivate::updateUrlState(const QUrl &url)
+{
+    if (m_url != url) {
+        m_url = url;
+        emit q_ptr->urlChanged();
+    }
+}
+
+void MobileWebViewBackendPrivate::updateAllowedOrigins(const QStringList &origins)
+{
+    m_allowedOrigins = origins;
+    
+    if (m_transport) {
+        m_transport->setAllowedOrigins(origins);
+    }
+
+    updateAllowedOriginsImpl(origins);
+}
+
+void MobileWebViewBackendPrivate::setupTransport()
+{
+    if (m_channel && !m_transport) {
+        m_transport = new WebChannelTransport(q_ptr);
+        
+        QString origin = extractOrigin(m_url);
+        if (!origin.isEmpty()) {
+            m_transport->setAllowedOrigins({origin});
+        } else {
+            // If no valid URL yet, allow everything temporarily (will be updated on navigation)
+            m_transport->setAllowedOrigins({QStringLiteral("*")});
+        }
+        
+        // Set invokeKey if bridge is already installed
+        if (m_bridgeInstalled && !m_invokeKey.isEmpty()) {
+            m_transport->setInvokeKey(m_invokeKey);
+        }
+        
+        // Connect sendMessageRequested -> postMessageToJavaScript
+        QObject::connect(m_transport, &WebChannelTransport::sendMessageRequested,
+                        q_ptr, [this](const QString &json) {
+            postMessageToJavaScript(json);
+        });
+        
+        // Connect webMessageReceived -> transport
+        QObject::connect(q_ptr, &MobileWebViewBackend::webMessageReceived,
+                        m_transport, &WebChannelTransport::handleJsEnvelope);
+        
+        // Connect transport to channel
+        m_channel->connectTo(m_transport);
+    }
+}
+
+void MobileWebViewBackendPrivate::ensureBridgeInstalled()
+{
+    if (m_bridgeInstalled) {
+        return;
+    }
+
+    m_invokeKey = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    
+    QString origin = extractOrigin(m_url);
+    QStringList allowedOrigins;
+    if (!origin.isEmpty()) {
+        allowedOrigins = {origin};
+    } else {
+        allowedOrigins = {QStringLiteral("*")};
+    }
+
+    m_bridgeInstalled = installBridgeImpl(
+        m_webChannelNamespace, 
+        allowedOrigins, 
+        m_invokeKey,
+        QString()
+    );
+    
+    if (m_bridgeInstalled) {
+        if (m_transport) {
+            m_transport->setInvokeKey(m_invokeKey);
+        }
+    } else {
+        qWarning() << "MobileWebViewBackend: Failed to install message bridge";
+    }
+}
+
+// =============================================================================
+// MobileWebViewBackend - Public API implementation
+// =============================================================================
+
+MobileWebViewBackend::MobileWebViewBackend(QQuickItem *parent)
+    : QQuickItem(parent)
+    , d_ptr(createPlatformBackend(this))
+{
+#if defined(Q_OS_IOS) || defined(Q_OS_MACOS)
+    static std::once_flag resourcesInitOnce;
+    std::call_once(resourcesInitOnce, []() {
+        Q_INIT_RESOURCE(customwebview);
+    });
+#endif
+    setFlag(ItemHasContents, false);
+}
+
+MobileWebViewBackend::~MobileWebViewBackend()
+{
+}
+
+bool MobileWebViewBackend::loading() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_loading;
+}
+
+bool MobileWebViewBackend::loaded() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_loaded;
+}
+
+QUrl MobileWebViewBackend::url() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_url;
+}
+
+void MobileWebViewBackend::setUrl(const QUrl &url)
+{
+    Q_D(MobileWebViewBackend);
+    if (d->m_url != url) {
+        d->m_url = url;
+        emit urlChanged();
+
+        QString origin = extractOrigin(url);
+        if (!origin.isEmpty()) {
+            updateAllowedOrigins({origin});
+        }
+
+        d->ensureBridgeInstalled();
+        d->loadUrlImpl(url);
+    }
+}
+
+QVariantList MobileWebViewBackend::userScripts() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_userScripts;
+}
+
+void MobileWebViewBackend::setUserScripts(const QVariantList &scripts)
+{
+    Q_D(MobileWebViewBackend);
+    if (d->m_userScripts != scripts) {
+        d->m_userScripts = scripts;
+        emit userScriptsChanged();
+    }
+}
+
+QString MobileWebViewBackend::webChannelNamespace() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_webChannelNamespace;
+}
+
+void MobileWebViewBackend::setWebChannelNamespace(const QString &ns)
+{
+    Q_D(MobileWebViewBackend);
+    if (d->m_webChannelNamespace != ns) {
+        d->m_webChannelNamespace = ns;
+        emit webChannelNamespaceChanged();
+    }
+}
+
+QWebChannel* MobileWebViewBackend::webChannel() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_channel;
+}
+
+void MobileWebViewBackend::setWebChannel(QWebChannel *channel)
+{
+    Q_D(MobileWebViewBackend);
+    if (d->m_channel == channel)
+        return;
+    
+    d->m_channel = channel;
+    
+    // Create transport if needed
+    d->setupTransport();
+    
+    // Ensure bridge is installed when channel is set (handles race condition where setWebChannel is called after loadUrl)
+    if (d->m_channel && !d->m_bridgeInstalled) {
+        d->ensureBridgeInstalled();
+    }
+    
+    emit webChannelChanged();
+}
+
+void MobileWebViewBackend::updateUrlState(const QUrl &url)
+{
+    Q_D(MobileWebViewBackend);
+    d->updateUrlState(url);
+}
+
+void MobileWebViewBackend::updateAllowedOrigins(const QStringList &origins)
+{
+    Q_D(MobileWebViewBackend);
+    d->updateAllowedOrigins(origins);
+}
+
+void MobileWebViewBackend::setLoadingState(bool loading)
+{
+    Q_D(MobileWebViewBackend);
+    d->setLoading(loading);
+}
+
+void MobileWebViewBackend::setLoadedState(bool loaded)
+{
+    Q_D(MobileWebViewBackend);
+    d->setLoaded(loaded);
+}
+
+void MobileWebViewBackend::loadUrl(const QUrl &url)
+{
+    Q_D(MobileWebViewBackend);
+    
+    QString origin = extractOrigin(url);
+    if (!origin.isEmpty()) {
+        updateAllowedOrigins({origin});
+    }
+
+    d->ensureBridgeInstalled();
+    d->loadUrlImpl(url);
+}
+
+void MobileWebViewBackend::loadHtml(const QString &html, const QUrl &baseUrl)
+{
+    Q_D(MobileWebViewBackend);
+    
+    d->ensureBridgeInstalled();
+    d->loadHtmlImpl(html, baseUrl);
+}
+
+void MobileWebViewBackend::goBack()
+{
+    Q_D(MobileWebViewBackend);
+    d->goBackImpl();
+}
+
+void MobileWebViewBackend::goForward()
+{
+    Q_D(MobileWebViewBackend);
+    d->goForwardImpl();
+}
+
+void MobileWebViewBackend::reload()
+{
+    Q_D(MobileWebViewBackend);
+    d->reloadImpl();
+}
+
+void MobileWebViewBackend::stop()
+{
+    Q_D(MobileWebViewBackend);
+    d->stopImpl();
+}
+
+bool MobileWebViewBackend::installMessageBridge(const QString &ns,
+                                                 const QStringList &allowedOrigins,
+                                                 const QString &invokeKey,
+                                                 const QString &webChannelScriptPath)
+{
+    Q_D(MobileWebViewBackend);
+    
+    setWebChannelNamespace(ns);
+    d->m_invokeKey = invokeKey;
+    d->m_allowedOrigins = allowedOrigins;
+
+    d->m_bridgeInstalled = d->installBridgeImpl(ns, allowedOrigins, invokeKey, webChannelScriptPath);
+    
+    if (d->m_bridgeInstalled && d->m_transport) {
+        d->m_transport->setInvokeKey(invokeKey);
+    }
+
+    return d->m_bridgeInstalled;
+}
+
+void MobileWebViewBackend::postMessageToJavaScript(const QString &json)
+{
+    Q_D(MobileWebViewBackend);
+    d->postMessageToJavaScript(json);
+}
+
+void MobileWebViewBackend::runJavaScript(const QString &script)
+{
+    Q_D(MobileWebViewBackend);
+    d->evaluateJavaScript(script);
+}
+
+void MobileWebViewBackend::geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry)
+{
+    QQuickItem::geometryChange(newGeometry, oldGeometry);
+
+    if (newGeometry != oldGeometry) {
+        Q_D(MobileWebViewBackend);
+        d->updateNativeGeometry(newGeometry);
+    }
+}
+
+void MobileWebViewBackend::itemChange(ItemChange change, const ItemChangeData &value)
+{
+    QQuickItem::itemChange(change, value);
+    Q_D(MobileWebViewBackend);
+
+    switch (change) {
+    case ItemSceneChange:
+        if (value.window) {
+            QMetaObject::invokeMethod(this, [this, d]() {
+                d->setupNativeViewImpl();
+                // Trigger geometry sync now that m_nativeViewSetup is true.
+                polish();
+            }, Qt::QueuedConnection);
+        }
+        break;
+
+    case ItemVisibleHasChanged:
+        d->updateNativeVisibility(value.boolValue);
+        if (value.boolValue) {
+            d->updateNativeGeometry(QRectF(0, 0, width(), height()));
+        }
+        break;
+
+    case ItemParentHasChanged:
+        polish();
+        break;
+
+    default:
+        break;
+    }
+}
+
+void MobileWebViewBackend::updatePolish()
+{
+    Q_D(MobileWebViewBackend);
+    d->updateNativeGeometry(QRectF(0, 0, width(), height()));
+}

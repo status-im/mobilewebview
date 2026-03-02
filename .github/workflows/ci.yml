@@ -1,0 +1,76 @@
+name: CMake Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  cmake-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Run Java utility tests
+        run: |
+          mkdir -p build/java-tests
+          javac -d build/java-tests \
+            mobilewebview/android/src/org/mobilewebview/OriginUtils.java \
+            mobilewebview/android/src/org/mobilewebview/BridgeScriptBuilder.java \
+            mobilewebview/android/tests/org/mobilewebview/OriginUtilsTest.java \
+            mobilewebview/android/tests/org/mobilewebview/BridgeScriptBuilderTest.java
+          java -cp build/java-tests org.mobilewebview.OriginUtilsTest
+          java -cp build/java-tests org.mobilewebview.BridgeScriptBuilderTest
+
+      - name: Install Qt and build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            pkg-config \
+            qt6-base-dev \
+            qt6-declarative-dev \
+            qt6-webchannel-dev
+
+      - name: Configure
+        run: cmake -S mobilewebview -B build -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+
+  cmake-tests-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.9.2"
+          modules: "qtwebchannel qtdeclarative"
+
+      - name: Configure
+        run: cmake -S mobilewebview -B build -G Ninja -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
