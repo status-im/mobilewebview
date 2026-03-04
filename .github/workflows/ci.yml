@@ -64,7 +64,7 @@ jobs:
         uses: jurplel/install-qt-action@v4
         with:
           version: "6.9.2"
-          modules: "qtwebchannel qtdeclarative"
+          modules: "qtwebchannel"
 
       - name: Configure
         run: cmake -S mobilewebview -B build -G Ninja -DBUILD_TESTING=ON
