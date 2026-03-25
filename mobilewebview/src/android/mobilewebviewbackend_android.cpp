@@ -39,6 +39,7 @@ public:
     void postMessageToJavaScript(const QString &json) override;
     void setupNativeViewImpl() override;
     void updateAllowedOriginsImpl(const QStringList &origins) override;
+    void updateInteractionEnabled(bool enabled) override;
     
     // JNI helper methods
     void cleanupJni();
@@ -53,6 +54,9 @@ public:
     void onNavigationStarted();
     void onNavigationFinished(const QString &url);
     void onNavigationFailed();
+    void onTitleChanged(const QString &title);
+    void onNavigationStateChanged(bool canGoBack, bool canGoForward);
+    void onNewWindowRequested(const QString &url, bool userInitiated);
     void onJavaScriptResult(const QString &result, const QString &error);
     
 private:
@@ -71,6 +75,7 @@ private:
     jmethodID m_setVisibleMethod = nullptr;
     jmethodID m_destroyMethod = nullptr;
     jmethodID m_updateAllowedOriginsMethod = nullptr;
+    jmethodID m_setInteractionEnabledMethod = nullptr;
     
     bool m_jniInitialized = false;
     QMutex m_jniMutex;  // Protect JNI calls
@@ -131,6 +136,7 @@ bool AndroidWebViewPrivate::initNativeView()
     m_setVisibleMethod = env->GetMethodID(m_webViewClass, "setVisible", "(Z)V");
     m_destroyMethod = env->GetMethodID(m_webViewClass, "destroy", "()V");
     m_updateAllowedOriginsMethod = env->GetMethodID(m_webViewClass, "updateAllowedOrigins", "([Ljava/lang/String;)V");
+    m_setInteractionEnabledMethod = env->GetMethodID(m_webViewClass, "setInteractionEnabled", "(Z)V");
 
     m_jniInitialized = true;
     return true;
@@ -620,6 +626,24 @@ void AndroidWebViewPrivate::updateAllowedOriginsImpl(const QStringList &origins)
     clearJniExceptionIfAny(env);
 }
 
+void AndroidWebViewPrivate::updateInteractionEnabled(bool enabled)
+{
+    QMutexLocker locker(&m_jniMutex);
+
+    if (!m_jniInitialized) {
+        return;
+    }
+
+    QJniEnvironment env;
+    if (!env.isValid() || !m_webViewObject || !m_setInteractionEnabledMethod) {
+        return;
+    }
+
+    env->CallVoidMethod(m_webViewObject, m_setInteractionEnabledMethod,
+                        enabled ? JNI_TRUE : JNI_FALSE);
+    clearJniExceptionIfAny(env);
+}
+
 // Callback handlers
 void AndroidWebViewPrivate::onWebMessageReceived(const QString &message, const QString &origin, bool isMainFrame)
 {
@@ -643,6 +667,22 @@ void AndroidWebViewPrivate::onNavigationFailed()
 {
     setLoading(false);
     setLoaded(false);
+}
+
+void AndroidWebViewPrivate::onTitleChanged(const QString &title)
+{
+    setTitle(title);
+}
+
+void AndroidWebViewPrivate::onNavigationStateChanged(bool canGoBack, bool canGoForward)
+{
+    setCanGoBack(canGoBack);
+    setCanGoForward(canGoForward);
+}
+
+void AndroidWebViewPrivate::onNewWindowRequested(const QString &url, bool userInitiated)
+{
+    q_ptr->emitNewWindowRequested(QUrl(url), userInitiated);
 }
 
 void AndroidWebViewPrivate::onJavaScriptResult(const QString &result, const QString &error)
@@ -747,6 +787,52 @@ Java_org_mobilewebview_MobileWebView_nativeOnJavaScriptResult(JNIEnv *env, jobje
     
     QMetaObject::invokeMethod(backend->q_ptr, [backend, qResult, qError]() {
         backend->onJavaScriptResult(qResult, qError);
+    }, Qt::QueuedConnection);
+}
+
+JNIEXPORT void JNICALL
+Java_org_mobilewebview_MobileWebView_nativeOnTitleChanged(JNIEnv *env, jobject obj,
+                                                          jlong nativePtr, jstring title)
+{
+    if (nativePtr == 0) return;
+
+    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
+    const char *titleChars = env->GetStringUTFChars(title, nullptr);
+    QString qTitle = QString::fromUtf8(titleChars);
+    env->ReleaseStringUTFChars(title, titleChars);
+
+    QMetaObject::invokeMethod(backend->q_ptr, [backend, qTitle]() {
+        backend->onTitleChanged(qTitle);
+    }, Qt::QueuedConnection);
+}
+
+JNIEXPORT void JNICALL
+Java_org_mobilewebview_MobileWebView_nativeOnNavigationStateChanged(JNIEnv *env, jobject obj,
+                                                                    jlong nativePtr, jboolean canGoBack,
+                                                                    jboolean canGoForward)
+{
+    if (nativePtr == 0) return;
+
+    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
+    QMetaObject::invokeMethod(backend->q_ptr, [backend, canGoBack, canGoForward]() {
+        backend->onNavigationStateChanged(canGoBack == JNI_TRUE, canGoForward == JNI_TRUE);
+    }, Qt::QueuedConnection);
+}
+
+JNIEXPORT void JNICALL
+Java_org_mobilewebview_MobileWebView_nativeOnNewWindowRequested(JNIEnv *env, jobject obj,
+                                                                jlong nativePtr, jstring url,
+                                                                jboolean userInitiated)
+{
+    if (nativePtr == 0) return;
+
+    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
+    const char *urlChars = env->GetStringUTFChars(url, nullptr);
+    QString qUrl = QString::fromUtf8(urlChars);
+    env->ReleaseStringUTFChars(url, urlChars);
+
+    QMetaObject::invokeMethod(backend->q_ptr, [backend, qUrl, userInitiated]() {
+        backend->onNewWindowRequested(qUrl, userInitiated == JNI_TRUE);
     }, Qt::QueuedConnection);
 }
 

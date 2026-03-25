@@ -10,8 +10,11 @@ Rectangle {
     border.width: 1
 
     property string address: "https://opensea.io"
+    property string pageTitle: ""
     property int clickCount: 0
     property bool loading: false
+    property bool canGoBack: false
+    property bool canGoForward: false
 
     signal backRequested()
     signal forwardRequested()
@@ -21,6 +24,8 @@ Rectangle {
     signal incrementRequested()
     signal decrementRequested()
     signal jsPopupRequested()
+
+    readonly property bool hasInputFocus: addressInput.activeFocus
 
     ColumnLayout {
         id: controlsColumn
@@ -37,6 +42,7 @@ Rectangle {
             Button {
                 text: "<"
                 Layout.preferredWidth: 52
+                enabled: root.canGoBack
                 onClicked: root.backRequested()
             }
             Button {
@@ -52,8 +58,16 @@ Rectangle {
             Button {
                 text: ">"
                 Layout.preferredWidth: 52
+                enabled: root.canGoForward
                 onClicked: root.forwardRequested()
             }
+        }
+
+        Label {
+            Layout.fillWidth: true
+            color: "#202020"
+            elide: Text.ElideRight
+            text: root.pageTitle.length > 0 ? root.pageTitle : "(no title)"
         }
 
         RowLayout {

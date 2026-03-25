@@ -36,6 +36,30 @@ void MobileWebViewBackendPrivate::setLoaded(bool loaded)
     }
 }
 
+void MobileWebViewBackendPrivate::setTitle(const QString &title)
+{
+    if (m_title != title) {
+        m_title = title;
+        emit q_ptr->titleChanged();
+    }
+}
+
+void MobileWebViewBackendPrivate::setCanGoBack(bool canGoBack)
+{
+    if (m_canGoBack != canGoBack) {
+        m_canGoBack = canGoBack;
+        emit q_ptr->canGoBackChanged();
+    }
+}
+
+void MobileWebViewBackendPrivate::setCanGoForward(bool canGoForward)
+{
+    if (m_canGoForward != canGoForward) {
+        m_canGoForward = canGoForward;
+        emit q_ptr->canGoForwardChanged();
+    }
+}
+
 void MobileWebViewBackendPrivate::updateUrlState(const QUrl &url)
 {
     if (m_url != url) {
@@ -159,6 +183,24 @@ QUrl MobileWebViewBackend::url() const
     return d->m_url;
 }
 
+QString MobileWebViewBackend::title() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_title;
+}
+
+bool MobileWebViewBackend::canGoBack() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_canGoBack;
+}
+
+bool MobileWebViewBackend::canGoForward() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_canGoForward;
+}
+
 void MobileWebViewBackend::setUrl(const QUrl &url)
 {
     Q_D(MobileWebViewBackend);
@@ -253,6 +295,45 @@ void MobileWebViewBackend::setLoadedState(bool loaded)
 {
     Q_D(MobileWebViewBackend);
     d->setLoaded(loaded);
+}
+
+void MobileWebViewBackend::setTitle(const QString &title)
+{
+    Q_D(MobileWebViewBackend);
+    d->setTitle(title);
+}
+
+void MobileWebViewBackend::setCanGoBack(bool canGoBack)
+{
+    Q_D(MobileWebViewBackend);
+    d->setCanGoBack(canGoBack);
+}
+
+void MobileWebViewBackend::setCanGoForward(bool canGoForward)
+{
+    Q_D(MobileWebViewBackend);
+    d->setCanGoForward(canGoForward);
+}
+
+void MobileWebViewBackend::emitNewWindowRequested(const QUrl &url, bool userInitiated)
+{
+    emit newWindowRequested(url, userInitiated);
+}
+
+bool MobileWebViewBackend::interactionEnabled() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_interactionEnabled;
+}
+
+void MobileWebViewBackend::setInteractionEnabled(bool enabled)
+{
+    Q_D(MobileWebViewBackend);
+    if (d->m_interactionEnabled != enabled) {
+        d->m_interactionEnabled = enabled;
+        d->updateInteractionEnabled(enabled);
+        emit interactionEnabledChanged();
+    }
 }
 
 void MobileWebViewBackend::loadUrl(const QUrl &url)

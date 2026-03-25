@@ -323,6 +323,15 @@ public class MobileWebView {
         runOnMainThread(() -> mWebView.setVisibility(visible ? View.VISIBLE : View.GONE));
     }
 
+    public void setInteractionEnabled(boolean enabled) {
+        runOnMainThread(() -> {
+            if (mWebView != null) {
+                mWebView.setFocusable(enabled);
+                mWebView.setFocusableInTouchMode(enabled);
+            }
+        });
+    }
+
     /**
      * Destroy WebView and cleanup
      */
@@ -392,6 +401,7 @@ public class MobileWebView {
             mCurrentMainFrameOrigin = OriginUtils.extractOrigin(url);
             mBridgeInjectedForCurrentNavigation = false;
             safeNativeOnNavigationStarted();
+            safeNativeOnNavigationStateChanged(view.canGoBack(), view.canGoForward());
 
             // Attempt bridge injection as early as possible for this navigation.
             if (mBridgeInstalled) {
@@ -418,6 +428,7 @@ public class MobileWebView {
                 injectBridgeScriptsOnce();
             }
             safeNativeOnNavigationFinished(url);
+            safeNativeOnNavigationStateChanged(view.canGoBack(), view.canGoForward());
         }
 
         @Override
@@ -440,6 +451,24 @@ public class MobileWebView {
      * WebChromeClient for console messages
      */
     private class MobileWebChromeClient extends WebChromeClient {
+        @Override
+        public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, android.os.Message resultMsg) {
+            WebView.HitTestResult hitTestResult = view.getHitTestResult();
+            String requestedUrl = hitTestResult != null ? hitTestResult.getExtra() : null;
+
+            if (requestedUrl != null && !requestedUrl.isEmpty()) {
+                safeNativeOnNewWindowRequested(requestedUrl, isUserGesture);
+                return false;
+            }
+
+            return false;
+        }
+
+        @Override
+        public void onReceivedTitle(WebView view, String title) {
+            safeNativeOnTitleChanged(title != null ? title : "");
+        }
+
         @Override
         public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
             Log.d(TAG, "Console [" + consoleMessage.messageLevel() + "]: " +
@@ -536,6 +565,27 @@ public class MobileWebView {
         }
     }
 
+    private void safeNativeOnTitleChanged(String title) {
+        long ptr = mNativePtr;
+        if (ptr != 0) {
+            nativeOnTitleChanged(ptr, title);
+        }
+    }
+
+    private void safeNativeOnNavigationStateChanged(boolean canGoBack, boolean canGoForward) {
+        long ptr = mNativePtr;
+        if (ptr != 0) {
+            nativeOnNavigationStateChanged(ptr, canGoBack, canGoForward);
+        }
+    }
+
+    private void safeNativeOnNewWindowRequested(String url, boolean userInitiated) {
+        long ptr = mNativePtr;
+        if (ptr != 0) {
+            nativeOnNewWindowRequested(ptr, url, userInitiated);
+        }
+    }
+
     // Native callback methods (implemented in C++)
     private native void nativeOnWebMessageReceived(long nativePtr, String message,
                                                    String origin, boolean isMainFrame);
@@ -543,4 +593,7 @@ public class MobileWebView {
     private native void nativeOnNavigationFinished(long nativePtr, String url);
     private native void nativeOnNavigationFailed(long nativePtr);
     private native void nativeOnJavaScriptResult(long nativePtr, String result, String error);
+    private native void nativeOnTitleChanged(long nativePtr, String title);
+    private native void nativeOnNavigationStateChanged(long nativePtr, boolean canGoBack, boolean canGoForward);
+    private native void nativeOnNewWindowRequested(long nativePtr, String url, boolean userInitiated);
 }

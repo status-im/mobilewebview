@@ -16,11 +16,15 @@ Window {
         spacing: 0
 
         TopBar {
+            id: topBar
             Layout.fillWidth: true
             Layout.preferredHeight: implicitHeight
             address: testWidget.currentUrlText.length > 0 ? testWidget.currentUrlText : "https://opensea.io"
+            pageTitle: testWidget.pageTitle
             clickCount: testWidget.clickCount
             loading: testWidget.loading
+            canGoBack: testWidget.canGoBack
+            canGoForward: testWidget.canGoForward
             onBackRequested: testWidget.webView.goBack()
             onForwardRequested: testWidget.webView.goForward()
             onReloadRequested: testWidget.webView.reload()
@@ -37,6 +41,12 @@ Window {
             id: testWidget
             Layout.fillWidth: true
             Layout.fillHeight: true
+
+            Binding {
+                target: testWidget.webView
+                property: "interactionEnabled"
+                value: !topBar.hasInputFocus
+            }
             onLogMessage: function(message) {
                 statusLabel.text = message
             }

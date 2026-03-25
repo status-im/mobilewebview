@@ -33,6 +33,7 @@ public:
     virtual void postMessageToJavaScript(const QString &json) = 0;
     virtual void setupNativeViewImpl() = 0;
     virtual void updateAllowedOriginsImpl(const QStringList &origins) = 0;
+    virtual void updateInteractionEnabled(bool enabled) = 0;
     
     // Common state shared between platforms
     MobileWebViewBackend *q_ptr;
@@ -40,7 +41,11 @@ public:
     bool m_loaded = false;
     bool m_nativeViewSetup = false;
     bool m_bridgeInstalled = false;
+    bool m_interactionEnabled = true;
     QUrl m_url;
+    QString m_title;
+    bool m_canGoBack = false;
+    bool m_canGoForward = false;
     QVariantList m_userScripts;
     QString m_webChannelNamespace = QStringLiteral("qt");
     QString m_invokeKey;
@@ -51,6 +56,9 @@ public:
     // Common methods (implemented in mobilewebviewbackend.cpp)
     void setLoading(bool loading);
     void setLoaded(bool loaded);
+    void setTitle(const QString &title);
+    void setCanGoBack(bool canGoBack);
+    void setCanGoForward(bool canGoForward);
     void updateUrlState(const QUrl &url);
     void updateAllowedOrigins(const QStringList &origins);
     void ensureBridgeInstalled();

@@ -13,6 +13,9 @@ Item {
     readonly property string lastMessage: testBridge.lastMessage
     readonly property bool loading: webView.loading
     readonly property string currentUrlText: webView.url.toString()
+    readonly property string pageTitle: webView.title
+    readonly property bool canGoBack: webView.canGoBack
+    readonly property bool canGoForward: webView.canGoForward
 
     signal logMessage(string message)
 
@@ -167,6 +170,11 @@ Item {
             var hasResult = textResult.length > 0 && textResult !== "null" && textResult !== "undefined"
             if (hasError || hasResult)
                 root.logMessage("javaScriptResult result=" + result + " error=" + error)
+        }
+        function onNewWindowRequested(url, userInitiated) {
+            root.logMessage("newWindowRequested url=" + url + " userInitiated=" + userInitiated)
+            if (url && String(url).length > 0)
+                webView.loadUrl(url)
         }
     }
 }

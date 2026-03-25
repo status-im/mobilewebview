@@ -23,6 +23,83 @@
 
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
 
+@interface WebViewStateObserver : NSObject
+@property (nonatomic, assign) MobileWebViewBackend *owner;
+@end
+
+@implementation WebViewStateObserver
+
+- (void)observeValueForKeyPath:(NSString *)keyPath
+                      ofObject:(id)object
+                        change:(NSDictionary<NSKeyValueChangeKey, id> *)change
+                       context:(void *)context
+{
+    Q_UNUSED(change)
+    Q_UNUSED(context)
+
+    MobileWebViewBackend *backend = self.owner;
+    WKWebView *webView = [object isKindOfClass:[WKWebView class]] ? (WKWebView *)object : nil;
+    if (!backend || !webView) {
+        return;
+    }
+
+    if ([keyPath isEqualToString:@"title"]) {
+        QString title = QString::fromNSString(webView.title ?: @"");
+        QMetaObject::invokeMethod(backend, [backend, title]() {
+            backend->setTitle(title);
+        }, Qt::QueuedConnection);
+        return;
+    }
+
+    if ([keyPath isEqualToString:@"canGoBack"]) {
+        const bool canGoBack = webView.canGoBack;
+        QMetaObject::invokeMethod(backend, [backend, canGoBack]() {
+            backend->setCanGoBack(canGoBack);
+        }, Qt::QueuedConnection);
+        return;
+    }
+
+    if ([keyPath isEqualToString:@"canGoForward"]) {
+        const bool canGoForward = webView.canGoForward;
+        QMetaObject::invokeMethod(backend, [backend, canGoForward]() {
+            backend->setCanGoForward(canGoForward);
+        }, Qt::QueuedConnection);
+        return;
+    }
+
+    [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
+}
+
+@end
+
+@interface WebViewUiDelegate : NSObject <WKUIDelegate>
+@property (nonatomic, assign) MobileWebViewBackend *owner;
+@end
+
+@implementation WebViewUiDelegate
+
+- (WKWebView *)webView:(WKWebView *)webView
+createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration
+ forNavigationAction:(WKNavigationAction *)navigationAction
+      windowFeatures:(WKWindowFeatures *)windowFeatures
+{
+    Q_UNUSED(webView)
+    Q_UNUSED(configuration)
+    Q_UNUSED(windowFeatures)
+
+    MobileWebViewBackend *backend = self.owner;
+    NSURL *requestedUrl = navigationAction.request.URL;
+    if (backend && requestedUrl) {
+        const bool userInitiated = navigationAction.navigationType == WKNavigationTypeLinkActivated;
+        backend->emitNewWindowRequested(QUrl::fromNSURL(requestedUrl), userInitiated);
+    }
+
+    // Returning nil blocks native popup creation. QML handles opening in a new tab.
+    return nil;
+}
+
+@end
+
 // =============================================================================
 // DarwinWebViewPrivate - Darwin-specific implementation
 // =============================================================================
@@ -49,10 +126,13 @@ public:
     void postMessageToJavaScript(const QString &json) override;
     void setupNativeViewImpl() override;
     void updateAllowedOriginsImpl(const QStringList &origins) override;
+    void updateInteractionEnabled(bool enabled) override;
     
 private:
     WKWebView *m_webView = nullptr;
     NavigationDelegate *m_navigationDelegate = nullptr;
+    WebViewUiDelegate *m_uiDelegate = nullptr;
+    WebViewStateObserver *m_stateObserver = nullptr;
     UserScriptsManager *m_userScriptsManager = nullptr;
     void *m_hostView = nullptr;
 };
@@ -68,6 +148,21 @@ DarwinWebViewPrivate::~DarwinWebViewPrivate()
     if (m_navigationDelegate) {
         m_navigationDelegate.owner = nullptr;
     }
+    if (m_uiDelegate) {
+        m_uiDelegate.owner = nullptr;
+    }
+
+    if (m_webView && m_stateObserver) {
+        WKWebView *webView = m_webView;
+        WebViewStateObserver *observer = m_stateObserver;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            @try { [webView removeObserver:observer forKeyPath:@"title"]; } @catch (NSException *) {}
+            @try { [webView removeObserver:observer forKeyPath:@"canGoBack"]; } @catch (NSException *) {}
+            @try { [webView removeObserver:observer forKeyPath:@"canGoForward"]; } @catch (NSException *) {}
+            [observer release];
+        });
+        m_stateObserver = nullptr;
+    }
 
     delete m_userScriptsManager;
     m_userScriptsManager = nullptr;
@@ -75,16 +170,20 @@ DarwinWebViewPrivate::~DarwinWebViewPrivate()
     if (m_webView) {
         WKWebView *webView = m_webView;
         NavigationDelegate *delegate = m_navigationDelegate;
+        WebViewUiDelegate *uiDelegate = m_uiDelegate;
 
         m_webView = nullptr;
         m_navigationDelegate = nullptr;
+        m_uiDelegate = nullptr;
 
         dispatch_async(dispatch_get_main_queue(), ^{
             [webView stopLoading];
             [webView removeFromSuperview];
             webView.navigationDelegate = nil;
+            webView.UIDelegate = nil;
             [webView release];
             [delegate release];
+            [uiDelegate release];
         });
     }
 }
@@ -101,6 +200,25 @@ bool DarwinWebViewPrivate::initNativeView()
     m_navigationDelegate = [[NavigationDelegate alloc] init];
     m_navigationDelegate.owner = q_ptr;
     m_webView.navigationDelegate = m_navigationDelegate;
+
+    m_uiDelegate = [[WebViewUiDelegate alloc] init];
+    m_uiDelegate.owner = q_ptr;
+    m_webView.UIDelegate = m_uiDelegate;
+
+    m_stateObserver = [[WebViewStateObserver alloc] init];
+    m_stateObserver.owner = q_ptr;
+    [m_webView addObserver:m_stateObserver
+                forKeyPath:@"title"
+                   options:NSKeyValueObservingOptionNew
+                   context:nil];
+    [m_webView addObserver:m_stateObserver
+                forKeyPath:@"canGoBack"
+                   options:NSKeyValueObservingOptionNew
+                   context:nil];
+    [m_webView addObserver:m_stateObserver
+                forKeyPath:@"canGoForward"
+                   options:NSKeyValueObservingOptionNew
+                   context:nil];
 
     m_userScriptsManager = new UserScriptsManager(m_webView, q_ptr);
 
@@ -333,6 +451,38 @@ void DarwinWebViewPrivate::updateAllowedOriginsImpl(const QStringList &origins)
     }
 }
 
+void DarwinWebViewPrivate::updateInteractionEnabled(bool enabled)
+{
+    if (!m_webView) {
+        return;
+    }
+
+    WKWebView *webView = m_webView;
+    runOnMainThread(^{
+#ifdef Q_OS_IOS
+        webView.userInteractionEnabled = enabled;
+        if (!enabled) {
+            [webView endEditing:YES];
+            [webView resignFirstResponder];
+            for (UIView *subview in webView.scrollView.subviews) {
+                if ([subview canBecomeFirstResponder]) {
+                    [subview resignFirstResponder];
+                    subview.userInteractionEnabled = NO;
+                }
+            }
+        } else {
+            for (UIView *subview in webView.scrollView.subviews) {
+                subview.userInteractionEnabled = YES;
+            }
+        }
+#else
+        if (!enabled) {
+            [webView.window makeFirstResponder:nil];
+        }
+#endif
+    });
+}
+
 void DarwinWebViewPrivate::setupNativeViewImpl()
 {
     if (!m_webView) {
@@ -366,6 +516,21 @@ void DarwinWebViewPrivate::setupNativeViewImpl()
     WKWebView *webView = m_webView;
     bool wasSetup = m_nativeViewSetup;
     m_nativeViewSetup = true;
+    MobileWebViewBackend *backend = q_ptr;
+
+    // Sync initial state after backend is fully constructed.
+    runOnMainThread(^{
+        if (!backend || !webView)
+            return;
+        const QString title = QString::fromNSString(webView.title ?: @"");
+        const bool canGoBack = webView.canGoBack;
+        const bool canGoForward = webView.canGoForward;
+        QMetaObject::invokeMethod(backend, [backend, title, canGoBack, canGoForward]() {
+            backend->setTitle(title);
+            backend->setCanGoBack(canGoBack);
+            backend->setCanGoForward(canGoForward);
+        }, Qt::QueuedConnection);
+    });
 
     // Snapshot geometry now (on Qt thread) before jumping to main thread.
     QPointF scenePos = q_ptr->mapToScene(QPointF(0, 0));

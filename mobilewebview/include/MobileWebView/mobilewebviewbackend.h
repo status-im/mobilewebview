@@ -19,9 +19,13 @@ class MobileWebViewBackend : public QQuickItem
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     Q_PROPERTY(bool loaded READ loaded NOTIFY loadedChanged)
     Q_PROPERTY(QUrl url READ url WRITE setUrl NOTIFY urlChanged)
+    Q_PROPERTY(QString title READ title NOTIFY titleChanged)
+    Q_PROPERTY(bool canGoBack READ canGoBack NOTIFY canGoBackChanged)
+    Q_PROPERTY(bool canGoForward READ canGoForward NOTIFY canGoForwardChanged)
     Q_PROPERTY(QVariantList userScripts READ userScripts WRITE setUserScripts NOTIFY userScriptsChanged)
     Q_PROPERTY(QString webChannelNamespace READ webChannelNamespace WRITE setWebChannelNamespace NOTIFY webChannelNamespaceChanged)
     Q_PROPERTY(QWebChannel* webChannel READ webChannel WRITE setWebChannel NOTIFY webChannelChanged)
+    Q_PROPERTY(bool interactionEnabled READ interactionEnabled WRITE setInteractionEnabled NOTIFY interactionEnabledChanged)
 
 public:
     explicit MobileWebViewBackend(QQuickItem *parent = nullptr);
@@ -31,6 +35,9 @@ public:
     bool loading() const;
     bool loaded() const;
     QUrl url() const;
+    QString title() const;
+    bool canGoBack() const;
+    bool canGoForward() const;
     void setUrl(const QUrl &url);
     QVariantList userScripts() const;
     void setUserScripts(const QVariantList &scripts);
@@ -38,12 +45,18 @@ public:
     void setWebChannelNamespace(const QString &ns);
     QWebChannel* webChannel() const;
     void setWebChannel(QWebChannel* channel);
+    bool interactionEnabled() const;
+    void setInteractionEnabled(bool enabled);
 
     // Internal methods (used by private implementation and platform delegates)
     void updateUrlState(const QUrl &url);
     void updateAllowedOrigins(const QStringList &origins);
     void setLoadingState(bool loading);
     void setLoadedState(bool loaded);
+    void setTitle(const QString &title);
+    void setCanGoBack(bool canGoBack);
+    void setCanGoForward(bool canGoForward);
+    void emitNewWindowRequested(const QUrl &url, bool userInitiated);
 
 public slots:
     void loadUrl(const QUrl &url);
@@ -69,12 +82,17 @@ signals:
     void loadingChanged();
     void loadedChanged();
     void urlChanged();
+    void titleChanged();
+    void canGoBackChanged();
+    void canGoForwardChanged();
     void userScriptsChanged();
     void webChannelNamespaceChanged();
     void webChannelChanged();
+    void interactionEnabledChanged();
 
     // Emitted when a message is received from JavaScript
     void webMessageReceived(const QString &message, const QString &origin, bool isMainFrame);
+    void newWindowRequested(const QUrl &url, bool userInitiated);
 
     // Emitted when JavaScript execution completes
     void javaScriptResult(const QVariant &result, const QString &error);
