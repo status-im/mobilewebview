@@ -42,6 +42,12 @@ public:
     void updateAllowedOriginsImpl(const QStringList &origins) override;
     void updateInteractionEnabled(bool enabled) override;
     void setZoomFactorImpl(qreal factor) override;
+    void findTextImpl(const QString &text, int flags) override;
+    void stopFindImpl() override;
+    bool findSupportedImpl() const override;
+    bool hasNativeFindPanelImpl() const override;
+    void showFindPanelImpl() override;
+    void hideFindPanelImpl() override;
     
     // JNI helper methods
     void cleanupJni();
@@ -62,6 +68,7 @@ public:
     void onJavaScriptResult(const QString &result, const QString &error);
     void onLoadProgressChanged(int progress);
     void onFaviconReceived(const QString &faviconUrl);
+    void onFindResultChanged(int activeMatchIndex, int matchCount);
     
 private:
     jobject m_webViewObject = nullptr;  // Global reference to Java MobileWebView
@@ -82,6 +89,8 @@ private:
     jmethodID m_setInteractionEnabledMethod = nullptr;
     jmethodID m_clearHistoryMethod = nullptr;
     jmethodID m_setZoomFactorMethod = nullptr;
+    jmethodID m_findTextMethod = nullptr;
+    jmethodID m_stopFindMethod = nullptr;
     
     bool m_jniInitialized = false;
     QMutex m_jniMutex;  // Protect JNI calls
@@ -145,6 +154,8 @@ bool AndroidWebViewPrivate::initNativeView()
     m_setInteractionEnabledMethod = env->GetMethodID(m_webViewClass, "setInteractionEnabled", "(Z)V");
     m_clearHistoryMethod = env->GetMethodID(m_webViewClass, "clearHistory", "()V");
     m_setZoomFactorMethod = env->GetMethodID(m_webViewClass, "setZoomFactor", "(F)V");
+    m_findTextMethod = env->GetMethodID(m_webViewClass, "findText", "(Ljava/lang/String;I)V");
+    m_stopFindMethod = env->GetMethodID(m_webViewClass, "stopFind", "()V");
 
     m_jniInitialized = true;
     return true;
@@ -675,6 +686,55 @@ void AndroidWebViewPrivate::setZoomFactorImpl(qreal factor)
     clearJniExceptionIfAny(env);
 }
 
+void AndroidWebViewPrivate::findTextImpl(const QString &text, int flags)
+{
+    QMutexLocker locker(&m_jniMutex);
+
+    if (!m_jniInitialized) {
+        return;
+    }
+
+    QJniEnvironment env;
+    if (!env.isValid() || !m_webViewObject || !m_findTextMethod) {
+        return;
+    }
+
+    jstring jText = env->NewStringUTF(text.toUtf8().constData());
+    env->CallVoidMethod(m_webViewObject, m_findTextMethod, jText, static_cast<jint>(flags));
+    env->DeleteLocalRef(jText);
+    clearJniExceptionIfAny(env);
+}
+
+void AndroidWebViewPrivate::stopFindImpl()
+{
+    callSimpleVoidMethod(m_stopFindMethod);
+}
+
+bool AndroidWebViewPrivate::findSupportedImpl() const
+{
+    return true;
+}
+
+bool AndroidWebViewPrivate::hasNativeFindPanelImpl() const
+{
+    return false;
+}
+
+void AndroidWebViewPrivate::showFindPanelImpl()
+{
+    // No-op on Android: QML find panel is used instead
+}
+
+void AndroidWebViewPrivate::hideFindPanelImpl()
+{
+    // No-op on Android: QML find panel is used instead
+}
+
+void AndroidWebViewPrivate::onFindResultChanged(int activeMatchIndex, int matchCount)
+{
+    emit q_ptr->findTextResult(activeMatchIndex, matchCount);
+}
+
 // Callback handlers
 void AndroidWebViewPrivate::onWebMessageReceived(const QString &message, const QString &origin, bool isMainFrame)
 {
@@ -905,6 +965,21 @@ Java_org_mobilewebview_MobileWebView_nativeOnFaviconReceived(JNIEnv *env, jobjec
 
     QMetaObject::invokeMethod(backend->q_ptr, [backend, qUrl]() {
         backend->onFaviconReceived(qUrl);
+    }, Qt::QueuedConnection);
+}
+
+JNIEXPORT void JNICALL
+Java_org_mobilewebview_MobileWebView_nativeOnFindResultChanged(JNIEnv *env, jobject obj,
+                                                                jlong nativePtr,
+                                                                jint activeMatchIndex,
+                                                                jint matchCount)
+{
+    if (nativePtr == 0) return;
+
+    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
+    QMetaObject::invokeMethod(backend->q_ptr, [backend, activeMatchIndex, matchCount]() {
+        backend->onFindResultChanged(static_cast<int>(activeMatchIndex),
+                                     static_cast<int>(matchCount));
     }, Qt::QueuedConnection);
 }
 

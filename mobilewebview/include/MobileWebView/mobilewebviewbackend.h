@@ -29,6 +29,8 @@ class MobileWebViewBackend : public QQuickItem
     Q_PROPERTY(int loadProgress READ loadProgress NOTIFY loadProgressChanged)
     Q_PROPERTY(QString favicon READ favicon NOTIFY faviconChanged)
     Q_PROPERTY(qreal zoomFactor READ zoomFactor WRITE setZoomFactor NOTIFY zoomFactorChanged)
+    Q_PROPERTY(bool findSupported READ findSupported CONSTANT)
+    Q_PROPERTY(bool hasNativeFindPanel READ hasNativeFindPanel CONSTANT)
 
 public:
     explicit MobileWebViewBackend(QQuickItem *parent = nullptr);
@@ -54,6 +56,8 @@ public:
     QString favicon() const;
     qreal zoomFactor() const;
     void setZoomFactor(qreal factor);
+    bool findSupported() const;
+    bool hasNativeFindPanel() const;
 
     // Internal methods (used by private implementation and platform delegates)
     void updateUrlState(const QUrl &url);
@@ -88,6 +92,16 @@ public slots:
     // Execute JavaScript code in the web view
     void runJavaScript(const QString &script);
 
+    // Find text in the page; flags: 0 = forward, 1 = backwards, 2 = case-sensitive
+    void findText(const QString &text, int flags = 0);
+
+    // Stop an active find session and clear highlights
+    void stopFind();
+
+    // Show/hide the platform's native find-in-page panel when available.
+    void showFindPanel();
+    void hideFindPanel();
+
 signals:
     void loadingChanged();
     void loadedChanged();
@@ -109,6 +123,11 @@ signals:
 
     // Emitted when JavaScript execution completes
     void javaScriptResult(const QVariant &result, const QString &error);
+
+    // Emitted when a find-in-page result is available
+    // activeMatchIndex: 0-based index of the current match (-1 if none)
+    // matchCount: total number of matches (0 if none / search cleared)
+    void findTextResult(int activeMatchIndex, int matchCount);
 
 protected:
     void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;

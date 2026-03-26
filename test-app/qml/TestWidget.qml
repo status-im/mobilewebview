@@ -20,6 +20,10 @@ Item {
     readonly property string favicon: webView.favicon
     readonly property real zoomFactor: webView.zoomFactor
 
+    // Find-in-page state (updated by findTextResult signal)
+    property int findActiveMatch: -1
+    property int findMatchCount: 0
+
     signal logMessage(string message)
 
     QtObject {
@@ -147,6 +151,14 @@ Item {
         testBridge.resetCounter()
     }
 
+    function findText(text, flags) {
+        webView.findText(text, flags)
+    }
+
+    function stopFind() {
+        webView.stopFind()
+    }
+
     MobileWebViewBackend {
         id: webView
         anchors.fill: parent
@@ -178,6 +190,11 @@ Item {
             root.logMessage("newWindowRequested url=" + url + " userInitiated=" + userInitiated)
             if (url && String(url).length > 0)
                 webView.loadUrl(url)
+        }
+        function onFindTextResult(activeMatchIndex, matchCount) {
+            root.findActiveMatch = activeMatchIndex
+            root.findMatchCount = matchCount
+            root.logMessage("findTextResult active=" + activeMatchIndex + " total=" + matchCount)
         }
     }
 }

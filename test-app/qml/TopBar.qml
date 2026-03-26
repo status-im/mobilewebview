@@ -19,6 +19,10 @@ Rectangle {
     property string favicon: ""
     property real zoomFactor: 1.0
 
+    // Find-in-page state (set by parent via findTextResult)
+    property int findActiveMatch: -1   // -1 = no match / session closed
+    property int findMatchCount: 0
+
     signal backRequested()
     signal forwardRequested()
     signal reloadRequested()
@@ -32,7 +36,43 @@ Rectangle {
     signal zoomOutRequested()
     signal zoomResetRequested()
 
+    // Find-in-page signals
+    signal findRequested(string text, int flags)
+    signal findNextRequested()
+    signal findPreviousRequested()
+    signal stopFindRequested()
+    signal showFindPanelRequested()
+    signal hideFindPanelRequested()
+
+    // Keep WebView interactive while using find-in-page so WKWebView selection highlight stays visible.
     readonly property bool hasInputFocus: addressInput.activeFocus
+    readonly property string findText: findInput.text
+
+    // Internal state
+    property bool findBarVisible: false
+
+    // Find capabilities are provided by backend to avoid platform-specific checks in QML.
+    property bool hasNativeFindPanel: false
+    property bool findSupported: true
+
+    function openFind() {
+        if (!hasNativeFindPanel) {
+            findBarVisible = true
+            findInput.forceActiveFocus()
+            findInput.selectAll()
+        } else {
+            root.showFindPanelRequested()
+        }
+    }
+
+    function closeFind() {
+        if (!hasNativeFindPanel) {
+            findBarVisible = false
+            root.stopFindRequested()
+        } else {
+            root.hideFindPanelRequested()
+        }
+    }
 
     ColumnLayout {
         id: controlsColumn
@@ -73,6 +113,13 @@ Rectangle {
                 text: "Hist✕"
                 Layout.preferredWidth: 64
                 onClicked: root.clearHistoryRequested()
+            }
+            Button {
+                text: "🔍"
+                Layout.preferredWidth: 52
+                visible: root.findSupported
+                highlighted: root.findBarVisible
+                onClicked: root.findBarVisible ? root.closeFind() : root.openFind()
             }
         }
 
@@ -142,6 +189,83 @@ Rectangle {
                 text: "Go"
                 Layout.preferredWidth: 58
                 onClicked: root.goRequested(addressInput.text)
+            }
+        }
+
+        // Find-in-page bar is used when no native find panel is available.
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 6
+            visible: root.findBarVisible && !root.hasNativeFindPanel
+
+            TextField {
+                id: findInput
+                Layout.fillWidth: true
+                placeholderText: "Find in page…"
+                color: "#202020"
+                placeholderTextColor: "#909090"
+                background: Rectangle {
+                    radius: 6
+                    color: root.findMatchCount === 0 && findInput.text.length > 0
+                           ? "#fff0f0"
+                           : "#ffffff"
+                    border.color: root.findMatchCount === 0 && findInput.text.length > 0
+                                  ? "#e08080"
+                                  : "#bcbcbc"
+                    border.width: 1
+                }
+                onTextChanged: {
+                    if (text.length > 0)
+                        root.findRequested(text, caseSensitiveBtn.checked ? 2 : 0)
+                    else
+                        root.stopFindRequested()
+                }
+                Keys.onReturnPressed: root.findNextRequested()
+                Keys.onEscapePressed: root.closeFind()
+            }
+
+            Label {
+                id: matchLabel
+                text: {
+                    if (findInput.text.length === 0) return ""
+                    if (root.findMatchCount === 0) return "No matches"
+                    return (root.findActiveMatch + 1) + " / " + root.findMatchCount
+                }
+                color: root.findMatchCount === 0 && findInput.text.length > 0 ? "#c0392b" : "#505050"
+                font.pixelSize: 12
+                Layout.preferredWidth: 80
+                horizontalAlignment: Text.AlignHCenter
+            }
+
+            Button {
+                text: "▲"
+                Layout.preferredWidth: 40
+                enabled: findInput.text.length > 0
+                onClicked: root.findPreviousRequested()
+            }
+            Button {
+                text: "▼"
+                Layout.preferredWidth: 40
+                enabled: findInput.text.length > 0
+                onClicked: root.findNextRequested()
+            }
+
+            Button {
+                id: caseSensitiveBtn
+                text: "Aa"
+                Layout.preferredWidth: 44
+                checkable: true
+                highlighted: checked
+                onCheckedChanged: {
+                    if (findInput.text.length > 0)
+                        root.findRequested(findInput.text, checked ? 2 : 0)
+                }
+            }
+
+            Button {
+                text: "✕"
+                Layout.preferredWidth: 36
+                onClicked: root.closeFind()
             }
         }
 

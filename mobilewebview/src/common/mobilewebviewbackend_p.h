@@ -36,6 +36,12 @@ public:
     virtual void updateAllowedOriginsImpl(const QStringList &origins) = 0;
     virtual void updateInteractionEnabled(bool enabled) = 0;
     virtual void setZoomFactorImpl(qreal factor) = 0;
+    virtual void findTextImpl(const QString &text, int flags) = 0;
+    virtual void stopFindImpl() = 0;
+    virtual bool findSupportedImpl() const = 0;
+    virtual bool hasNativeFindPanelImpl() const = 0;
+    virtual void showFindPanelImpl() = 0;
+    virtual void hideFindPanelImpl() = 0;
     
     // Common state shared between platforms
     MobileWebViewBackend *q_ptr;

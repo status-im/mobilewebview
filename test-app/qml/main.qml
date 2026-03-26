@@ -28,6 +28,10 @@ Window {
             loadProgress: testWidget.loadProgress
             favicon: testWidget.favicon
             zoomFactor: testWidget.zoomFactor
+            hasNativeFindPanel: testWidget.webView.hasNativeFindPanel
+            findSupported: testWidget.webView.findSupported
+            findActiveMatch: testWidget.findActiveMatch
+            findMatchCount: testWidget.findMatchCount
             onBackRequested: testWidget.webView.goBack()
             onForwardRequested: testWidget.webView.goForward()
             onReloadRequested: testWidget.webView.reload()
@@ -42,6 +46,12 @@ Window {
             onZoomInRequested: testWidget.webView.zoomFactor = Math.min(testWidget.zoomFactor + 0.25, 5.0)
             onZoomOutRequested: testWidget.webView.zoomFactor = Math.max(testWidget.zoomFactor - 0.25, 0.25)
             onZoomResetRequested: testWidget.webView.zoomFactor = 1.0
+            onFindRequested: testWidget.findText(text, flags)
+            onFindNextRequested: testWidget.findText(topBar.findText, 0)
+            onFindPreviousRequested: testWidget.findText(topBar.findText, 1)
+            onStopFindRequested: testWidget.stopFind()
+            onShowFindPanelRequested: testWidget.webView.showFindPanel()
+            onHideFindPanelRequested: testWidget.webView.hideFindPanel()
         }
 
         TestWidget {

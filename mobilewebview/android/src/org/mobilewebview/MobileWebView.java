@@ -297,6 +297,47 @@ public class MobileWebView {
     }
 
     /**
+     * Find text in the page.
+     * flags: bit 0 = backwards, bit 1 = case-sensitive
+     */
+    public void findText(String text, int flags) {
+        runOnMainThread(() -> {
+            if (mWebView == null) return;
+            if (text == null || text.isEmpty()) {
+                mWebView.clearMatches();
+                safeNativeOnFindResultChanged(-1, 0);
+                return;
+            }
+            // Android WebView.findAllAsync gives match counts via FindListener
+            mWebView.setFindListener((activeMatchOrdinal, numberOfMatches, isDoneCounting) -> {
+                if (isDoneCounting) {
+                    safeNativeOnFindResultChanged(
+                        numberOfMatches > 0 ? activeMatchOrdinal : -1,
+                        numberOfMatches);
+                }
+            });
+            mWebView.findAllAsync(text);
+            // Handle backwards navigation via findNext
+            boolean backwards = (flags & 1) != 0;
+            if (backwards) {
+                mWebView.findNext(false);
+            }
+        });
+    }
+
+    /**
+     * Stop find-in-page and clear highlights
+     */
+    public void stopFind() {
+        runOnMainThread(() -> {
+            if (mWebView == null) return;
+            mWebView.clearMatches();
+            mWebView.setFindListener(null);
+            safeNativeOnFindResultChanged(-1, 0);
+        });
+    }
+
+    /**
      * Evaluate JavaScript and notify result via callback
      */
     public void evaluateJavaScript(String script) {
@@ -643,6 +684,13 @@ public class MobileWebView {
         }
     }
 
+    private void safeNativeOnFindResultChanged(int activeMatchIndex, int matchCount) {
+        long ptr = mNativePtr;
+        if (ptr != 0) {
+            nativeOnFindResultChanged(ptr, activeMatchIndex, matchCount);
+        }
+    }
+
     // Native callback methods (implemented in C++)
     private native void nativeOnWebMessageReceived(long nativePtr, String message,
                                                    String origin, boolean isMainFrame);
@@ -655,4 +703,5 @@ public class MobileWebView {
     private native void nativeOnNewWindowRequested(long nativePtr, String url, boolean userInitiated);
     private native void nativeOnLoadProgressChanged(long nativePtr, int progress);
     private native void nativeOnFaviconReceived(long nativePtr, String faviconUrl);
+    private native void nativeOnFindResultChanged(long nativePtr, int activeMatchIndex, int matchCount);
 }

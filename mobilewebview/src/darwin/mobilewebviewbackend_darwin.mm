@@ -137,6 +137,12 @@ public:
     void updateAllowedOriginsImpl(const QStringList &origins) override;
     void updateInteractionEnabled(bool enabled) override;
     void setZoomFactorImpl(qreal factor) override;
+    void findTextImpl(const QString &text, int flags) override;
+    void stopFindImpl() override;
+    bool findSupportedImpl() const override;
+    bool hasNativeFindPanelImpl() const override;
+    void showFindPanelImpl() override;
+    void hideFindPanelImpl() override;
     
 private:
     WKWebView *m_webView = nullptr;
@@ -236,6 +242,12 @@ bool DarwinWebViewPrivate::initNativeView()
                    context:nil];
 
     m_userScriptsManager = new UserScriptsManager(m_webView, q_ptr);
+
+#ifdef Q_OS_IOS
+    if (@available(iOS 16.0, *)) {
+        m_webView.findInteractionEnabled = YES;
+    }
+#endif
 
     [m_webView setHidden:YES];
 
@@ -506,6 +518,74 @@ void DarwinWebViewPrivate::setZoomFactorImpl(qreal factor)
         webView.pageZoom = static_cast<CGFloat>(factor);
 #endif
     });
+}
+
+void DarwinWebViewPrivate::findTextImpl(const QString &text, int flags)
+{
+    Q_UNUSED(text)
+    Q_UNUSED(flags)
+    // macOS: find-in-page not supported (no public API for programmatic find with highlight)
+    // iOS: uses native WKFindInteraction via showFindPanel/hideFindPanel
+}
+
+void DarwinWebViewPrivate::stopFindImpl()
+{
+    // macOS: no-op
+    // iOS: dismissing WKFindInteraction is done via hideFindPanel
+}
+
+bool DarwinWebViewPrivate::findSupportedImpl() const
+{
+#ifdef Q_OS_IOS
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool DarwinWebViewPrivate::hasNativeFindPanelImpl() const
+{
+#ifdef Q_OS_IOS
+    return true;
+#else
+    return false;
+#endif
+}
+
+void DarwinWebViewPrivate::showFindPanelImpl()
+{
+#ifdef Q_OS_IOS
+    if (!m_webView) {
+        return;
+    }
+
+    WKWebView *webView = m_webView;
+    runOnMainThread(^{
+        if (@available(iOS 16.0, *)) {
+            if (webView.findInteractionEnabled) {
+                [webView.findInteraction presentFindNavigatorShowingReplace:NO];
+            }
+        }
+    });
+#endif
+}
+
+void DarwinWebViewPrivate::hideFindPanelImpl()
+{
+#ifdef Q_OS_IOS
+    if (!m_webView) {
+        return;
+    }
+
+    WKWebView *webView = m_webView;
+    runOnMainThread(^{
+        if (@available(iOS 16.0, *)) {
+            if (webView.findInteractionEnabled) {
+                [webView.findInteraction dismissFindNavigator];
+            }
+        }
+    });
+#endif
 }
 
 void DarwinWebViewPrivate::updateInteractionEnabled(bool enabled)

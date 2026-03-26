@@ -371,6 +371,18 @@ qreal MobileWebViewBackend::zoomFactor() const
     return d->m_zoomFactor;
 }
 
+bool MobileWebViewBackend::findSupported() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->findSupportedImpl();
+}
+
+bool MobileWebViewBackend::hasNativeFindPanel() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->hasNativeFindPanelImpl();
+}
+
 void MobileWebViewBackend::setZoomFactor(qreal factor)
 {
     Q_D(MobileWebViewBackend);
@@ -474,6 +486,30 @@ void MobileWebViewBackend::runJavaScript(const QString &script)
 {
     Q_D(MobileWebViewBackend);
     d->evaluateJavaScript(script);
+}
+
+void MobileWebViewBackend::findText(const QString &text, int flags)
+{
+    Q_D(MobileWebViewBackend);
+    d->findTextImpl(text, flags);
+}
+
+void MobileWebViewBackend::stopFind()
+{
+    Q_D(MobileWebViewBackend);
+    d->stopFindImpl();
+}
+
+void MobileWebViewBackend::showFindPanel()
+{
+    Q_D(MobileWebViewBackend);
+    d->showFindPanelImpl();
+}
+
+void MobileWebViewBackend::hideFindPanel()
+{
+    Q_D(MobileWebViewBackend);
+    d->hideFindPanelImpl();
 }
 
 void MobileWebViewBackend::geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry)
