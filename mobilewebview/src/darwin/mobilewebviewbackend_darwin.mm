@@ -67,6 +67,14 @@
         return;
     }
 
+    if ([keyPath isEqualToString:@"estimatedProgress"]) {
+        const int progress = static_cast<int>(webView.estimatedProgress * 100.0);
+        QMetaObject::invokeMethod(backend, [backend, progress]() {
+            backend->setLoadProgress(progress);
+        }, Qt::QueuedConnection);
+        return;
+    }
+
     [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
 }
 
@@ -118,6 +126,7 @@ public:
     void goForwardImpl() override;
     void reloadImpl() override;
     void stopImpl() override;
+    void clearHistoryImpl() override;
     void evaluateJavaScript(const QString &script) override;
     void updateNativeGeometry(const QRectF &rect) override;
     void updateNativeVisibility(bool visible) override;
@@ -127,6 +136,7 @@ public:
     void setupNativeViewImpl() override;
     void updateAllowedOriginsImpl(const QStringList &origins) override;
     void updateInteractionEnabled(bool enabled) override;
+    void setZoomFactorImpl(qreal factor) override;
     
 private:
     WKWebView *m_webView = nullptr;
@@ -159,6 +169,7 @@ DarwinWebViewPrivate::~DarwinWebViewPrivate()
             @try { [webView removeObserver:observer forKeyPath:@"title"]; } @catch (NSException *) {}
             @try { [webView removeObserver:observer forKeyPath:@"canGoBack"]; } @catch (NSException *) {}
             @try { [webView removeObserver:observer forKeyPath:@"canGoForward"]; } @catch (NSException *) {}
+            @try { [webView removeObserver:observer forKeyPath:@"estimatedProgress"]; } @catch (NSException *) {}
             [observer release];
         });
         m_stateObserver = nullptr;
@@ -217,6 +228,10 @@ bool DarwinWebViewPrivate::initNativeView()
                    context:nil];
     [m_webView addObserver:m_stateObserver
                 forKeyPath:@"canGoForward"
+                   options:NSKeyValueObservingOptionNew
+                   context:nil];
+    [m_webView addObserver:m_stateObserver
+                forKeyPath:@"estimatedProgress"
                    options:NSKeyValueObservingOptionNew
                    context:nil];
 
@@ -308,6 +323,32 @@ void DarwinWebViewPrivate::stopImpl()
     WKWebView *webView = m_webView;
     runOnMainThread(^{
         [webView stopLoading];
+    });
+}
+
+void DarwinWebViewPrivate::clearHistoryImpl()
+{
+    if (!m_webView) {
+        return;
+    }
+
+    WKWebView *webView = m_webView;
+    runOnMainThread(^{
+        // WKWebView does not expose a direct clearHistory() API.
+        // The standard approach is to recreate the WKBackForwardList by loading
+        // about:blank and then immediately reloading the current page, which
+        // collapses the back/forward list to a single entry.
+        NSURL *currentURL = webView.URL;
+        NSURLRequest *blankRequest = [NSURLRequest requestWithURL:[NSURL URLWithString:@"about:blank"]];
+        [webView loadRequest:blankRequest];
+
+        if (currentURL && ![currentURL.absoluteString isEqualToString:@"about:blank"]) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(50 * NSEC_PER_MSEC)),
+                           dispatch_get_main_queue(), ^{
+                NSURLRequest *restoreRequest = [NSURLRequest requestWithURL:currentURL];
+                [webView loadRequest:restoreRequest];
+            });
+        }
     });
 }
 
@@ -449,6 +490,22 @@ void DarwinWebViewPrivate::updateAllowedOriginsImpl(const QStringList &origins)
     if (m_userScriptsManager) {
         m_userScriptsManager->updateAllowedOrigins(origins);
     }
+}
+
+void DarwinWebViewPrivate::setZoomFactorImpl(qreal factor)
+{
+    if (!m_webView) {
+        return;
+    }
+
+    WKWebView *webView = m_webView;
+    runOnMainThread(^{
+#ifdef Q_OS_IOS
+        webView.scrollView.zoomScale = static_cast<CGFloat>(factor);
+#else
+        webView.pageZoom = static_cast<CGFloat>(factor);
+#endif
+    });
 }
 
 void DarwinWebViewPrivate::updateInteractionEnabled(bool enabled)

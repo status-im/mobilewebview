@@ -26,6 +26,9 @@ class MobileWebViewBackend : public QQuickItem
     Q_PROPERTY(QString webChannelNamespace READ webChannelNamespace WRITE setWebChannelNamespace NOTIFY webChannelNamespaceChanged)
     Q_PROPERTY(QWebChannel* webChannel READ webChannel WRITE setWebChannel NOTIFY webChannelChanged)
     Q_PROPERTY(bool interactionEnabled READ interactionEnabled WRITE setInteractionEnabled NOTIFY interactionEnabledChanged)
+    Q_PROPERTY(int loadProgress READ loadProgress NOTIFY loadProgressChanged)
+    Q_PROPERTY(QString favicon READ favicon NOTIFY faviconChanged)
+    Q_PROPERTY(qreal zoomFactor READ zoomFactor WRITE setZoomFactor NOTIFY zoomFactorChanged)
 
 public:
     explicit MobileWebViewBackend(QQuickItem *parent = nullptr);
@@ -47,6 +50,10 @@ public:
     void setWebChannel(QWebChannel* channel);
     bool interactionEnabled() const;
     void setInteractionEnabled(bool enabled);
+    int loadProgress() const;
+    QString favicon() const;
+    qreal zoomFactor() const;
+    void setZoomFactor(qreal factor);
 
     // Internal methods (used by private implementation and platform delegates)
     void updateUrlState(const QUrl &url);
@@ -56,6 +63,8 @@ public:
     void setTitle(const QString &title);
     void setCanGoBack(bool canGoBack);
     void setCanGoForward(bool canGoForward);
+    void setLoadProgress(int progress);
+    void setFavicon(const QString &favicon);
     void emitNewWindowRequested(const QUrl &url, bool userInitiated);
 
 public slots:
@@ -65,6 +74,7 @@ public slots:
     void goForward();
     void reload();
     void stop();
+    void clearHistory();
 
     // Install WebChannel bridge; must be called BEFORE loadUrl/loadHtml
     bool installMessageBridge(const QString &ns,
@@ -89,6 +99,9 @@ signals:
     void webChannelNamespaceChanged();
     void webChannelChanged();
     void interactionEnabledChanged();
+    void loadProgressChanged();
+    void faviconChanged();
+    void zoomFactorChanged();
 
     // Emitted when a message is received from JavaScript
     void webMessageReceived(const QString &message, const QString &origin, bool isMainFrame);

@@ -31,6 +31,7 @@ public:
     void goForwardImpl() override;
     void reloadImpl() override;
     void stopImpl() override;
+    void clearHistoryImpl() override;
     void evaluateJavaScript(const QString &script) override;
     void updateNativeGeometry(const QRectF &rect) override;
     void updateNativeVisibility(bool visible) override;
@@ -40,6 +41,7 @@ public:
     void setupNativeViewImpl() override;
     void updateAllowedOriginsImpl(const QStringList &origins) override;
     void updateInteractionEnabled(bool enabled) override;
+    void setZoomFactorImpl(qreal factor) override;
     
     // JNI helper methods
     void cleanupJni();
@@ -58,6 +60,8 @@ public:
     void onNavigationStateChanged(bool canGoBack, bool canGoForward);
     void onNewWindowRequested(const QString &url, bool userInitiated);
     void onJavaScriptResult(const QString &result, const QString &error);
+    void onLoadProgressChanged(int progress);
+    void onFaviconReceived(const QString &faviconUrl);
     
 private:
     jobject m_webViewObject = nullptr;  // Global reference to Java MobileWebView
@@ -76,6 +80,8 @@ private:
     jmethodID m_destroyMethod = nullptr;
     jmethodID m_updateAllowedOriginsMethod = nullptr;
     jmethodID m_setInteractionEnabledMethod = nullptr;
+    jmethodID m_clearHistoryMethod = nullptr;
+    jmethodID m_setZoomFactorMethod = nullptr;
     
     bool m_jniInitialized = false;
     QMutex m_jniMutex;  // Protect JNI calls
@@ -137,6 +143,8 @@ bool AndroidWebViewPrivate::initNativeView()
     m_destroyMethod = env->GetMethodID(m_webViewClass, "destroy", "()V");
     m_updateAllowedOriginsMethod = env->GetMethodID(m_webViewClass, "updateAllowedOrigins", "([Ljava/lang/String;)V");
     m_setInteractionEnabledMethod = env->GetMethodID(m_webViewClass, "setInteractionEnabled", "(Z)V");
+    m_clearHistoryMethod = env->GetMethodID(m_webViewClass, "clearHistory", "()V");
+    m_setZoomFactorMethod = env->GetMethodID(m_webViewClass, "setZoomFactor", "(F)V");
 
     m_jniInitialized = true;
     return true;
@@ -373,6 +381,11 @@ void AndroidWebViewPrivate::reloadImpl()
 void AndroidWebViewPrivate::stopImpl()
 {
     callSimpleVoidMethod(m_stopMethod);
+}
+
+void AndroidWebViewPrivate::clearHistoryImpl()
+{
+    callSimpleVoidMethod(m_clearHistoryMethod);
 }
 
 void AndroidWebViewPrivate::evaluateJavaScript(const QString &script)
@@ -644,6 +657,24 @@ void AndroidWebViewPrivate::updateInteractionEnabled(bool enabled)
     clearJniExceptionIfAny(env);
 }
 
+void AndroidWebViewPrivate::setZoomFactorImpl(qreal factor)
+{
+    QMutexLocker locker(&m_jniMutex);
+
+    if (!m_jniInitialized) {
+        return;
+    }
+
+    QJniEnvironment env;
+    if (!env.isValid() || !m_webViewObject || !m_setZoomFactorMethod) {
+        return;
+    }
+
+    env->CallVoidMethod(m_webViewObject, m_setZoomFactorMethod,
+                        static_cast<jfloat>(factor));
+    clearJniExceptionIfAny(env);
+}
+
 // Callback handlers
 void AndroidWebViewPrivate::onWebMessageReceived(const QString &message, const QString &origin, bool isMainFrame)
 {
@@ -654,12 +685,15 @@ void AndroidWebViewPrivate::onNavigationStarted()
 {
     setLoading(true);
     setLoaded(false);
+    setLoadProgress(0);
+    setFavicon(QString());
 }
 
 void AndroidWebViewPrivate::onNavigationFinished(const QString &url)
 {
     setLoading(false);
     setLoaded(true);
+    setLoadProgress(100);
     updateUrlState(QUrl(url));
 }
 
@@ -692,6 +726,16 @@ void AndroidWebViewPrivate::onJavaScriptResult(const QString &result, const QStr
         qResult = result;
     }
     emit q_ptr->javaScriptResult(qResult, error);
+}
+
+void AndroidWebViewPrivate::onLoadProgressChanged(int progress)
+{
+    setLoadProgress(progress);
+}
+
+void AndroidWebViewPrivate::onFaviconReceived(const QString &faviconUrl)
+{
+    setFavicon(faviconUrl);
 }
 
 // =============================================================================
@@ -833,6 +877,34 @@ Java_org_mobilewebview_MobileWebView_nativeOnNewWindowRequested(JNIEnv *env, job
 
     QMetaObject::invokeMethod(backend->q_ptr, [backend, qUrl, userInitiated]() {
         backend->onNewWindowRequested(qUrl, userInitiated == JNI_TRUE);
+    }, Qt::QueuedConnection);
+}
+
+JNIEXPORT void JNICALL
+Java_org_mobilewebview_MobileWebView_nativeOnLoadProgressChanged(JNIEnv *env, jobject obj,
+                                                                  jlong nativePtr, jint progress)
+{
+    if (nativePtr == 0) return;
+
+    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
+    QMetaObject::invokeMethod(backend->q_ptr, [backend, progress]() {
+        backend->onLoadProgressChanged(static_cast<int>(progress));
+    }, Qt::QueuedConnection);
+}
+
+JNIEXPORT void JNICALL
+Java_org_mobilewebview_MobileWebView_nativeOnFaviconReceived(JNIEnv *env, jobject obj,
+                                                              jlong nativePtr, jstring faviconUrl)
+{
+    if (nativePtr == 0) return;
+
+    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
+    const char *urlChars = env->GetStringUTFChars(faviconUrl, nullptr);
+    QString qUrl = QString::fromUtf8(urlChars);
+    env->ReleaseStringUTFChars(faviconUrl, urlChars);
+
+    QMetaObject::invokeMethod(backend->q_ptr, [backend, qUrl]() {
+        backend->onFaviconReceived(qUrl);
     }, Qt::QueuedConnection);
 }
 

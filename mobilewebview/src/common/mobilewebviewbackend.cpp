@@ -5,6 +5,7 @@
 
 #include <QUuid>
 #include <QDebug>
+#include <QtMath>
 #include <mutex>
 
 // =============================================================================
@@ -57,6 +58,22 @@ void MobileWebViewBackendPrivate::setCanGoForward(bool canGoForward)
     if (m_canGoForward != canGoForward) {
         m_canGoForward = canGoForward;
         emit q_ptr->canGoForwardChanged();
+    }
+}
+
+void MobileWebViewBackendPrivate::setLoadProgress(int progress)
+{
+    if (m_loadProgress != progress) {
+        m_loadProgress = progress;
+        emit q_ptr->loadProgressChanged();
+    }
+}
+
+void MobileWebViewBackendPrivate::setFavicon(const QString &favicon)
+{
+    if (m_favicon != favicon) {
+        m_favicon = favicon;
+        emit q_ptr->faviconChanged();
     }
 }
 
@@ -336,6 +353,46 @@ void MobileWebViewBackend::setInteractionEnabled(bool enabled)
     }
 }
 
+int MobileWebViewBackend::loadProgress() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_loadProgress;
+}
+
+QString MobileWebViewBackend::favicon() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_favicon;
+}
+
+qreal MobileWebViewBackend::zoomFactor() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_zoomFactor;
+}
+
+void MobileWebViewBackend::setZoomFactor(qreal factor)
+{
+    Q_D(MobileWebViewBackend);
+    if (!qFuzzyCompare(d->m_zoomFactor, factor)) {
+        d->m_zoomFactor = factor;
+        d->setZoomFactorImpl(factor);
+        emit zoomFactorChanged();
+    }
+}
+
+void MobileWebViewBackend::setLoadProgress(int progress)
+{
+    Q_D(MobileWebViewBackend);
+    d->setLoadProgress(progress);
+}
+
+void MobileWebViewBackend::setFavicon(const QString &favicon)
+{
+    Q_D(MobileWebViewBackend);
+    d->setFavicon(favicon);
+}
+
 void MobileWebViewBackend::loadUrl(const QUrl &url)
 {
     Q_D(MobileWebViewBackend);
@@ -379,6 +436,12 @@ void MobileWebViewBackend::stop()
 {
     Q_D(MobileWebViewBackend);
     d->stopImpl();
+}
+
+void MobileWebViewBackend::clearHistory()
+{
+    Q_D(MobileWebViewBackend);
+    d->clearHistoryImpl();
 }
 
 bool MobileWebViewBackend::installMessageBridge(const QString &ns,

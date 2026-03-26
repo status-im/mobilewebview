@@ -25,6 +25,9 @@ Window {
             loading: testWidget.loading
             canGoBack: testWidget.canGoBack
             canGoForward: testWidget.canGoForward
+            loadProgress: testWidget.loadProgress
+            favicon: testWidget.favicon
+            zoomFactor: testWidget.zoomFactor
             onBackRequested: testWidget.webView.goBack()
             onForwardRequested: testWidget.webView.goForward()
             onReloadRequested: testWidget.webView.reload()
@@ -35,6 +38,10 @@ Window {
             onIncrementRequested: testWidget.incrementCounter()
             onDecrementRequested: testWidget.decrementCounter()
             onJsPopupRequested: testWidget.qmlShowStaticPopup()
+            onClearHistoryRequested: testWidget.webView.clearHistory()
+            onZoomInRequested: testWidget.webView.zoomFactor = Math.min(testWidget.zoomFactor + 0.25, 5.0)
+            onZoomOutRequested: testWidget.webView.zoomFactor = Math.max(testWidget.zoomFactor - 0.25, 0.25)
+            onZoomResetRequested: testWidget.webView.zoomFactor = 1.0
         }
 
         TestWidget {

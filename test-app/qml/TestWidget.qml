@@ -16,6 +16,9 @@ Item {
     readonly property string pageTitle: webView.title
     readonly property bool canGoBack: webView.canGoBack
     readonly property bool canGoForward: webView.canGoForward
+    readonly property int loadProgress: webView.loadProgress
+    readonly property string favicon: webView.favicon
+    readonly property real zoomFactor: webView.zoomFactor
 
     signal logMessage(string message)
 

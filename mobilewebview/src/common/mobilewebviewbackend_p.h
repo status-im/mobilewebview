@@ -25,6 +25,7 @@ public:
     virtual void goForwardImpl() = 0;
     virtual void reloadImpl() = 0;
     virtual void stopImpl() = 0;
+    virtual void clearHistoryImpl() = 0;
     virtual void evaluateJavaScript(const QString &script) = 0;
     virtual void updateNativeGeometry(const QRectF &rect) = 0;
     virtual void updateNativeVisibility(bool visible) = 0;
@@ -34,6 +35,7 @@ public:
     virtual void setupNativeViewImpl() = 0;
     virtual void updateAllowedOriginsImpl(const QStringList &origins) = 0;
     virtual void updateInteractionEnabled(bool enabled) = 0;
+    virtual void setZoomFactorImpl(qreal factor) = 0;
     
     // Common state shared between platforms
     MobileWebViewBackend *q_ptr;
@@ -46,6 +48,9 @@ public:
     QString m_title;
     bool m_canGoBack = false;
     bool m_canGoForward = false;
+    int m_loadProgress = 0;
+    QString m_favicon;
+    qreal m_zoomFactor = 1.0;
     QVariantList m_userScripts;
     QString m_webChannelNamespace = QStringLiteral("qt");
     QString m_invokeKey;
@@ -59,6 +64,8 @@ public:
     void setTitle(const QString &title);
     void setCanGoBack(bool canGoBack);
     void setCanGoForward(bool canGoForward);
+    void setLoadProgress(int progress);
+    void setFavicon(const QString &favicon);
     void updateUrlState(const QUrl &url);
     void updateAllowedOrigins(const QStringList &origins);
     void ensureBridgeInstalled();

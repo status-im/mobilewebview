@@ -2,7 +2,10 @@ package org.mobilewebview;
 
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Rect;
+import android.util.Base64;
 import android.util.Log;
 import android.app.Activity;
 import android.view.View;
@@ -19,6 +22,7 @@ import android.webkit.WebViewClient;
 import android.os.Handler;
 import android.os.Looper;
 
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
@@ -274,6 +278,24 @@ public class MobileWebView {
         });
     }
 
+    public void clearHistory() {
+        runOnMainThread(() -> {
+            if (mWebView != null) {
+                mWebView.clearHistory();
+            }
+        });
+    }
+
+    public void setZoomFactor(float factor) {
+        runOnMainThread(() -> {
+            if (mWebView != null) {
+                int percent = Math.round(factor * 100f);
+                mWebView.setInitialScale(percent);
+                mWebView.getSettings().setTextZoom(percent);
+            }
+        });
+    }
+
     /**
      * Evaluate JavaScript and notify result via callback
      */
@@ -470,6 +492,27 @@ public class MobileWebView {
         }
 
         @Override
+        public void onProgressChanged(WebView view, int newProgress) {
+            safeNativeOnLoadProgressChanged(newProgress);
+        }
+
+        @Override
+        public void onReceivedIcon(WebView view, Bitmap icon) {
+            if (icon == null) {
+                return;
+            }
+            try {
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                icon.compress(Bitmap.CompressFormat.PNG, 100, baos);
+                String base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
+                String dataUri = "data:image/png;base64," + base64;
+                safeNativeOnFaviconReceived(dataUri);
+            } catch (Exception e) {
+                Log.w(TAG, "onReceivedIcon: failed to encode favicon", e);
+            }
+        }
+
+        @Override
         public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
             Log.d(TAG, "Console [" + consoleMessage.messageLevel() + "]: " +
                        consoleMessage.message() + " -- From line " +
@@ -586,6 +629,20 @@ public class MobileWebView {
         }
     }
 
+    private void safeNativeOnLoadProgressChanged(int progress) {
+        long ptr = mNativePtr;
+        if (ptr != 0) {
+            nativeOnLoadProgressChanged(ptr, progress);
+        }
+    }
+
+    private void safeNativeOnFaviconReceived(String faviconUrl) {
+        long ptr = mNativePtr;
+        if (ptr != 0) {
+            nativeOnFaviconReceived(ptr, faviconUrl);
+        }
+    }
+
     // Native callback methods (implemented in C++)
     private native void nativeOnWebMessageReceived(long nativePtr, String message,
                                                    String origin, boolean isMainFrame);
@@ -596,4 +653,6 @@ public class MobileWebView {
     private native void nativeOnTitleChanged(long nativePtr, String title);
     private native void nativeOnNavigationStateChanged(long nativePtr, boolean canGoBack, boolean canGoForward);
     private native void nativeOnNewWindowRequested(long nativePtr, String url, boolean userInitiated);
+    private native void nativeOnLoadProgressChanged(long nativePtr, int progress);
+    private native void nativeOnFaviconReceived(long nativePtr, String faviconUrl);
 }

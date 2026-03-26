@@ -15,6 +15,9 @@ Rectangle {
     property bool loading: false
     property bool canGoBack: false
     property bool canGoForward: false
+    property int loadProgress: 0
+    property string favicon: ""
+    property real zoomFactor: 1.0
 
     signal backRequested()
     signal forwardRequested()
@@ -24,6 +27,10 @@ Rectangle {
     signal incrementRequested()
     signal decrementRequested()
     signal jsPopupRequested()
+    signal clearHistoryRequested()
+    signal zoomInRequested()
+    signal zoomOutRequested()
+    signal zoomResetRequested()
 
     readonly property bool hasInputFocus: addressInput.activeFocus
 
@@ -35,6 +42,7 @@ Rectangle {
         anchors.margins: 8
         spacing: 6
 
+        // Navigation row
         RowLayout {
             Layout.fillWidth: true
             spacing: 6
@@ -61,15 +69,57 @@ Rectangle {
                 enabled: root.canGoForward
                 onClicked: root.forwardRequested()
             }
+            Button {
+                text: "Hist✕"
+                Layout.preferredWidth: 64
+                onClicked: root.clearHistoryRequested()
+            }
         }
 
-        Label {
+        // Progress bar (only visible while loading)
+        Rectangle {
             Layout.fillWidth: true
-            color: "#202020"
-            elide: Text.ElideRight
-            text: root.pageTitle.length > 0 ? root.pageTitle : "(no title)"
+            height: 3
+            color: "#e0e0e0"
+            radius: 1
+            visible: root.loading || root.loadProgress > 0 && root.loadProgress < 100
+
+            Rectangle {
+                width: parent.width * Math.max(0, Math.min(root.loadProgress, 100)) / 100
+                height: parent.height
+                color: "#4a90d9"
+                radius: 1
+
+                Behavior on width {
+                    NumberAnimation { duration: 120 }
+                }
+            }
         }
 
+        // Title row with favicon
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 6
+
+            Image {
+                id: faviconImage
+                source: root.favicon || ""
+                width: 16
+                height: 16
+                visible: root.favicon.length > 0
+                fillMode: Image.PreserveAspectFit
+                smooth: true
+            }
+
+            Label {
+                Layout.fillWidth: true
+                color: "#202020"
+                elide: Text.ElideRight
+                text: root.pageTitle.length > 0 ? root.pageTitle : "(no title)"
+            }
+        }
+
+        // Address bar
         RowLayout {
             Layout.fillWidth: true
             spacing: 6
@@ -95,6 +145,41 @@ Rectangle {
             }
         }
 
+        // Zoom row
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 6
+
+            Label {
+                text: "Zoom:"
+                color: "#606060"
+            }
+            Button {
+                text: "−"
+                Layout.preferredWidth: 44
+                onClicked: root.zoomOutRequested()
+            }
+            Label {
+                Layout.preferredWidth: 52
+                horizontalAlignment: Text.AlignHCenter
+                color: "#202020"
+                text: Math.round(root.zoomFactor * 100) + "%"
+            }
+            Button {
+                text: "+"
+                Layout.preferredWidth: 44
+                onClicked: root.zoomInRequested()
+            }
+            Button {
+                text: "1:1"
+                Layout.preferredWidth: 44
+                onClicked: root.zoomResetRequested()
+            }
+
+            Item { Layout.fillWidth: true }
+        }
+
+        // Counter / JS row
         RowLayout {
             Layout.fillWidth: true
             spacing: 8
