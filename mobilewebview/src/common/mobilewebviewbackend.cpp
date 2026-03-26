@@ -61,6 +61,19 @@ void MobileWebViewBackendPrivate::setCanGoForward(bool canGoForward)
     }
 }
 
+void MobileWebViewBackendPrivate::setHistoryState(const QVariantList &historyItems, int currentHistoryIndex)
+{
+    if (m_historyItems != historyItems) {
+        m_historyItems = historyItems;
+        emit q_ptr->historyItemsChanged();
+    }
+
+    if (m_currentHistoryIndex != currentHistoryIndex) {
+        m_currentHistoryIndex = currentHistoryIndex;
+        emit q_ptr->currentHistoryIndexChanged();
+    }
+}
+
 void MobileWebViewBackendPrivate::setLoadProgress(int progress)
 {
     if (m_loadProgress != progress) {
@@ -218,6 +231,18 @@ bool MobileWebViewBackend::canGoForward() const
     return d->m_canGoForward;
 }
 
+QVariantList MobileWebViewBackend::historyItems() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_historyItems;
+}
+
+int MobileWebViewBackend::currentHistoryIndex() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_currentHistoryIndex;
+}
+
 void MobileWebViewBackend::setUrl(const QUrl &url)
 {
     Q_D(MobileWebViewBackend);
@@ -332,6 +357,12 @@ void MobileWebViewBackend::setCanGoForward(bool canGoForward)
     d->setCanGoForward(canGoForward);
 }
 
+void MobileWebViewBackend::setHistoryState(const QVariantList &historyItems, int currentHistoryIndex)
+{
+    Q_D(MobileWebViewBackend);
+    d->setHistoryState(historyItems, currentHistoryIndex);
+}
+
 void MobileWebViewBackend::emitNewWindowRequested(const QUrl &url, bool userInitiated)
 {
     emit newWindowRequested(url, userInitiated);
@@ -436,6 +467,12 @@ void MobileWebViewBackend::goForward()
 {
     Q_D(MobileWebViewBackend);
     d->goForwardImpl();
+}
+
+void MobileWebViewBackend::goBackOrForward(int offset)
+{
+    Q_D(MobileWebViewBackend);
+    d->goBackOrForwardImpl(offset);
 }
 
 void MobileWebViewBackend::reload()

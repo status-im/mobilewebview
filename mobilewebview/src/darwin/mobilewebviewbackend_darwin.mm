@@ -20,8 +20,58 @@
 #include <QDebug>
 #include <QPointer>
 #include <QFile>
+#include <QVariantMap>
 
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+
+namespace {
+
+QVariantMap toHistoryItemVariant(WKBackForwardListItem *item)
+{
+    QVariantMap historyItem;
+    if (!item) {
+        historyItem.insert(QStringLiteral("url"), QString());
+        historyItem.insert(QStringLiteral("title"), QString());
+        return historyItem;
+    }
+
+    const NSString *itemUrl = item.URL.absoluteString ?: @"";
+    const NSString *itemTitle = item.title ?: @"";
+    historyItem.insert(QStringLiteral("url"), QString::fromNSString(itemUrl));
+    historyItem.insert(QStringLiteral("title"), QString::fromNSString(itemTitle));
+    return historyItem;
+}
+
+QVariantList toHistoryItems(WKWebView *webView)
+{
+    QVariantList historyItems;
+    if (!webView) {
+        return historyItems;
+    }
+
+    WKBackForwardList *list = webView.backForwardList;
+    for (WKBackForwardListItem *item in list.backList) {
+        historyItems.append(toHistoryItemVariant(item));
+    }
+    if (list.currentItem) {
+        historyItems.append(toHistoryItemVariant(list.currentItem));
+    }
+    for (WKBackForwardListItem *item in list.forwardList) {
+        historyItems.append(toHistoryItemVariant(item));
+    }
+
+    return historyItems;
+}
+
+int currentHistoryIndex(WKWebView *webView)
+{
+    if (!webView || !webView.backForwardList.currentItem) {
+        return -1;
+    }
+    return static_cast<int>(webView.backForwardList.backList.count);
+}
+
+} // namespace
 
 @interface WebViewStateObserver : NSObject
 @property (nonatomic, assign) MobileWebViewBackend *owner;
@@ -45,24 +95,33 @@
 
     if ([keyPath isEqualToString:@"title"]) {
         QString title = QString::fromNSString(webView.title ?: @"");
-        QMetaObject::invokeMethod(backend, [backend, title]() {
+        QVariantList historyItems = toHistoryItems(webView);
+        const int historyIndex = currentHistoryIndex(webView);
+        QMetaObject::invokeMethod(backend, [backend, title, historyItems, historyIndex]() {
             backend->setTitle(title);
+            backend->setHistoryState(historyItems, historyIndex);
         }, Qt::QueuedConnection);
         return;
     }
 
     if ([keyPath isEqualToString:@"canGoBack"]) {
         const bool canGoBack = webView.canGoBack;
-        QMetaObject::invokeMethod(backend, [backend, canGoBack]() {
+        QVariantList historyItems = toHistoryItems(webView);
+        const int historyIndex = currentHistoryIndex(webView);
+        QMetaObject::invokeMethod(backend, [backend, canGoBack, historyItems, historyIndex]() {
             backend->setCanGoBack(canGoBack);
+            backend->setHistoryState(historyItems, historyIndex);
         }, Qt::QueuedConnection);
         return;
     }
 
     if ([keyPath isEqualToString:@"canGoForward"]) {
         const bool canGoForward = webView.canGoForward;
-        QMetaObject::invokeMethod(backend, [backend, canGoForward]() {
+        QVariantList historyItems = toHistoryItems(webView);
+        const int historyIndex = currentHistoryIndex(webView);
+        QMetaObject::invokeMethod(backend, [backend, canGoForward, historyItems, historyIndex]() {
             backend->setCanGoForward(canGoForward);
+            backend->setHistoryState(historyItems, historyIndex);
         }, Qt::QueuedConnection);
         return;
     }
@@ -124,6 +183,7 @@ public:
     void loadHtmlImpl(const QString &html, const QUrl &baseUrl) override;
     void goBackImpl() override;
     void goForwardImpl() override;
+    void goBackOrForwardImpl(int offset) override;
     void reloadImpl() override;
     void stopImpl() override;
     void clearHistoryImpl() override;
@@ -310,6 +370,41 @@ void DarwinWebViewPrivate::goForwardImpl()
     runOnMainThread(^{
         if (webView.canGoForward) {
             [webView goForward];
+        }
+    });
+}
+
+void DarwinWebViewPrivate::goBackOrForwardImpl(int offset)
+{
+    if (!m_webView || offset == 0) {
+        return;
+    }
+
+    WKWebView *webView = m_webView;
+    runOnMainThread(^{
+        WKBackForwardList *list = webView.backForwardList;
+        const NSInteger backCount = list.backList.count;
+        const BOOL hasCurrent = list.currentItem != nil;
+        const NSInteger forwardCount = list.forwardList.count;
+        const NSInteger currentIndex = hasCurrent ? backCount : -1;
+        const NSInteger totalCount = backCount + (hasCurrent ? 1 : 0) + forwardCount;
+        const NSInteger targetIndex = currentIndex + static_cast<NSInteger>(offset);
+
+        if (!hasCurrent || targetIndex < 0 || targetIndex >= totalCount || targetIndex == currentIndex) {
+            return;
+        }
+
+        WKBackForwardListItem *targetItem = nil;
+        if (targetIndex < backCount) {
+            targetItem = [list.backList objectAtIndex:targetIndex];
+        } else if (targetIndex == backCount) {
+            targetItem = list.currentItem;
+        } else {
+            targetItem = [list.forwardList objectAtIndex:(targetIndex - backCount - 1)];
+        }
+
+        if (targetItem) {
+            [webView goToBackForwardListItem:targetItem];
         }
     });
 }
@@ -662,10 +757,13 @@ void DarwinWebViewPrivate::setupNativeViewImpl()
         const QString title = QString::fromNSString(webView.title ?: @"");
         const bool canGoBack = webView.canGoBack;
         const bool canGoForward = webView.canGoForward;
-        QMetaObject::invokeMethod(backend, [backend, title, canGoBack, canGoForward]() {
+        QVariantList historyItems = toHistoryItems(webView);
+        const int historyIndex = currentHistoryIndex(webView);
+        QMetaObject::invokeMethod(backend, [backend, title, canGoBack, canGoForward, historyItems, historyIndex]() {
             backend->setTitle(title);
             backend->setCanGoBack(canGoBack);
             backend->setCanGoForward(canGoForward);
+            backend->setHistoryState(historyItems, historyIndex);
         }, Qt::QueuedConnection);
     });
 

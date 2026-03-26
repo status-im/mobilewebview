@@ -17,6 +17,8 @@ import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
+import android.webkit.WebBackForwardList;
+import android.webkit.WebHistoryItem;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.os.Handler;
@@ -24,6 +26,7 @@ import android.os.Looper;
 
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CountDownLatch;
@@ -54,6 +57,11 @@ public class MobileWebView {
     // Navigation state
     private boolean mBridgeInstalled = false;
     private String mPendingUrl = null;
+
+    @FunctionalInterface
+    private interface NativeCallback {
+        void invoke(long ptr);
+    }
 
     /**
      * Constructor - creates and initializes WebView
@@ -190,14 +198,10 @@ public class MobileWebView {
         mBridgeNamespace = namespace;
         mInvokeKey = invokeKey;
         mAllowedOrigins.clear();
-        for (String origin : allowedOrigins) {
-            mAllowedOrigins.add(origin);
-        }
+        mAllowedOrigins.addAll(Arrays.asList(allowedOrigins));
 
         mUserScripts.clear();
-        for (String script : userScripts) {
-            mUserScripts.add(script);
-        }
+        mUserScripts.addAll(Arrays.asList(userScripts));
 
         // Store bootstrap scripts
         mBootstrapPageScript = bootstrapPageScript;
@@ -213,9 +217,7 @@ public class MobileWebView {
      */
     public void updateAllowedOrigins(String[] origins) {
         mAllowedOrigins.clear();
-        for (String origin : origins) {
-            mAllowedOrigins.add(origin);
-        }
+        mAllowedOrigins.addAll(Arrays.asList(origins));
     }
 
     /**
@@ -262,6 +264,14 @@ public class MobileWebView {
         });
     }
 
+    public void goBackOrForward(int offset) {
+        runOnMainThread(() -> {
+            if (mWebView != null && mWebView.canGoBackOrForward(offset)) {
+                mWebView.goBackOrForward(offset);
+            }
+        });
+    }
+
     public void reload() {
         runOnMainThread(() -> {
             if (mWebView != null) {
@@ -282,6 +292,7 @@ public class MobileWebView {
         runOnMainThread(() -> {
             if (mWebView != null) {
                 mWebView.clearHistory();
+                notifyHistoryState(mWebView);
             }
         });
     }
@@ -305,15 +316,16 @@ public class MobileWebView {
             if (mWebView == null) return;
             if (text == null || text.isEmpty()) {
                 mWebView.clearMatches();
-                safeNativeOnFindResultChanged(-1, 0);
+                withNativePtr(ptr -> nativeOnFindResultChanged(ptr, -1, 0));
                 return;
             }
             // Android WebView.findAllAsync gives match counts via FindListener
             mWebView.setFindListener((activeMatchOrdinal, numberOfMatches, isDoneCounting) -> {
                 if (isDoneCounting) {
-                    safeNativeOnFindResultChanged(
+                    withNativePtr(ptr -> nativeOnFindResultChanged(
+                        ptr,
                         numberOfMatches > 0 ? activeMatchOrdinal : -1,
-                        numberOfMatches);
+                        numberOfMatches));
                 }
             });
             mWebView.findAllAsync(text);
@@ -333,7 +345,7 @@ public class MobileWebView {
             if (mWebView == null) return;
             mWebView.clearMatches();
             mWebView.setFindListener(null);
-            safeNativeOnFindResultChanged(-1, 0);
+            withNativePtr(ptr -> nativeOnFindResultChanged(ptr, -1, 0));
         });
     }
 
@@ -343,7 +355,7 @@ public class MobileWebView {
     public void evaluateJavaScript(String script) {
         runOnMainThread(() ->
             mWebView.evaluateJavascript(script, result ->
-                safeNativeOnJavaScriptResult(result != null ? result : "", "")
+                withNativePtr(ptr -> nativeOnJavaScriptResult(ptr, result != null ? result : "", ""))
             )
         );
     }
@@ -450,7 +462,7 @@ public class MobileWebView {
             }
 
             // Forward to C++ layer
-            safeNativeOnWebMessageReceived(message, origin, false);
+            withNativePtr(ptr -> nativeOnWebMessageReceived(ptr, message, origin, false));
         }
     }
 
@@ -461,37 +473,21 @@ public class MobileWebView {
         @Override
         public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
             Log.d(TAG, "onPageStarted: " + url);
-            mCurrentMainFrameOrigin = OriginUtils.extractOrigin(url);
             mBridgeInjectedForCurrentNavigation = false;
-            safeNativeOnNavigationStarted();
-            safeNativeOnNavigationStateChanged(view.canGoBack(), view.canGoForward());
-
-            // Attempt bridge injection as early as possible for this navigation.
-            if (mBridgeInstalled) {
-                injectBridgeScriptsOnce();
-            } else {
-                Log.w(TAG, "onPageStarted: bridge not installed yet");
-            }
+            withNativePtr(this::nativeOnNavigationStarted);
+            handleNavigationLifecycle(view, url, true);
         }
 
         @Override
         public void onPageCommitVisible(WebView view, String url) {
-            mCurrentMainFrameOrigin = OriginUtils.extractOrigin(url);
-            if (mBridgeInstalled) {
-                injectBridgeScriptsOnce();
-            }
+            handleNavigationLifecycle(view, url, false);
         }
 
         @Override
         public void onPageFinished(WebView view, String url) {
             Log.d(TAG, "onPageFinished: " + url);
-            mCurrentMainFrameOrigin = OriginUtils.extractOrigin(url);
-            if (mBridgeInstalled) {
-                // Final fallback to keep transport available even if earlier hooks were missed.
-                injectBridgeScriptsOnce();
-            }
-            safeNativeOnNavigationFinished(url);
-            safeNativeOnNavigationStateChanged(view.canGoBack(), view.canGoForward());
+            handleNavigationLifecycle(view, url, false);
+            withNativePtr(ptr -> nativeOnNavigationFinished(ptr, url));
         }
 
         @Override
@@ -499,7 +495,7 @@ public class MobileWebView {
                                    WebResourceError error) {
             if (request.isForMainFrame()) {
                 Log.e(TAG, "onReceivedError: " + error.getDescription());
-                safeNativeOnNavigationFailed();
+                withNativePtr(this::nativeOnNavigationFailed);
             }
         }
 
@@ -520,7 +516,7 @@ public class MobileWebView {
             String requestedUrl = hitTestResult != null ? hitTestResult.getExtra() : null;
 
             if (requestedUrl != null && !requestedUrl.isEmpty()) {
-                safeNativeOnNewWindowRequested(requestedUrl, isUserGesture);
+                withNativePtr(ptr -> nativeOnNewWindowRequested(ptr, requestedUrl, isUserGesture));
                 return false;
             }
 
@@ -529,12 +525,12 @@ public class MobileWebView {
 
         @Override
         public void onReceivedTitle(WebView view, String title) {
-            safeNativeOnTitleChanged(title != null ? title : "");
+            withNativePtr(ptr -> nativeOnTitleChanged(ptr, title != null ? title : ""));
         }
 
         @Override
         public void onProgressChanged(WebView view, int newProgress) {
-            safeNativeOnLoadProgressChanged(newProgress);
+            withNativePtr(ptr -> nativeOnLoadProgressChanged(ptr, newProgress));
         }
 
         @Override
@@ -547,7 +543,7 @@ public class MobileWebView {
                 icon.compress(Bitmap.CompressFormat.PNG, 100, baos);
                 String base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
                 String dataUri = "data:image/png;base64," + base64;
-                safeNativeOnFaviconReceived(dataUri);
+                withNativePtr(ptr -> nativeOnFaviconReceived(ptr, dataUri));
             } catch (Exception e) {
                 Log.w(TAG, "onReceivedIcon: failed to encode favicon", e);
             }
@@ -588,19 +584,8 @@ public class MobileWebView {
                 + ", bootstrapPageLen=" + mBootstrapPageScript.length()
                 + ", bootstrapBridgeLen=" + mBootstrapBridgeScript.length());
 
-        // Inject bootstrap_page.js (with namespace substitution)
-        if (!mBootstrapPageScript.isEmpty()) {
-            mWebView.evaluateJavascript(mBootstrapPageScript, null);
-        } else {
-            Log.w(TAG, "bootstrap_page script is empty");
-        }
-
-        // Inject bootstrap_bridge_android.js (with invokeKey substitution)
-        if (!mBootstrapBridgeScript.isEmpty()) {
-            mWebView.evaluateJavascript(mBootstrapBridgeScript, null);
-        } else {
-            Log.w(TAG, "bootstrap_bridge_android script is empty");
-        }
+        injectScriptIfPresent(mBootstrapPageScript, "bootstrap_page");
+        injectScriptIfPresent(mBootstrapBridgeScript, "bootstrap_bridge_android");
 
         // Inject user scripts
         for (String scriptContent : mUserScripts) {
@@ -614,81 +599,60 @@ public class MobileWebView {
         return mNativePtr != 0;
     }
 
-    private void safeNativeOnWebMessageReceived(String message, String origin, boolean isMainFrame) {
+    private void withNativePtr(NativeCallback callback) {
         long ptr = mNativePtr;
         if (ptr != 0) {
-            nativeOnWebMessageReceived(ptr, message, origin, isMainFrame);
+            callback.invoke(ptr);
         }
     }
 
-    private void safeNativeOnNavigationStarted() {
-        long ptr = mNativePtr;
-        if (ptr != 0) {
-            nativeOnNavigationStarted(ptr);
+    private void handleNavigationLifecycle(WebView view, String url, boolean warnWhenBridgeMissing) {
+        mCurrentMainFrameOrigin = OriginUtils.extractOrigin(url);
+        if (mBridgeInstalled) {
+            injectBridgeScriptsOnce();
+        } else if (warnWhenBridgeMissing) {
+            Log.w(TAG, "onPageStarted: bridge not installed yet");
         }
+        withNativePtr(ptr -> nativeOnNavigationStateChanged(ptr, view.canGoBack(), view.canGoForward()));
+        notifyHistoryState(view);
     }
 
-    private void safeNativeOnNavigationFinished(String url) {
-        long ptr = mNativePtr;
-        if (ptr != 0) {
-            nativeOnNavigationFinished(ptr, url);
+    private void injectScriptIfPresent(String script, String scriptName) {
+        if (!script.isEmpty()) {
+            mWebView.evaluateJavascript(script, null);
+            return;
         }
+        Log.w(TAG, scriptName + " script is empty");
     }
 
-    private void safeNativeOnNavigationFailed() {
-        long ptr = mNativePtr;
-        if (ptr != 0) {
-            nativeOnNavigationFailed(ptr);
+    private void notifyHistoryState(WebView view) {
+        if (view == null) {
+            return;
         }
-    }
 
-    private void safeNativeOnJavaScriptResult(String result, String error) {
-        long ptr = mNativePtr;
-        if (ptr != 0) {
-            nativeOnJavaScriptResult(ptr, result, error);
+        WebBackForwardList list = view.copyBackForwardList();
+        if (list == null) {
+            withNativePtr(ptr -> nativeOnHistoryChanged(ptr, new String[0], new String[0], -1));
+            return;
         }
-    }
 
-    private void safeNativeOnTitleChanged(String title) {
-        long ptr = mNativePtr;
-        if (ptr != 0) {
-            nativeOnTitleChanged(ptr, title);
+        int size = list.getSize();
+        String[] urls = new String[size];
+        String[] titles = new String[size];
+        for (int i = 0; i < size; i++) {
+            WebHistoryItem item = list.getItemAtIndex(i);
+            if (item == null) {
+                urls[i] = "";
+                titles[i] = "";
+                continue;
+            }
+            String itemUrl = item.getUrl();
+            String itemTitle = item.getTitle();
+            urls[i] = itemUrl != null ? itemUrl : "";
+            titles[i] = itemTitle != null ? itemTitle : "";
         }
-    }
 
-    private void safeNativeOnNavigationStateChanged(boolean canGoBack, boolean canGoForward) {
-        long ptr = mNativePtr;
-        if (ptr != 0) {
-            nativeOnNavigationStateChanged(ptr, canGoBack, canGoForward);
-        }
-    }
-
-    private void safeNativeOnNewWindowRequested(String url, boolean userInitiated) {
-        long ptr = mNativePtr;
-        if (ptr != 0) {
-            nativeOnNewWindowRequested(ptr, url, userInitiated);
-        }
-    }
-
-    private void safeNativeOnLoadProgressChanged(int progress) {
-        long ptr = mNativePtr;
-        if (ptr != 0) {
-            nativeOnLoadProgressChanged(ptr, progress);
-        }
-    }
-
-    private void safeNativeOnFaviconReceived(String faviconUrl) {
-        long ptr = mNativePtr;
-        if (ptr != 0) {
-            nativeOnFaviconReceived(ptr, faviconUrl);
-        }
-    }
-
-    private void safeNativeOnFindResultChanged(int activeMatchIndex, int matchCount) {
-        long ptr = mNativePtr;
-        if (ptr != 0) {
-            nativeOnFindResultChanged(ptr, activeMatchIndex, matchCount);
-        }
+        withNativePtr(ptr -> nativeOnHistoryChanged(ptr, urls, titles, list.getCurrentIndex()));
     }
 
     // Native callback methods (implemented in C++)
@@ -700,6 +664,7 @@ public class MobileWebView {
     private native void nativeOnJavaScriptResult(long nativePtr, String result, String error);
     private native void nativeOnTitleChanged(long nativePtr, String title);
     private native void nativeOnNavigationStateChanged(long nativePtr, boolean canGoBack, boolean canGoForward);
+    private native void nativeOnHistoryChanged(long nativePtr, String[] urls, String[] titles, int currentHistoryIndex);
     private native void nativeOnNewWindowRequested(long nativePtr, String url, boolean userInitiated);
     private native void nativeOnLoadProgressChanged(long nativePtr, int progress);
     private native void nativeOnFaviconReceived(long nativePtr, String faviconUrl);

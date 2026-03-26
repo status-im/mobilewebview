@@ -22,6 +22,8 @@ class MobileWebViewBackend : public QQuickItem
     Q_PROPERTY(QString title READ title NOTIFY titleChanged)
     Q_PROPERTY(bool canGoBack READ canGoBack NOTIFY canGoBackChanged)
     Q_PROPERTY(bool canGoForward READ canGoForward NOTIFY canGoForwardChanged)
+    Q_PROPERTY(QVariantList historyItems READ historyItems NOTIFY historyItemsChanged)
+    Q_PROPERTY(int currentHistoryIndex READ currentHistoryIndex NOTIFY currentHistoryIndexChanged)
     Q_PROPERTY(QVariantList userScripts READ userScripts WRITE setUserScripts NOTIFY userScriptsChanged)
     Q_PROPERTY(QString webChannelNamespace READ webChannelNamespace WRITE setWebChannelNamespace NOTIFY webChannelNamespaceChanged)
     Q_PROPERTY(QWebChannel* webChannel READ webChannel WRITE setWebChannel NOTIFY webChannelChanged)
@@ -43,6 +45,8 @@ public:
     QString title() const;
     bool canGoBack() const;
     bool canGoForward() const;
+    QVariantList historyItems() const;
+    int currentHistoryIndex() const;
     void setUrl(const QUrl &url);
     QVariantList userScripts() const;
     void setUserScripts(const QVariantList &scripts);
@@ -67,6 +71,7 @@ public:
     void setTitle(const QString &title);
     void setCanGoBack(bool canGoBack);
     void setCanGoForward(bool canGoForward);
+    void setHistoryState(const QVariantList &historyItems, int currentHistoryIndex);
     void setLoadProgress(int progress);
     void setFavicon(const QString &favicon);
     void emitNewWindowRequested(const QUrl &url, bool userInitiated);
@@ -76,6 +81,7 @@ public slots:
     void loadHtml(const QString &html, const QUrl &baseUrl = QUrl());
     void goBack();
     void goForward();
+    void goBackOrForward(int offset);
     void reload();
     void stop();
     void clearHistory();
@@ -109,6 +115,8 @@ signals:
     void titleChanged();
     void canGoBackChanged();
     void canGoForwardChanged();
+    void historyItemsChanged();
+    void currentHistoryIndexChanged();
     void userScriptsChanged();
     void webChannelNamespaceChanged();
     void webChannelChanged();

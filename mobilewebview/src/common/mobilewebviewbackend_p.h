@@ -23,6 +23,7 @@ public:
     virtual void loadHtmlImpl(const QString &html, const QUrl &baseUrl) = 0;
     virtual void goBackImpl() = 0;
     virtual void goForwardImpl() = 0;
+    virtual void goBackOrForwardImpl(int offset) = 0;
     virtual void reloadImpl() = 0;
     virtual void stopImpl() = 0;
     virtual void clearHistoryImpl() = 0;
@@ -54,6 +55,8 @@ public:
     QString m_title;
     bool m_canGoBack = false;
     bool m_canGoForward = false;
+    QVariantList m_historyItems;
+    int m_currentHistoryIndex = -1;
     int m_loadProgress = 0;
     QString m_favicon;
     qreal m_zoomFactor = 1.0;
@@ -70,6 +73,7 @@ public:
     void setTitle(const QString &title);
     void setCanGoBack(bool canGoBack);
     void setCanGoForward(bool canGoForward);
+    void setHistoryState(const QVariantList &historyItems, int currentHistoryIndex);
     void setLoadProgress(int progress);
     void setFavicon(const QString &favicon);
     void updateUrlState(const QUrl &url);

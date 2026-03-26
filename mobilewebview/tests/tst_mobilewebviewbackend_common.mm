@@ -40,8 +40,14 @@ public:
 
     void goBackImpl() override { ++goBackCalls; }
     void goForwardImpl() override { ++goForwardCalls; }
+    void goBackOrForwardImpl(int offset) override
+    {
+        ++goBackOrForwardCalls;
+        lastGoBackOrForwardOffset = offset;
+    }
     void reloadImpl() override { ++reloadCalls; }
     void stopImpl() override { ++stopCalls; }
+    void clearHistoryImpl() override { ++clearHistoryCalls; }
 
     void evaluateJavaScript(const QString &script) override
     {
@@ -90,12 +96,23 @@ public:
         lastAllowedOrigins = origins;
     }
 
+    void updateInteractionEnabled(bool) override {}
+    void setZoomFactorImpl(qreal) override {}
+    void findTextImpl(const QString &, int) override {}
+    void stopFindImpl() override {}
+    bool findSupportedImpl() const override { return true; }
+    bool hasNativeFindPanelImpl() const override { return false; }
+    void showFindPanelImpl() override {}
+    void hideFindPanelImpl() override {}
+
     int loadUrlCalls = 0;
     int loadHtmlCalls = 0;
     int goBackCalls = 0;
     int goForwardCalls = 0;
+    int goBackOrForwardCalls = 0;
     int reloadCalls = 0;
     int stopCalls = 0;
+    int clearHistoryCalls = 0;
     int evaluateCalls = 0;
     int updateGeometryCalls = 0;
     int updateVisibilityCalls = 0;
@@ -106,6 +123,7 @@ public:
 
     bool lastVisible = false;
     bool installBridgeResult = true;
+    int lastGoBackOrForwardOffset = 0;
     QString lastHtml;
     QString lastScript;
     QString lastBridgeNs;
@@ -154,6 +172,8 @@ void MobileWebViewBackendCommonTest::forwardsCallsAndStateChanges()
     QSignalSpy userScriptsSpy(&backend, &MobileWebViewBackend::userScriptsChanged);
     QSignalSpy nsSpy(&backend, &MobileWebViewBackend::webChannelNamespaceChanged);
     QSignalSpy webChannelSpy(&backend, &MobileWebViewBackend::webChannelChanged);
+    QSignalSpy historyItemsSpy(&backend, &MobileWebViewBackend::historyItemsChanged);
+    QSignalSpy historyIndexSpy(&backend, &MobileWebViewBackend::currentHistoryIndexChanged);
 
     backend.setUrl(QUrl(QStringLiteral("https://example.com/path")));
     QCOMPARE(backend.url().toString(), QStringLiteral("https://example.com/path"));
@@ -171,12 +191,33 @@ void MobileWebViewBackendCommonTest::forwardsCallsAndStateChanges()
 
     backend.goBack();
     backend.goForward();
+    backend.goBackOrForward(-2);
     backend.reload();
     backend.stop();
+    backend.clearHistory();
     QCOMPARE(d->goBackCalls, 1);
     QCOMPARE(d->goForwardCalls, 1);
+    QCOMPARE(d->goBackOrForwardCalls, 1);
+    QCOMPARE(d->lastGoBackOrForwardOffset, -2);
     QCOMPARE(d->reloadCalls, 1);
     QCOMPARE(d->stopCalls, 1);
+    QCOMPARE(d->clearHistoryCalls, 1);
+
+    QVariantList historyItems{
+        QVariantMap{
+            {QStringLiteral("url"), QStringLiteral("https://example.com/1")},
+            {QStringLiteral("title"), QStringLiteral("Page 1")}
+        },
+        QVariantMap{
+            {QStringLiteral("url"), QStringLiteral("https://example.com/2")},
+            {QStringLiteral("title"), QStringLiteral("Page 2")}
+        }
+    };
+    backend.setHistoryState(historyItems, 1);
+    QCOMPARE(historyItemsSpy.count(), 1);
+    QCOMPARE(historyIndexSpy.count(), 1);
+    QCOMPARE(backend.historyItems(), historyItems);
+    QCOMPARE(backend.currentHistoryIndex(), 1);
 
     backend.runJavaScript(QStringLiteral("1 + 1"));
     QCOMPARE(d->evaluateCalls, 1);

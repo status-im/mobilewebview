@@ -12,6 +12,7 @@
 #include <QJniObject>
 #include <QJniEnvironment>
 #include <QtMath>
+#include <QVariantMap>
 
 // =============================================================================
 // AndroidWebViewPrivate - Android-specific implementation
@@ -29,6 +30,7 @@ public:
     void loadHtmlImpl(const QString &html, const QUrl &baseUrl) override;
     void goBackImpl() override;
     void goForwardImpl() override;
+    void goBackOrForwardImpl(int offset) override;
     void reloadImpl() override;
     void stopImpl() override;
     void clearHistoryImpl() override;
@@ -64,6 +66,7 @@ public:
     void onNavigationFailed();
     void onTitleChanged(const QString &title);
     void onNavigationStateChanged(bool canGoBack, bool canGoForward);
+    void onHistoryChanged(const QVariantList &historyItems, int currentHistoryIndex);
     void onNewWindowRequested(const QString &url, bool userInitiated);
     void onJavaScriptResult(const QString &result, const QString &error);
     void onLoadProgressChanged(int progress);
@@ -79,6 +82,7 @@ private:
     jmethodID m_loadHtmlMethod = nullptr;
     jmethodID m_goBackMethod = nullptr;
     jmethodID m_goForwardMethod = nullptr;
+    jmethodID m_goBackOrForwardMethod = nullptr;
     jmethodID m_reloadMethod = nullptr;
     jmethodID m_stopMethod = nullptr;
     jmethodID m_evaluateJavaScriptMethod = nullptr;
@@ -144,6 +148,7 @@ bool AndroidWebViewPrivate::initNativeView()
     m_loadHtmlMethod = env->GetMethodID(m_webViewClass, "loadHtml", "(Ljava/lang/String;Ljava/lang/String;)V");
     m_goBackMethod = env->GetMethodID(m_webViewClass, "goBack", "()V");
     m_goForwardMethod = env->GetMethodID(m_webViewClass, "goForward", "()V");
+    m_goBackOrForwardMethod = env->GetMethodID(m_webViewClass, "goBackOrForward", "(I)V");
     m_reloadMethod = env->GetMethodID(m_webViewClass, "reload", "()V");
     m_stopMethod = env->GetMethodID(m_webViewClass, "stop", "()V");
     m_evaluateJavaScriptMethod = env->GetMethodID(m_webViewClass, "evaluateJavaScript", "(Ljava/lang/String;)V");
@@ -382,6 +387,24 @@ void AndroidWebViewPrivate::goBackImpl()
 void AndroidWebViewPrivate::goForwardImpl()
 {
     callSimpleVoidMethod(m_goForwardMethod);
+}
+
+void AndroidWebViewPrivate::goBackOrForwardImpl(int offset)
+{
+    QMutexLocker locker(&m_jniMutex);
+
+    if (!m_jniInitialized) {
+        qWarning() << "AndroidWebViewPrivate: JNI not initialized";
+        return;
+    }
+
+    QJniEnvironment env;
+    if (!env.isValid() || !m_webViewObject || !m_goBackOrForwardMethod) {
+        return;
+    }
+
+    env->CallVoidMethod(m_webViewObject, m_goBackOrForwardMethod, static_cast<jint>(offset));
+    clearJniExceptionIfAny(env);
 }
 
 void AndroidWebViewPrivate::reloadImpl()
@@ -774,6 +797,11 @@ void AndroidWebViewPrivate::onNavigationStateChanged(bool canGoBack, bool canGoF
     setCanGoForward(canGoForward);
 }
 
+void AndroidWebViewPrivate::onHistoryChanged(const QVariantList &historyItems, int currentHistoryIndex)
+{
+    setHistoryState(historyItems, currentHistoryIndex);
+}
+
 void AndroidWebViewPrivate::onNewWindowRequested(const QString &url, bool userInitiated)
 {
     q_ptr->emitNewWindowRequested(QUrl(url), userInitiated);
@@ -920,6 +948,58 @@ Java_org_mobilewebview_MobileWebView_nativeOnNavigationStateChanged(JNIEnv *env,
     AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
     QMetaObject::invokeMethod(backend->q_ptr, [backend, canGoBack, canGoForward]() {
         backend->onNavigationStateChanged(canGoBack == JNI_TRUE, canGoForward == JNI_TRUE);
+    }, Qt::QueuedConnection);
+}
+
+JNIEXPORT void JNICALL
+Java_org_mobilewebview_MobileWebView_nativeOnHistoryChanged(JNIEnv *env, jobject obj,
+                                                            jlong nativePtr, jobjectArray urls,
+                                                            jobjectArray titles, jint currentHistoryIndex)
+{
+    Q_UNUSED(obj)
+    if (nativePtr == 0) return;
+
+    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
+    QVariantList historyItems;
+
+    const jsize urlCount = urls ? env->GetArrayLength(urls) : 0;
+    const jsize titleCount = titles ? env->GetArrayLength(titles) : 0;
+    historyItems.reserve(urlCount);
+
+    for (jsize i = 0; i < urlCount; ++i) {
+        auto *urlString = static_cast<jstring>(env->GetObjectArrayElement(urls, i));
+        auto *titleString = i < titleCount ? static_cast<jstring>(env->GetObjectArrayElement(titles, i)) : nullptr;
+
+        QString qUrl;
+        QString qTitle;
+
+        if (urlString) {
+            const char *urlChars = env->GetStringUTFChars(urlString, nullptr);
+            qUrl = QString::fromUtf8(urlChars);
+            env->ReleaseStringUTFChars(urlString, urlChars);
+        }
+
+        if (titleString) {
+            const char *titleChars = env->GetStringUTFChars(titleString, nullptr);
+            qTitle = QString::fromUtf8(titleChars);
+            env->ReleaseStringUTFChars(titleString, titleChars);
+        }
+
+        QVariantMap item;
+        item.insert(QStringLiteral("url"), qUrl);
+        item.insert(QStringLiteral("title"), qTitle);
+        historyItems.append(item);
+
+        if (urlString) {
+            env->DeleteLocalRef(urlString);
+        }
+        if (titleString) {
+            env->DeleteLocalRef(titleString);
+        }
+    }
+
+    QMetaObject::invokeMethod(backend->q_ptr, [backend, historyItems, currentHistoryIndex]() {
+        backend->onHistoryChanged(historyItems, static_cast<int>(currentHistoryIndex));
     }, Qt::QueuedConnection);
 }
 

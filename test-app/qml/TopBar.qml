@@ -15,6 +15,8 @@ Rectangle {
     property bool loading: false
     property bool canGoBack: false
     property bool canGoForward: false
+    property var historyItems: []
+    property int currentHistoryIndex: -1
     property int loadProgress: 0
     property string favicon: ""
     property real zoomFactor: 1.0
@@ -32,6 +34,7 @@ Rectangle {
     signal decrementRequested()
     signal jsPopupRequested()
     signal clearHistoryRequested()
+    signal goBackOrForwardRequested(int offset)
     signal zoomInRequested()
     signal zoomOutRequested()
     signal zoomResetRequested()
@@ -50,6 +53,7 @@ Rectangle {
 
     // Internal state
     property bool findBarVisible: false
+    property bool historyPanelVisible: false
 
     // Find capabilities are provided by backend to avoid platform-specific checks in QML.
     property bool hasNativeFindPanel: false
@@ -110,6 +114,12 @@ Rectangle {
                 onClicked: root.forwardRequested()
             }
             Button {
+                text: "📋"
+                Layout.preferredWidth: 52
+                highlighted: root.historyPanelVisible
+                onClicked: root.historyPanelVisible = !root.historyPanelVisible
+            }
+            Button {
                 text: "Hist✕"
                 Layout.preferredWidth: 64
                 onClicked: root.clearHistoryRequested()
@@ -141,6 +151,106 @@ Rectangle {
                     NumberAnimation { duration: 120 }
                 }
             }
+        }
+
+        // History panel (toggle via 📋 button)
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: historyListView.contentHeight + 12
+            Layout.maximumHeight: 200
+            color: "#f4f4f4"
+            radius: 6
+            border.color: "#d0d0d0"
+            border.width: 1
+            visible: root.historyPanelVisible && root.historyItems.length > 0
+            clip: true
+
+            Flickable {
+                id: historyFlickable
+                anchors.fill: parent
+                anchors.margins: 6
+                contentHeight: historyListView.contentHeight
+                clip: true
+
+                Column {
+                    id: historyListView
+                    width: parent.width
+                    spacing: 2
+
+                    readonly property real contentHeight: {
+                        var h = 0
+                        for (var i = 0; i < historyRepeater.count; ++i) {
+                            var item = historyRepeater.itemAt(i)
+                            if (item) h += item.height + 2
+                        }
+                        return Math.max(0, h - 2)
+                    }
+
+                    Repeater {
+                        id: historyRepeater
+                        model: root.historyItems
+
+                        Rectangle {
+                            required property var modelData
+                            required property int index
+
+                            width: historyListView.width
+                            height: historyItemCol.implicitHeight + 8
+                            radius: 4
+                            color: index === root.currentHistoryIndex ? "#d0e4f7" : (historyMa.containsMouse ? "#e8e8e8" : "transparent")
+                            border.color: index === root.currentHistoryIndex ? "#4a90d9" : "transparent"
+                            border.width: index === root.currentHistoryIndex ? 1 : 0
+
+                            MouseArea {
+                                id: historyMa
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                onClicked: {
+                                    var offset = index - root.currentHistoryIndex
+                                    if (offset !== 0)
+                                        root.goBackOrForwardRequested(offset)
+                                }
+                            }
+
+                            Column {
+                                id: historyItemCol
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.margins: 6
+                                spacing: 1
+
+                                Label {
+                                    width: parent.width
+                                    text: (modelData && modelData.title) ? modelData.title : "(no title)"
+                                    font.pixelSize: 12
+                                    font.bold: index === root.currentHistoryIndex
+                                    color: "#202020"
+                                    elide: Text.ElideRight
+                                }
+
+                                Label {
+                                    width: parent.width
+                                    text: (modelData && modelData.url) ? modelData.url : ""
+                                    font.pixelSize: 10
+                                    color: "#707070"
+                                    elide: Text.ElideMiddle
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // History info label (when panel is visible but empty)
+        Label {
+            Layout.fillWidth: true
+            visible: root.historyPanelVisible && root.historyItems.length === 0
+            text: "No history items"
+            color: "#909090"
+            font.pixelSize: 12
+            horizontalAlignment: Text.AlignHCenter
         }
 
         // Title row with favicon
