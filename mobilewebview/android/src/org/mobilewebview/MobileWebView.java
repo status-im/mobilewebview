@@ -449,11 +449,12 @@ public class MobileWebView {
             }
 
             // Prefer tracked main-frame origin to avoid transient URL mismatches during redirects.
-            String origin = mCurrentMainFrameOrigin;
-            if (origin == null || origin.isEmpty()) {
+            String resolvedOrigin = mCurrentMainFrameOrigin;
+            if (resolvedOrigin == null || resolvedOrigin.isEmpty()) {
                 String currentUrl = mWebView.getUrl();
-                origin = OriginUtils.extractOrigin(currentUrl);
+                resolvedOrigin = OriginUtils.extractOrigin(currentUrl);
             }
+            final String origin = resolvedOrigin;
 
             // Validate origin
             if (!OriginUtils.isOriginAllowed(origin, mAllowedOrigins)) {
@@ -474,7 +475,7 @@ public class MobileWebView {
         public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
             Log.d(TAG, "onPageStarted: " + url);
             mBridgeInjectedForCurrentNavigation = false;
-            withNativePtr(this::nativeOnNavigationStarted);
+            withNativePtr(MobileWebView.this::nativeOnNavigationStarted);
             handleNavigationLifecycle(view, url, true);
         }
 
@@ -495,7 +496,7 @@ public class MobileWebView {
                                    WebResourceError error) {
             if (request.isForMainFrame()) {
                 Log.e(TAG, "onReceivedError: " + error.getDescription());
-                withNativePtr(this::nativeOnNavigationFailed);
+                withNativePtr(MobileWebView.this::nativeOnNavigationFailed);
             }
         }
 
