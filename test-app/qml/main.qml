@@ -76,15 +76,16 @@ Window {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 28
-            color: "#99111111"
+            Layout.preferredHeight: 24
+            color: "#f0f0f0"
 
             Label {
                 id: statusLabel
                 anchors.fill: parent
-                anchors.margins: 6
-                color: "#ffffff"
-                font.pixelSize: 12
+                anchors.leftMargin: 8
+                anchors.rightMargin: 8
+                color: "#5f6368"
+                font.pixelSize: 11
                 text: "Ready"
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter

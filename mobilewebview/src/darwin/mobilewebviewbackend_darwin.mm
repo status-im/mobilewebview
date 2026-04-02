@@ -607,11 +607,10 @@ void DarwinWebViewPrivate::setZoomFactorImpl(qreal factor)
 
     WKWebView *webView = m_webView;
     runOnMainThread(^{
-#ifdef Q_OS_IOS
-        webView.scrollView.zoomScale = static_cast<CGFloat>(factor);
-#else
-        webView.pageZoom = static_cast<CGFloat>(factor);
-#endif
+        NSString *js = [NSString stringWithFormat:
+            @"document.documentElement.style.zoom = '%f'",
+            static_cast<double>(factor)];
+        [webView evaluateJavaScript:js completionHandler:nil];
     });
 }
 
