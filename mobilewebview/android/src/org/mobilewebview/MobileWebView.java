@@ -299,11 +299,10 @@ public class MobileWebView {
 
     public void setZoomFactor(float factor) {
         runOnMainThread(() -> {
-            if (mWebView != null) {
-                int percent = Math.round(factor * 100f);
-                mWebView.setInitialScale(percent);
-                mWebView.getSettings().setTextZoom(percent);
-            }
+            if (mWebView == null) return;
+
+            String js = "document.documentElement.style.zoom = '" + factor + "'";
+            mWebView.evaluateJavascript(js, null);
         });
     }
 
