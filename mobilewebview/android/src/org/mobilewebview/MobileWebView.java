@@ -307,6 +307,8 @@ public class MobileWebView {
         });
     }
 
+    private String mCurrentFindQuery = null;
+
     /**
      * Find text in the page.
      * flags: bit 0 = backwards, bit 1 = case-sensitive
@@ -315,11 +317,17 @@ public class MobileWebView {
         runOnMainThread(() -> {
             if (mWebView == null) return;
             if (text == null || text.isEmpty()) {
+                mCurrentFindQuery = null;
                 mWebView.clearMatches();
                 withNativePtr(ptr -> nativeOnFindResultChanged(ptr, -1, 0));
                 return;
             }
-            // Android WebView.findAllAsync gives match counts via FindListener
+            boolean backwards = (flags & 1) != 0;
+            if (text.equals(mCurrentFindQuery)) {
+                mWebView.findNext(!backwards);
+                return;
+            }
+            mCurrentFindQuery = text;
             mWebView.setFindListener((activeMatchOrdinal, numberOfMatches, isDoneCounting) -> {
                 if (isDoneCounting) {
                     withNativePtr(ptr -> nativeOnFindResultChanged(
@@ -329,11 +337,6 @@ public class MobileWebView {
                 }
             });
             mWebView.findAllAsync(text);
-            // Handle backwards navigation via findNext
-            boolean backwards = (flags & 1) != 0;
-            if (backwards) {
-                mWebView.findNext(false);
-            }
         });
     }
 
@@ -343,6 +346,7 @@ public class MobileWebView {
     public void stopFind() {
         runOnMainThread(() -> {
             if (mWebView == null) return;
+            mCurrentFindQuery = null;
             mWebView.clearMatches();
             mWebView.setFindListener(null);
             withNativePtr(ptr -> nativeOnFindResultChanged(ptr, -1, 0));
