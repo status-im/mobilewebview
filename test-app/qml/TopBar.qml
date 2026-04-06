@@ -4,12 +4,12 @@ import QtQuick.Layouts
 
 Rectangle {
     id: root
-    color: "#ffffff"
-    implicitHeight: controlsColumn.implicitHeight + 16
-    border.color: "#d8d8d8"
-    border.width: 1
+    color: "#f8f9fa"
+    implicitHeight: controlsColumn.implicitHeight + 12
+    border.color: "#e0e0e0"
+    border.width: 0
 
-    property string address: "https://opensea.io"
+    property string address: "https://www.lipsum.com/"
     property string pageTitle: ""
     property int clickCount: 0
     property bool loading: false
@@ -21,8 +21,7 @@ Rectangle {
     property string favicon: ""
     property real zoomFactor: 1.0
 
-    // Find-in-page state (set by parent via findTextResult)
-    property int findActiveMatch: -1   // -1 = no match / session closed
+    property int findActiveMatch: -1
     property int findMatchCount: 0
 
     signal backRequested()
@@ -39,7 +38,6 @@ Rectangle {
     signal zoomOutRequested()
     signal zoomResetRequested()
 
-    // Find-in-page signals
     signal findRequested(string text, int flags)
     signal findNextRequested()
     signal findPreviousRequested()
@@ -47,15 +45,13 @@ Rectangle {
     signal showFindPanelRequested()
     signal hideFindPanelRequested()
 
-    // Keep WebView interactive while using find-in-page so WKWebView selection highlight stays visible.
     readonly property bool hasInputFocus: addressInput.activeFocus
     readonly property string findText: findInput.text
 
-    // Internal state
     property bool findBarVisible: false
     property bool historyPanelVisible: false
+    property bool toolsExpanded: false
 
-    // Find capabilities are provided by backend to avoid platform-specific checks in QML.
     property bool hasNativeFindPanel: false
     property bool findSupported: true
 
@@ -78,89 +74,110 @@ Rectangle {
         }
     }
 
+    component ToolBtn : Button {
+        id: _toolBtn
+        property string label: ""
+        property bool accent: false
+        implicitWidth: Math.max(42, _toolBtnContent.implicitWidth + 16)
+        implicitHeight: 36
+        flat: true
+        contentItem: Text {
+            id: _toolBtnContent
+            text: _toolBtn.label
+            font.pixelSize: 15
+            font.bold: false
+            color: !_toolBtn.enabled ? "#b0b0b0"
+                   : _toolBtn.accent ? "#ffffff"
+                   : _toolBtn.highlighted ? "#1a73e8"
+                   : _toolBtn.down ? "#1565c0"
+                   : "#3c4043"
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+        }
+        background: Rectangle {
+            radius: 8
+            color: {
+                if (_toolBtn.accent)
+                    return _toolBtn.down ? "#1565c0" : "#1a73e8"
+                if (_toolBtn.highlighted)
+                    return _toolBtn.down ? "#d2e3fc" : "#e8f0fe"
+                return _toolBtn.down ? "#e0e0e0" : (_toolBtn.hovered ? "#f0f0f0" : "transparent")
+            }
+        }
+    }
+
     ColumnLayout {
         id: controlsColumn
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        anchors.margins: 8
-        spacing: 6
+        anchors.margins: 6
+        spacing: 4
 
-        // Navigation row
         RowLayout {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: 2
 
-            Button {
-                text: "<"
-                Layout.preferredWidth: 52
+            ToolBtn {
+                label: "\u25C0"
                 enabled: root.canGoBack
                 onClicked: root.backRequested()
             }
-            Button {
-                text: root.loading ? "Stop" : "Reload"
+            ToolBtn {
+                label: root.loading ? "Stop" : "Reload"
                 Layout.fillWidth: true
-                onClicked: {
-                    if (root.loading)
-                        root.stopRequested()
-                    else
-                        root.reloadRequested()
-                }
+                onClicked: root.loading ? root.stopRequested() : root.reloadRequested()
             }
-            Button {
-                text: ">"
-                Layout.preferredWidth: 52
+            ToolBtn {
+                label: "\u25B6"
                 enabled: root.canGoForward
                 onClicked: root.forwardRequested()
             }
-            Button {
-                text: "📋"
-                Layout.preferredWidth: 52
+            ToolBtn {
+                label: "\u2261"
                 highlighted: root.historyPanelVisible
                 onClicked: root.historyPanelVisible = !root.historyPanelVisible
+                ToolTip.text: "History"
+                ToolTip.visible: hovered
             }
-            Button {
-                text: "Hist✕"
-                Layout.preferredWidth: 64
-                onClicked: root.clearHistoryRequested()
-            }
-            Button {
-                text: "🔍"
-                Layout.preferredWidth: 52
+            ToolBtn {
+                label: root.findBarVisible ? "\u2715 Find" : "Find"
                 visible: root.findSupported
                 highlighted: root.findBarVisible
                 onClicked: root.findBarVisible ? root.closeFind() : root.openFind()
             }
+            ToolBtn {
+                label: "\u2699"
+                highlighted: root.toolsExpanded
+                onClicked: root.toolsExpanded = !root.toolsExpanded
+                ToolTip.text: "Tools"
+                ToolTip.visible: hovered
+            }
         }
 
-        // Progress bar (only visible while loading)
         Rectangle {
             Layout.fillWidth: true
             height: 3
-            color: "#e0e0e0"
-            radius: 1
-            visible: root.loading || root.loadProgress > 0 && root.loadProgress < 100
+            color: "#e8e8e8"
+            radius: 2
+            visible: root.loading || (root.loadProgress > 0 && root.loadProgress < 100)
 
             Rectangle {
                 width: parent.width * Math.max(0, Math.min(root.loadProgress, 100)) / 100
                 height: parent.height
-                color: "#4a90d9"
-                radius: 1
-
-                Behavior on width {
-                    NumberAnimation { duration: 120 }
-                }
+                color: "#1a73e8"
+                radius: 2
+                Behavior on width { NumberAnimation { duration: 120 } }
             }
         }
 
-        // History panel (toggle via 📋 button)
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: historyListView.contentHeight + 12
             Layout.maximumHeight: 200
-            color: "#f4f4f4"
-            radius: 6
-            border.color: "#d0d0d0"
+            color: "#ffffff"
+            radius: 8
+            border.color: "#e0e0e0"
             border.width: 1
             visible: root.historyPanelVisible && root.historyItems.length > 0
             clip: true
@@ -196,9 +213,9 @@ Rectangle {
 
                             width: historyListView.width
                             height: historyItemCol.implicitHeight + 8
-                            radius: 4
-                            color: index === root.currentHistoryIndex ? "#d0e4f7" : (historyMa.containsMouse ? "#e8e8e8" : "transparent")
-                            border.color: index === root.currentHistoryIndex ? "#4a90d9" : "transparent"
+                            radius: 6
+                            color: index === root.currentHistoryIndex ? "#e8f0fe" : (historyMa.containsMouse ? "#f5f5f5" : "transparent")
+                            border.color: index === root.currentHistoryIndex ? "#1a73e8" : "transparent"
                             border.width: index === root.currentHistoryIndex ? 1 : 0
 
                             MouseArea {
@@ -217,13 +234,13 @@ Rectangle {
                                 anchors.left: parent.left
                                 anchors.right: parent.right
                                 anchors.verticalCenter: parent.verticalCenter
-                                anchors.margins: 6
+                                anchors.margins: 8
                                 spacing: 1
 
                                 Label {
                                     width: parent.width
                                     text: (modelData && modelData.title) ? modelData.title : "(no title)"
-                                    font.pixelSize: 12
+                                    font.pixelSize: 13
                                     font.bold: index === root.currentHistoryIndex
                                     color: "#202020"
                                     elide: Text.ElideRight
@@ -232,7 +249,7 @@ Rectangle {
                                 Label {
                                     width: parent.width
                                     text: (modelData && modelData.url) ? modelData.url : ""
-                                    font.pixelSize: 10
+                                    font.pixelSize: 11
                                     color: "#707070"
                                     elide: Text.ElideMiddle
                                 }
@@ -241,9 +258,16 @@ Rectangle {
                     }
                 }
             }
+
+            ToolBtn {
+                label: "Clear"
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 4
+                onClicked: root.clearHistoryRequested()
+            }
         }
 
-        // History info label (when panel is visible but empty)
         Label {
             Layout.fillWidth: true
             visible: root.historyPanelVisible && root.historyItems.length === 0
@@ -253,7 +277,6 @@ Rectangle {
             horizontalAlignment: Text.AlignHCenter
         }
 
-        // Title row with favicon
         RowLayout {
             Layout.fillWidth: true
             spacing: 6
@@ -261,8 +284,8 @@ Rectangle {
             Image {
                 id: faviconImage
                 source: root.favicon || ""
-                width: 16
-                height: 16
+                Layout.preferredWidth: 16
+                Layout.preferredHeight: 16
                 visible: root.favicon.length > 0
                 fillMode: Image.PreserveAspectFit
                 smooth: true
@@ -270,59 +293,68 @@ Rectangle {
 
             Label {
                 Layout.fillWidth: true
-                color: "#202020"
+                color: "#3c4043"
+                font.pixelSize: 13
                 elide: Text.ElideRight
                 text: root.pageTitle.length > 0 ? root.pageTitle : "(no title)"
             }
         }
 
-        // Address bar
         RowLayout {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: 4
+
             TextField {
                 id: addressInput
                 Layout.fillWidth: true
+                Layout.preferredHeight: 38
                 text: root.address
                 placeholderText: "Enter URL"
+                font.pixelSize: 13
                 color: "#202020"
-                placeholderTextColor: "#808080"
+                placeholderTextColor: "#9e9e9e"
+                leftPadding: 10
+                rightPadding: 10
+                verticalAlignment: Text.AlignVCenter
                 background: Rectangle {
-                    radius: 6
+                    radius: 10
                     color: "#ffffff"
-                    border.color: "#bcbcbc"
-                    border.width: 1
+                    border.color: addressInput.activeFocus ? "#1a73e8" : "#dadce0"
+                    border.width: addressInput.activeFocus ? 2 : 1
                 }
                 onAccepted: root.goRequested(text)
             }
-            Button {
-                text: "Go"
-                Layout.preferredWidth: 58
+            ToolBtn {
+                label: "\u2192"
+                accent: true
+                implicitWidth: 42
                 onClicked: root.goRequested(addressInput.text)
+                ToolTip.text: "Go"
+                ToolTip.visible: hovered
             }
         }
 
-        // Find-in-page bar is used when no native find panel is available.
         RowLayout {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: 4
             visible: root.findBarVisible && !root.hasNativeFindPanel
 
             TextField {
                 id: findInput
                 Layout.fillWidth: true
-                placeholderText: "Find in page…"
+                Layout.preferredHeight: 36
+                placeholderText: "Find in page\u2026"
+                font.pixelSize: 13
                 color: "#202020"
-                placeholderTextColor: "#909090"
+                placeholderTextColor: "#9e9e9e"
+                leftPadding: 10
+                rightPadding: 10
+                verticalAlignment: Text.AlignVCenter
                 background: Rectangle {
-                    radius: 6
-                    color: root.findMatchCount === 0 && findInput.text.length > 0
-                           ? "#fff0f0"
-                           : "#ffffff"
-                    border.color: root.findMatchCount === 0 && findInput.text.length > 0
-                                  ? "#e08080"
-                                  : "#bcbcbc"
-                    border.width: 1
+                    radius: 10
+                    color: root.findMatchCount === 0 && findInput.text.length > 0 ? "#fce8e6" : "#ffffff"
+                    border.color: root.findMatchCount === 0 && findInput.text.length > 0 ? "#d93025" : (findInput.activeFocus ? "#1a73e8" : "#dadce0")
+                    border.width: findInput.activeFocus ? 2 : 1
                 }
                 onTextChanged: {
                     if (text.length > 0)
@@ -338,32 +370,29 @@ Rectangle {
                 id: matchLabel
                 text: {
                     if (findInput.text.length === 0) return ""
-                    if (root.findMatchCount === 0) return "No matches"
-                    return (root.findActiveMatch + 1) + " / " + root.findMatchCount
+                    if (root.findMatchCount === 0) return "0/0"
+                    return (root.findActiveMatch + 1) + "/" + root.findMatchCount
                 }
-                color: root.findMatchCount === 0 && findInput.text.length > 0 ? "#c0392b" : "#505050"
+                color: root.findMatchCount === 0 && findInput.text.length > 0 ? "#d93025" : "#5f6368"
                 font.pixelSize: 12
-                Layout.preferredWidth: 80
+                Layout.preferredWidth: 44
                 horizontalAlignment: Text.AlignHCenter
             }
 
-            Button {
-                text: "▲"
-                Layout.preferredWidth: 40
+            ToolBtn {
+                label: "\u25B2"
                 enabled: findInput.text.length > 0
                 onClicked: root.findPreviousRequested()
             }
-            Button {
-                text: "▼"
-                Layout.preferredWidth: 40
+            ToolBtn {
+                label: "\u25BC"
                 enabled: findInput.text.length > 0
                 onClicked: root.findNextRequested()
             }
 
-            Button {
+            ToolBtn {
                 id: caseSensitiveBtn
-                text: "Aa"
-                Layout.preferredWidth: 44
+                label: "Aa"
                 checkable: true
                 highlighted: checked
                 onCheckedChanged: {
@@ -372,76 +401,91 @@ Rectangle {
                 }
             }
 
-            Button {
-                text: "✕"
-                Layout.preferredWidth: 36
+            ToolBtn {
+                label: "\u2715"
                 onClicked: root.closeFind()
             }
         }
 
-        // Zoom row
-        RowLayout {
+        ColumnLayout {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: 4
+            visible: root.toolsExpanded
 
-            Label {
-                text: "Zoom:"
-                color: "#606060"
-            }
-            Button {
-                text: "−"
-                Layout.preferredWidth: 44
-                onClicked: root.zoomOutRequested()
-            }
-            Label {
-                Layout.preferredWidth: 52
-                horizontalAlignment: Text.AlignHCenter
-                color: "#202020"
-                text: Math.round(root.zoomFactor * 100) + "%"
-            }
-            Button {
-                text: "+"
-                Layout.preferredWidth: 44
-                onClicked: root.zoomInRequested()
-            }
-            Button {
-                text: "1:1"
-                Layout.preferredWidth: 44
-                onClicked: root.zoomResetRequested()
-            }
-
-            Item { Layout.fillWidth: true }
-        }
-
-        // Counter / JS row
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 8
-
-            Button {
-                text: "+"
-                Layout.preferredWidth: 52
-                onClicked: root.incrementRequested()
-            }
-
-            Label {
+            Rectangle {
                 Layout.fillWidth: true
-                color: "#202020"
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-                text: "counter: " + root.clickCount
+                height: 1
+                color: "#e8e8e8"
             }
 
-            Button {
-                text: "-"
-                Layout.preferredWidth: 52
-                onClicked: root.decrementRequested()
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 4
+
+                Label {
+                    text: "Zoom"
+                    color: "#5f6368"
+                    font.pixelSize: 12
+                }
+                ToolBtn {
+                    label: "\u2212"
+                    onClicked: root.zoomOutRequested()
+                }
+                Label {
+                    Layout.preferredWidth: 44
+                    horizontalAlignment: Text.AlignHCenter
+                    color: "#3c4043"
+                    font.pixelSize: 13
+                    font.bold: true
+                    text: Math.round(root.zoomFactor * 100) + "%"
+                }
+                ToolBtn {
+                    label: "+"
+                    onClicked: root.zoomInRequested()
+                }
+                ToolBtn {
+                    label: "Reset"
+                    onClicked: root.zoomResetRequested()
+                }
+                Item { Layout.fillWidth: true }
             }
 
-            Button {
-                text: "js"
-                Layout.preferredWidth: 100
-                onClicked: root.jsPopupRequested()
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 4
+
+                Label {
+                    text: "Counter"
+                    color: "#5f6368"
+                    font.pixelSize: 12
+                }
+
+                ToolBtn {
+                    label: "\u2212"
+                    onClicked: root.decrementRequested()
+                }
+
+                Label {
+                    Layout.preferredWidth: 40
+                    horizontalAlignment: Text.AlignHCenter
+                    color: "#3c4043"
+                    font.pixelSize: 15
+                    font.bold: true
+                    text: String(root.clickCount)
+                }
+
+                ToolBtn {
+                    label: "+"
+                    onClicked: root.incrementRequested()
+                }
+
+                Item { Layout.fillWidth: true }
+
+                ToolBtn {
+                    label: "JS Popup"
+                    accent: true
+                    onClicked: root.jsPopupRequested()
+                }
             }
         }
     }

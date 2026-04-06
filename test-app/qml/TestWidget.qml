@@ -6,7 +6,7 @@ Item {
     id: root
 
     readonly property alias bridgeObject: testBridge
-    property url initialUrl: "https://opensea.io"
+    property url initialUrl: "https://www.lipsum.com/"
     property url testPageUrl: "qrc:/web/test_webchannel.html"
     readonly property alias webView: webView
     readonly property int clickCount: testBridge.clickCount
