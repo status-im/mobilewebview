@@ -32,6 +32,7 @@ Rectangle {
     signal incrementRequested()
     signal decrementRequested()
     signal jsPopupRequested()
+    signal freezeDialogRequested()
     signal clearHistoryRequested()
     signal goBackOrForwardRequested(int offset)
     signal zoomInRequested()
@@ -485,6 +486,14 @@ Rectangle {
                     label: "JS Popup"
                     accent: true
                     onClicked: root.jsPopupRequested()
+                }
+
+                ToolBtn {
+                    label: "Freeze dialog"
+                    highlighted: true
+                    onClicked: root.freezeDialogRequested()
+                    ToolTip.text: "Opens QML dialog; WebView uses freeze while open"
+                    ToolTip.visible: hovered
                 }
             }
         }

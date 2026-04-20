@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Window
 
-Window {
+ApplicationWindow {
     id: root
     visible: true
     width: Screen.width
@@ -44,6 +44,7 @@ Window {
             onIncrementRequested: testWidget.incrementCounter()
             onDecrementRequested: testWidget.decrementCounter()
             onJsPopupRequested: testWidget.qmlShowStaticPopup()
+            onFreezeDialogRequested: testWidget.openFreezeTestDialog()
             onClearHistoryRequested: testWidget.webView.clearHistory()
             onGoBackOrForwardRequested: function(offset) {
                 testWidget.webView.goBackOrForward(offset)

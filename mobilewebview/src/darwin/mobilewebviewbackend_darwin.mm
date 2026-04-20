@@ -9,6 +9,7 @@
 
 #import <WebKit/WebKit.h>
 #import <dispatch/dispatch.h>
+#import <CoreGraphics/CoreGraphics.h>
 
 #ifdef Q_OS_IOS
 #import <UIKit/UIKit.h>
@@ -21,10 +22,42 @@
 #include <QPointer>
 #include <QFile>
 #include <QVariantMap>
-
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
 
 namespace {
+
+static QImage qImageFromCGImage(CGImageRef cg)
+{
+    if (!cg) {
+        return QImage();
+    }
+    const size_t w = CGImageGetWidth(cg);
+    const size_t h = CGImageGetHeight(cg);
+    if (w == 0 || h == 0) {
+        return QImage();
+    }
+
+    QImage img(static_cast<int>(w), static_cast<int>(h), QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::transparent);
+
+    CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    if (!cs) {
+        return QImage();
+    }
+
+    CGContextRef ctx = CGBitmapContextCreate(
+        img.bits(), w, h, 8, img.bytesPerLine(), cs,
+        static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little));
+    CGColorSpaceRelease(cs);
+    if (!ctx) {
+        return QImage();
+    }
+
+    CGContextSetBlendMode(ctx, kCGBlendModeCopy);
+    CGContextDrawImage(ctx, CGRectMake(0, 0, static_cast<CGFloat>(w), static_cast<CGFloat>(h)), cg);
+    CGContextRelease(ctx);
+    return img;
+}
 
 QVariantMap toHistoryItemVariant(WKBackForwardListItem *item)
 {
@@ -203,7 +236,8 @@ public:
     bool hasNativeFindPanelImpl() const override;
     void showFindPanelImpl() override;
     void hideFindPanelImpl() override;
-    
+    void captureSnapshotImpl(quint64 requestId) override;
+
 private:
     WKWebView *m_webView = nullptr;
     NavigationDelegate *m_navigationDelegate = nullptr;
@@ -560,7 +594,7 @@ void DarwinWebViewPrivate::updateNativeVisibility(bool visible)
         return;
     }
 
-    bool shouldBeVisible = visible && m_nativeViewSetup;
+    const bool shouldBeVisible = shouldShowNativeWebView(visible);
     WKWebView *webView = m_webView;
 
     runOnMainThread(^{
@@ -772,7 +806,8 @@ void DarwinWebViewPrivate::setupNativeViewImpl()
     CGFloat geoY = scenePos.y();
     CGFloat geoW = q_ptr->width();
     CGFloat geoH = q_ptr->height();
-    bool currentVisible = q_ptr->isVisible();
+    const bool currentVisible = q_ptr->isVisible();
+    const bool showNativeWeb = shouldShowNativeWebView(currentVisible);
 
     dispatch_async(dispatch_get_main_queue(), ^{
         if (wasSetup) {
@@ -789,8 +824,73 @@ void DarwinWebViewPrivate::setupNativeViewImpl()
 
         // Unhide only when the item is actually visible; if not, the
         // ItemVisibleHasChanged handler will call updateNativeVisibility later.
-        [webView setHidden:!currentVisible];
+        [webView setHidden:!showNativeWeb];
     });
+}
+
+void DarwinWebViewPrivate::captureSnapshotImpl(quint64 requestId)
+{
+    if (!m_webView) {
+        QPointer<MobileWebViewBackend> guard(q_ptr);
+        QMetaObject::invokeMethod(q_ptr, [guard, this, requestId]() {
+            if (!guard) {
+                return;
+            }
+            notifyFreezeCaptureFinished(requestId, QImage());
+        }, Qt::QueuedConnection);
+        return;
+    }
+
+    WKWebView *webView = m_webView;
+    QPointer<MobileWebViewBackend> guard(q_ptr);
+
+    WKSnapshotConfiguration *cfg = [[WKSnapshotConfiguration alloc] init];
+#if defined(Q_OS_IOS)
+    if (@available(iOS 11.0, *)) {
+        cfg.afterScreenUpdates = YES;
+    }
+#else
+    if (@available(macOS 10.13, *)) {
+        cfg.afterScreenUpdates = YES;
+    }
+#endif
+
+    [webView takeSnapshotWithConfiguration:cfg
+                         completionHandler:^(id snapshotImage, NSError *error) {
+        QImage qimg;
+        if (!error && snapshotImage) {
+#if defined(Q_OS_IOS)
+            if ([snapshotImage isKindOfClass:[UIImage class]]) {
+                UIImage *ui = static_cast<UIImage *>(snapshotImage);
+                CGImageRef cg = ui.CGImage;
+                if (cg) {
+                    qimg = qImageFromCGImage(cg);
+                }
+            }
+#else
+            if ([snapshotImage isKindOfClass:[NSImage class]]) {
+                NSImage *ni = static_cast<NSImage *>(snapshotImage);
+                CGImageRef cg = [ni CGImageForProposedRect:NULL context:nil hints:nil];
+                if (cg) {
+                    qimg = qImageFromCGImage(cg);
+                }
+            }
+#endif
+        }
+
+        MobileWebViewBackend *backendObj = guard.data();
+        if (!backendObj) {
+            return;
+        }
+
+        QMetaObject::invokeMethod(backendObj, [this, guard, requestId, qimg]() {
+            if (!guard) {
+                return;
+            }
+            notifyFreezeCaptureFinished(requestId, qimg);
+        }, Qt::QueuedConnection);
+    }];
+    [cfg release];
 }
 
 // =============================================================================

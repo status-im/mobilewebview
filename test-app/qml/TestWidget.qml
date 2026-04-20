@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtWebChannel
 import MobileWebView 1.0
 
@@ -111,6 +112,10 @@ Item {
         testBridge.qmlEvent("decrementFromQml: qml-minus")
     }
 
+    function openFreezeTestDialog() {
+        freezeTestDialog.open()
+    }
+
     function qmlShowStaticPopup() {
         var script = "(function(count) {" +
             "  var id = '__qml_center_overlay';" +
@@ -161,9 +166,30 @@ Item {
         webView.stopFind()
     }
 
+    Dialog {
+        id: freezeTestDialog
+        title: qsTr("Freeze test")
+        modal: true
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(420, root.width - 48)
+        padding: 16
+
+        Label {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: qsTr("While this dialog is open, the WebView is frozen to a snapshot (freeze: dialog.opened). Close to resume.")
+            color: "#3c4043"
+            font.pixelSize: 14
+        }
+
+        standardButtons: Dialog.Close
+    }
+
     MobileWebViewBackend {
         id: webView
         anchors.fill: parent
+        freeze: freezeTestDialog.opened
         webChannelNamespace: "qt"
         webChannel: WebChannel {
             id: channel

@@ -5,15 +5,24 @@
 #include <QVariantList>
 #include <QWebChannel>
 #include <QRectF>
+#include <QImage>
+#include <functional>
 
 class MobileWebViewBackend;
 class WebChannelTransport;
+class MobileWebViewSnapshotItem;
 
 // Private implementation interface for MobileWebViewBackend
 // Platform-specific implementations (Android, Darwin) inherit from this class
 class MobileWebViewBackendPrivate
 {
 public:
+    enum class FreezeState {
+        Idle,
+        Capturing,
+        Frozen,
+    };
+
     explicit MobileWebViewBackendPrivate(MobileWebViewBackend *q);
     virtual ~MobileWebViewBackendPrivate();
     
@@ -43,7 +52,22 @@ public:
     virtual bool hasNativeFindPanelImpl() const = 0;
     virtual void showFindPanelImpl() = 0;
     virtual void hideFindPanelImpl() = 0;
-    
+
+    // Async snapshot for freeze; must eventually call notifyFreezeCaptureFinished on the Qt thread
+    virtual void captureSnapshotImpl(quint64 requestId) = 0;
+
+    // Called when platform snapshot is ready (Qt thread)
+    void notifyFreezeCaptureFinished(quint64 requestId, const QImage &image);
+
+    void clearFreezeState();
+    void updateFreezeOverlayGeometry();
+
+    /// Native WebView is hidden only in Frozen state (overlay replaces it).
+    bool shouldShowNativeWebView(bool qmlItemVisible) const
+    {
+        return qmlItemVisible && m_nativeViewSetup && m_freezeState != FreezeState::Frozen;
+    }
+
     // Common state shared between platforms
     MobileWebViewBackend *q_ptr;
     bool m_loading = false;
@@ -66,7 +90,12 @@ public:
     QStringList m_allowedOrigins;
     QWebChannel *m_channel = nullptr;
     WebChannelTransport *m_transport = nullptr;
-    
+
+    // Freeze: hide native WebView and show last captured frame in Qt scene
+    FreezeState m_freezeState = FreezeState::Idle;
+    quint64 m_freezeRequestId = 0;
+    MobileWebViewSnapshotItem *m_snapshotItem = nullptr;
+
     // Common methods (implemented in mobilewebviewbackend.cpp)
     void setLoading(bool loading);
     void setLoaded(bool loaded);

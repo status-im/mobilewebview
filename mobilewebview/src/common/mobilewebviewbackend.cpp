@@ -1,10 +1,12 @@
 #include "MobileWebView/mobilewebviewbackend.h"
 #include "mobilewebviewbackend_p.h"
+#include "snapshotitem.h"
 #include "webchanneltransport.h"
 #include "origin_utils.h"
 
 #include <QUuid>
 #include <QDebug>
+#include <QPointF>
 #include <QtMath>
 #include <mutex>
 
@@ -109,6 +111,53 @@ void MobileWebViewBackendPrivate::updateAllowedOrigins(const QStringList &origin
     updateAllowedOriginsImpl(origins);
 }
 
+void MobileWebViewBackendPrivate::notifyFreezeCaptureFinished(quint64 requestId, const QImage &image)
+{
+    if (requestId != m_freezeRequestId) {
+        return;
+    }
+    if (m_freezeState != FreezeState::Capturing) {
+        return;
+    }
+
+    if (image.isNull()) {
+        qWarning() << "MobileWebViewBackend: freeze snapshot failed or empty";
+        clearFreezeState();
+        emit q_ptr->freezeChanged();
+        return;
+    }
+
+    if (!m_snapshotItem) {
+        m_snapshotItem = new MobileWebViewSnapshotItem(q_ptr);
+    }
+    m_snapshotItem->setImage(image);
+    m_snapshotItem->setVisible(true);
+    updateFreezeOverlayGeometry();
+
+    m_freezeState = FreezeState::Frozen;
+    updateNativeVisibility(q_ptr->isVisible());
+}
+
+void MobileWebViewBackendPrivate::clearFreezeState()
+{
+    m_freezeState = FreezeState::Idle;
+    if (m_snapshotItem) {
+        m_snapshotItem->deleteLater();
+        m_snapshotItem = nullptr;
+    }
+    updateNativeVisibility(q_ptr->isVisible());
+}
+
+void MobileWebViewBackendPrivate::updateFreezeOverlayGeometry()
+{
+    if (!m_snapshotItem || !q_ptr) {
+        return;
+    }
+    m_snapshotItem->setPosition(QPointF(0, 0));
+    m_snapshotItem->setWidth(q_ptr->width());
+    m_snapshotItem->setHeight(q_ptr->height());
+}
+
 void MobileWebViewBackendPrivate::setupTransport()
 {
     if (m_channel && !m_transport) {
@@ -193,6 +242,8 @@ MobileWebViewBackend::MobileWebViewBackend(QQuickItem *parent)
 
 MobileWebViewBackend::~MobileWebViewBackend()
 {
+    Q_D(MobileWebViewBackend);
+    d->clearFreezeState();
 }
 
 bool MobileWebViewBackend::loading() const
@@ -414,6 +465,36 @@ bool MobileWebViewBackend::hasNativeFindPanel() const
     return d->hasNativeFindPanelImpl();
 }
 
+bool MobileWebViewBackend::freeze() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_freezeState != MobileWebViewBackendPrivate::FreezeState::Idle;
+}
+
+void MobileWebViewBackend::setFreeze(bool freeze)
+{
+    Q_D(MobileWebViewBackend);
+    using FS = MobileWebViewBackendPrivate::FreezeState;
+
+    if (freeze) {
+        if (d->m_freezeState == FS::Capturing || d->m_freezeState == FS::Frozen) {
+            return;
+        }
+        d->m_freezeState = FS::Capturing;
+        ++d->m_freezeRequestId;
+        emit freezeChanged();
+        d->captureSnapshotImpl(d->m_freezeRequestId);
+        return;
+    }
+
+    if (d->m_freezeState == FS::Idle) {
+        return;
+    }
+
+    d->clearFreezeState();
+    emit freezeChanged();
+}
+
 void MobileWebViewBackend::setZoomFactor(qreal factor)
 {
     Q_D(MobileWebViewBackend);
@@ -556,6 +637,7 @@ void MobileWebViewBackend::geometryChange(const QRectF &newGeometry, const QRect
     if (newGeometry != oldGeometry) {
         Q_D(MobileWebViewBackend);
         d->updateNativeGeometry(newGeometry);
+        d->updateFreezeOverlayGeometry();
     }
 }
 

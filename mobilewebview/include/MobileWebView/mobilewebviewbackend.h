@@ -33,6 +33,7 @@ class MobileWebViewBackend : public QQuickItem
     Q_PROPERTY(qreal zoomFactor READ zoomFactor WRITE setZoomFactor NOTIFY zoomFactorChanged)
     Q_PROPERTY(bool findSupported READ findSupported CONSTANT)
     Q_PROPERTY(bool hasNativeFindPanel READ hasNativeFindPanel CONSTANT)
+    Q_PROPERTY(bool freeze READ freeze WRITE setFreeze NOTIFY freezeChanged)
 
 public:
     explicit MobileWebViewBackend(QQuickItem *parent = nullptr);
@@ -62,6 +63,8 @@ public:
     void setZoomFactor(qreal factor);
     bool findSupported() const;
     bool hasNativeFindPanel() const;
+    bool freeze() const;
+    void setFreeze(bool freeze);
 
     // Internal methods (used by private implementation and platform delegates)
     void updateUrlState(const QUrl &url);
@@ -124,6 +127,7 @@ signals:
     void loadProgressChanged();
     void faviconChanged();
     void zoomFactorChanged();
+    void freezeChanged();
 
     // Emitted when a message is received from JavaScript
     void webMessageReceived(const QString &message, const QString &origin, bool isMainFrame);
