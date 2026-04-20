@@ -4,6 +4,9 @@ import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import android.graphics.Rect;
 import android.util.Base64;
 import android.util.Log;
@@ -401,6 +404,43 @@ public class MobileWebView {
         runOnMainThread(() -> mWebView.setVisibility(visible ? View.VISIBLE : View.GONE));
     }
 
+    /**
+     * Capture an ARGB8888 snapshot of the WebView for freeze overlay (runs on UI thread, then notifies native).
+     */
+    public void captureSnapshotForFreeze(long requestId) {
+        runOnMainThread(() -> {
+            if (!hasNativePtr()) {
+                return;
+            }
+            if (mWebView == null) {
+                nativeOnFreezeSnapshotReady(mNativePtr, requestId, 0, 0, null);
+                return;
+            }
+            try {
+                int w = mWebView.getWidth();
+                int h = mWebView.getHeight();
+                if (w <= 0 || h <= 0) {
+                    nativeOnFreezeSnapshotReady(mNativePtr, requestId, 0, 0, null);
+                    return;
+                }
+                Bitmap bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                Canvas canvas = new Canvas(bitmap);
+                mWebView.draw(canvas);
+                ByteBuffer buffer = ByteBuffer.allocateDirect(w * h * 4);
+                buffer.order(ByteOrder.nativeOrder());
+                bitmap.copyPixelsToBuffer(buffer);
+                byte[] pixels = new byte[w * h * 4];
+                buffer.rewind();
+                buffer.get(pixels);
+                bitmap.recycle();
+                nativeOnFreezeSnapshotReady(mNativePtr, requestId, w, h, pixels);
+            } catch (RuntimeException e) {
+                Log.e(TAG, "captureSnapshotForFreeze failed", e);
+                nativeOnFreezeSnapshotReady(mNativePtr, requestId, 0, 0, null);
+            }
+        });
+    }
+
     public void setInteractionEnabled(boolean enabled) {
         runOnMainThread(() -> {
             if (mWebView != null) {
@@ -673,4 +713,6 @@ public class MobileWebView {
     private native void nativeOnLoadProgressChanged(long nativePtr, int progress);
     private native void nativeOnFaviconReceived(long nativePtr, String faviconUrl);
     private native void nativeOnFindResultChanged(long nativePtr, int activeMatchIndex, int matchCount);
+    private native void nativeOnFreezeSnapshotReady(long nativePtr, long requestId, int width, int height,
+                                                    byte[] pixels);
 }

@@ -13,6 +13,9 @@
 #include <QJniEnvironment>
 #include <QtMath>
 #include <QVariantMap>
+#include <QImage>
+#include <QByteArray>
+#include <QPointer>
 
 // =============================================================================
 // AndroidWebViewPrivate - Android-specific implementation
@@ -50,7 +53,8 @@ public:
     bool hasNativeFindPanelImpl() const override;
     void showFindPanelImpl() override;
     void hideFindPanelImpl() override;
-    
+    void captureSnapshotImpl(quint64 requestId) override;
+
     // JNI helper methods
     void cleanupJni();
     jobject createWebView();
@@ -95,7 +99,8 @@ private:
     jmethodID m_setZoomFactorMethod = nullptr;
     jmethodID m_findTextMethod = nullptr;
     jmethodID m_stopFindMethod = nullptr;
-    
+    jmethodID m_captureSnapshotForFreezeMethod = nullptr;
+
     bool m_jniInitialized = false;
     QMutex m_jniMutex;  // Protect JNI calls
 };
@@ -161,6 +166,7 @@ bool AndroidWebViewPrivate::initNativeView()
     m_setZoomFactorMethod = env->GetMethodID(m_webViewClass, "setZoomFactor", "(F)V");
     m_findTextMethod = env->GetMethodID(m_webViewClass, "findText", "(Ljava/lang/String;I)V");
     m_stopFindMethod = env->GetMethodID(m_webViewClass, "stopFind", "()V");
+    m_captureSnapshotForFreezeMethod = env->GetMethodID(m_webViewClass, "captureSnapshotForFreeze", "(J)V");
 
     m_jniInitialized = true;
     return true;
@@ -494,7 +500,7 @@ void AndroidWebViewPrivate::updateNativeVisibility(bool visible)
         return;
     }
 
-    bool shouldBeVisible = visible && m_nativeViewSetup;
+    const bool shouldBeVisible = shouldShowNativeWebView(visible);
     env->CallVoidMethod(m_webViewObject, m_setVisibleMethod, shouldBeVisible ? JNI_TRUE : JNI_FALSE);
 
     clearJniExceptionIfAny(env);
@@ -751,6 +757,37 @@ void AndroidWebViewPrivate::showFindPanelImpl()
 void AndroidWebViewPrivate::hideFindPanelImpl()
 {
     // No-op on Android: QML find panel is used instead
+}
+
+void AndroidWebViewPrivate::captureSnapshotImpl(quint64 requestId)
+{
+    QMutexLocker locker(&m_jniMutex);
+
+    QPointer<MobileWebViewBackend> guard(q_ptr);
+
+    if (!m_jniInitialized || !m_webViewObject || !m_captureSnapshotForFreezeMethod) {
+        QMetaObject::invokeMethod(q_ptr, [guard, this, requestId]() {
+            if (!guard) {
+                return;
+            }
+            notifyFreezeCaptureFinished(requestId, QImage());
+        }, Qt::QueuedConnection);
+        return;
+    }
+
+    QJniEnvironment env;
+    if (!env.isValid()) {
+        QMetaObject::invokeMethod(q_ptr, [guard, this, requestId]() {
+            if (!guard) {
+                return;
+            }
+            notifyFreezeCaptureFinished(requestId, QImage());
+        }, Qt::QueuedConnection);
+        return;
+    }
+
+    env->CallVoidMethod(m_webViewObject, m_captureSnapshotForFreezeMethod, static_cast<jlong>(requestId));
+    clearJniExceptionIfAny(env);
 }
 
 void AndroidWebViewPrivate::onFindResultChanged(int activeMatchIndex, int matchCount)
@@ -1060,6 +1097,50 @@ Java_org_mobilewebview_MobileWebView_nativeOnFindResultChanged(JNIEnv *env, jobj
     QMetaObject::invokeMethod(backend->q_ptr, [backend, activeMatchIndex, matchCount]() {
         backend->onFindResultChanged(static_cast<int>(activeMatchIndex),
                                      static_cast<int>(matchCount));
+    }, Qt::QueuedConnection);
+}
+
+JNIEXPORT void JNICALL
+Java_org_mobilewebview_MobileWebView_nativeOnFreezeSnapshotReady(JNIEnv *env, jobject,
+                                                                 jlong nativePtr,
+                                                                 jlong requestId,
+                                                                 jint width,
+                                                                 jint height,
+                                                                 jbyteArray jdata)
+{
+    if (nativePtr == 0) {
+        return;
+    }
+
+    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate *>(nativePtr);
+    QPointer<MobileWebViewBackend> guard(backend->q_ptr);
+
+    QByteArray pixels;
+    if (jdata && width > 0 && height > 0) {
+        const jsize len = env->GetArrayLength(jdata);
+        const jsize expected = static_cast<jsize>(width) * static_cast<jsize>(height) * 4;
+        if (len == expected) {
+            jbyte *bytes = env->GetByteArrayElements(jdata, nullptr);
+            if (bytes) {
+                pixels = QByteArray(reinterpret_cast<const char *>(bytes), len);
+                env->ReleaseByteArrayElements(jdata, bytes, JNI_ABORT);
+            }
+        }
+    }
+
+    const quint64 rid = static_cast<quint64>(requestId);
+
+    QMetaObject::invokeMethod(backend->q_ptr, [guard, backend, rid, width, height, pixels]() {
+        if (!guard) {
+            return;
+        }
+        QImage img;
+        if (!pixels.isEmpty() && width > 0 && height > 0) {
+            img = QImage(reinterpret_cast<const uchar *>(pixels.constData()),
+                         width, height, width * 4, QImage::Format_ARGB32)
+                      .copy();
+        }
+        backend->notifyFreezeCaptureFinished(rid, img);
     }, Qt::QueuedConnection);
 }
 

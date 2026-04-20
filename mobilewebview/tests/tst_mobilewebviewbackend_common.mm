@@ -6,6 +6,7 @@
 
 #include "MobileWebView/mobilewebviewbackend.h"
 #include "../src/common/mobilewebviewbackend_p.h"
+#include "../src/common/snapshotitem.h"
 #include "../src/common/userscript_utils.h"
 #include "../src/common/webchanneltransport.h"
 #include "../src/darwin/navigationdelegate.h"
@@ -105,6 +106,12 @@ public:
     void showFindPanelImpl() override {}
     void hideFindPanelImpl() override {}
 
+    void captureSnapshotImpl(quint64 requestId) override
+    {
+        ++freezeCaptureCalls;
+        lastFreezeCaptureRequestId = requestId;
+    }
+
     int loadUrlCalls = 0;
     int loadHtmlCalls = 0;
     int goBackCalls = 0;
@@ -120,6 +127,8 @@ public:
     int postMessageCalls = 0;
     int setupNativeViewCalls = 0;
     int updateAllowedOriginsCalls = 0;
+    int freezeCaptureCalls = 0;
+    quint64 lastFreezeCaptureRequestId = 0;
 
     bool lastVisible = false;
     bool installBridgeResult = true;
@@ -151,6 +160,10 @@ class MobileWebViewBackendCommonTest : public QObject
 
 private slots:
     void forwardsCallsAndStateChanges();
+    void freezeIntentIsSynchronousAndCaptureCompletes();
+    void freezeCancelledBeforeNotifyIgnoresStaleCallback();
+    void freezeEmptySnapshotAbortsAndEmits();
+    void freezeDoubleSetTrueOnlyCapturesOnce();
     void lifecycleHooksTriggerNativeCallbacks();
     void bridgeEdgeBranchesAreCovered();
     void navigationDelegateUpdatesStates();
@@ -260,6 +273,93 @@ void MobileWebViewBackendCommonTest::forwardsCallsAndStateChanges()
     d->m_transport->sendMessage(QJsonObject{{QStringLiteral("ping"), 1}});
     QCOMPARE(d->postMessageCalls, 1);
     QCOMPARE(d->lastPostedJson, QStringLiteral("{\"ping\":1}"));
+}
+
+void MobileWebViewBackendCommonTest::freezeIntentIsSynchronousAndCaptureCompletes()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d != nullptr);
+
+    using FS = MobileWebViewBackendPrivate::FreezeState;
+    QSignalSpy freezeSpy(&backend, &MobileWebViewBackend::freezeChanged);
+
+    backend.setFreeze(true);
+    QCOMPARE(freezeSpy.count(), 1);
+    QCOMPARE(backend.freeze(), true);
+    QCOMPARE(d->m_freezeState, FS::Capturing);
+    QCOMPARE(d->freezeCaptureCalls, 1);
+    QCOMPARE(d->lastFreezeCaptureRequestId, d->m_freezeRequestId);
+
+    QImage img(2, 2, QImage::Format_ARGB32);
+    img.fill(QColor(Qt::red));
+    d->notifyFreezeCaptureFinished(d->m_freezeRequestId, img);
+
+    QCOMPARE(d->m_freezeState, FS::Frozen);
+    QVERIFY(d->m_snapshotItem != nullptr);
+    QCOMPARE(d->freezeCaptureCalls, 1);
+    QCOMPARE(backend.freeze(), true);
+    QCOMPARE(freezeSpy.count(), 1);
+}
+
+void MobileWebViewBackendCommonTest::freezeCancelledBeforeNotifyIgnoresStaleCallback()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d != nullptr);
+
+    using FS = MobileWebViewBackendPrivate::FreezeState;
+    QSignalSpy freezeSpy(&backend, &MobileWebViewBackend::freezeChanged);
+
+    backend.setFreeze(true);
+    const quint64 rid = d->m_freezeRequestId;
+    QCOMPARE(d->m_freezeState, FS::Capturing);
+
+    backend.setFreeze(false);
+    QCOMPARE(d->m_freezeState, FS::Idle);
+    QCOMPARE(freezeSpy.count(), 2);
+
+    QImage img(1, 1, QImage::Format_ARGB32);
+    img.fill(Qt::blue);
+    d->notifyFreezeCaptureFinished(rid, img);
+
+    QCOMPARE(d->m_freezeState, FS::Idle);
+    QVERIFY(d->m_snapshotItem == nullptr);
+}
+
+void MobileWebViewBackendCommonTest::freezeEmptySnapshotAbortsAndEmits()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d != nullptr);
+
+    using FS = MobileWebViewBackendPrivate::FreezeState;
+    QSignalSpy freezeSpy(&backend, &MobileWebViewBackend::freezeChanged);
+
+    backend.setFreeze(true);
+    QCOMPARE(freezeSpy.count(), 1);
+
+    QTest::ignoreMessage(QtWarningMsg, "MobileWebViewBackend: freeze snapshot failed or empty");
+    d->notifyFreezeCaptureFinished(d->m_freezeRequestId, QImage());
+
+    QCOMPARE(d->m_freezeState, FS::Idle);
+    QCOMPARE(backend.freeze(), false);
+    QCOMPARE(freezeSpy.count(), 2);
+}
+
+void MobileWebViewBackendCommonTest::freezeDoubleSetTrueOnlyCapturesOnce()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d != nullptr);
+
+    backend.setFreeze(true);
+    backend.setFreeze(true);
+    QCOMPARE(d->freezeCaptureCalls, 1);
 }
 
 void MobileWebViewBackendCommonTest::lifecycleHooksTriggerNativeCallbacks()
