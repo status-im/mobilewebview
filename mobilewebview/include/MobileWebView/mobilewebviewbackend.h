@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QQuickItem>
+#include <QSize>
 #include <QUrl>
 #include <QStringList>
 #include <QVariantList>
@@ -65,6 +66,10 @@ public:
     bool hasNativeFindPanel() const;
     bool freeze() const;
     void setFreeze(bool freeze);
+
+    /// Async native snapshot. On success, snapshotReady carries a stable
+    /// image://mobilewebview-snapshot/<key> URL for this backend instance (Image.source).
+    Q_INVOKABLE void requestSnapshot(const QSize &targetSize = QSize());
 
     // Internal methods (used by private implementation and platform delegates)
     void updateUrlState(const QUrl &url);
@@ -141,7 +146,11 @@ signals:
     // matchCount: total number of matches (0 if none / search cleared)
     void findTextResult(int activeMatchIndex, int matchCount);
 
+    /// Emitted when requestSnapshot completes (\a imageUrl empty if \a ok is false).
+    void snapshotReady(const QUrl &imageUrl, bool ok);
+
 protected:
+    void componentComplete() override;
     void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
     void itemChange(ItemChange change, const ItemChangeData &value) override;
     void updatePolish() override;

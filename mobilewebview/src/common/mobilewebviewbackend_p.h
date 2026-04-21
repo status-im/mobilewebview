@@ -6,6 +6,7 @@
 #include <QWebChannel>
 #include <QRectF>
 #include <QImage>
+#include <QSize>
 #include <functional>
 
 class MobileWebViewBackend;
@@ -53,11 +54,12 @@ public:
     virtual void showFindPanelImpl() = 0;
     virtual void hideFindPanelImpl() = 0;
 
-    // Async snapshot for freeze; must eventually call notifyFreezeCaptureFinished on the Qt thread
+    // Async snapshot for freeze and public requestSnapshot; must eventually call
+    // notifySnapshotReady on the Qt thread
     virtual void captureSnapshotImpl(quint64 requestId) = 0;
 
     // Called when platform snapshot is ready (Qt thread)
-    void notifyFreezeCaptureFinished(quint64 requestId, const QImage &image);
+    void notifySnapshotReady(quint64 requestId, const QImage &image);
 
     void clearFreezeState();
     void updateFreezeOverlayGeometry();
@@ -94,6 +96,11 @@ public:
     // Freeze: hide native WebView and show last captured frame in Qt scene
     FreezeState m_freezeState = FreezeState::Idle;
     quint64 m_freezeRequestId = 0;
+    /// Monotonic id for all captureSnapshotImpl calls (freeze + public snapshots).
+    quint64 m_nextSnapshotId = 0;
+    bool m_publicSnapshotPending = false;
+    quint64 m_publicSnapshotRequestId = 0;
+    QSize m_publicSnapshotTargetSize;
     MobileWebViewSnapshotItem *m_snapshotItem = nullptr;
 
     // Common methods (implemented in mobilewebviewbackend.cpp)

@@ -1,13 +1,19 @@
 #include "MobileWebView/mobilewebviewbackend.h"
 #include "mobilewebviewbackend_p.h"
+#include "snapshotimageprovider.h"
 #include "snapshotitem.h"
 #include "webchanneltransport.h"
 #include "origin_utils.h"
 
 #include <QUuid>
 #include <QDebug>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QPointer>
 #include <QPointF>
+#include <QQmlEngine>
+#include <QtQml>
+#include <QSet>
 #include <QTimer>
 #include <QtMath>
 #include <mutex>
@@ -15,6 +21,40 @@
 namespace {
 // Delay before hiding native WebView after overlay is ready (freeze) and before removing overlay (unfreeze).
 constexpr int kFreezeOverlayFrameDelayMs = 48;
+
+QString snapshotImageProviderKey(const MobileWebViewBackend *backend)
+{
+    return QStringLiteral("mwv") + QString::number(reinterpret_cast<quintptr>(backend), 16);
+}
+
+void ensureSnapshotImageProviderRegistered(QQmlEngine *engine)
+{
+    if (!engine) {
+        return;
+    }
+
+    static QMutex mutex;
+    static QSet<QQmlEngine *> registered;
+
+    {
+        QMutexLocker locker(&mutex);
+        if (registered.contains(engine)) {
+            return;
+        }
+        registered.insert(engine);
+    }
+
+    const QString providerId = QStringLiteral("mobilewebview-snapshot");
+    if (!engine->imageProvider(providerId)) {
+        engine->addImageProvider(providerId, new MobileWebViewSnapshotImageProvider());
+    }
+
+    QQmlEngine *raw = engine;
+    QObject::connect(engine, &QObject::destroyed, [raw]() {
+        QMutexLocker lock(&mutex);
+        registered.remove(raw);
+    });
+}
 } // namespace
 
 // =============================================================================
@@ -118,8 +158,27 @@ void MobileWebViewBackendPrivate::updateAllowedOrigins(const QStringList &origin
     updateAllowedOriginsImpl(origins);
 }
 
-void MobileWebViewBackendPrivate::notifyFreezeCaptureFinished(quint64 requestId, const QImage &image)
+void MobileWebViewBackendPrivate::notifySnapshotReady(quint64 requestId, const QImage &image)
 {
+    if (m_publicSnapshotPending && requestId == m_publicSnapshotRequestId) {
+        m_publicSnapshotPending = false;
+        const QString key = snapshotImageProviderKey(q_ptr);
+        const bool ok = !image.isNull();
+        QUrl imageUrl;
+        if (ok) {
+            QImage out = image;
+            if (m_publicSnapshotTargetSize.isValid() && m_publicSnapshotTargetSize.width() > 0
+                && m_publicSnapshotTargetSize.height() > 0) {
+                out = image.scaled(m_publicSnapshotTargetSize, Qt::KeepAspectRatio,
+                                    Qt::SmoothTransformation);
+            }
+            MobileWebViewSnapshotImageProvider::registerImage(key, out);
+            imageUrl = QUrl(QStringLiteral("image://mobilewebview-snapshot/") + key);
+        }
+        emit q_ptr->snapshotReady(imageUrl, ok);
+        return;
+    }
+
     if (requestId != m_freezeRequestId) {
         return;
     }
@@ -260,7 +319,17 @@ MobileWebViewBackend::MobileWebViewBackend(QQuickItem *parent)
 MobileWebViewBackend::~MobileWebViewBackend()
 {
     Q_D(MobileWebViewBackend);
+    MobileWebViewSnapshotImageProvider::releaseImage(snapshotImageProviderKey(this));
     d->clearFreezeState();
+}
+
+void MobileWebViewBackend::requestSnapshot(const QSize &targetSize)
+{
+    Q_D(MobileWebViewBackend);
+    d->m_publicSnapshotRequestId = ++d->m_nextSnapshotId;
+    d->m_publicSnapshotPending = true;
+    d->m_publicSnapshotTargetSize = targetSize;
+    d->captureSnapshotImpl(d->m_publicSnapshotRequestId);
 }
 
 bool MobileWebViewBackend::loading() const
@@ -498,7 +567,7 @@ void MobileWebViewBackend::setFreeze(bool freeze)
             return;
         }
         d->m_freezeState = FS::Capturing;
-        ++d->m_freezeRequestId;
+        d->m_freezeRequestId = ++d->m_nextSnapshotId;
         emit freezeChanged();
         d->captureSnapshotImpl(d->m_freezeRequestId);
         return;
@@ -661,6 +730,12 @@ void MobileWebViewBackend::hideFindPanel()
     d->hideFindPanelImpl();
 }
 
+void MobileWebViewBackend::componentComplete()
+{
+    QQuickItem::componentComplete();
+    ensureSnapshotImageProviderRegistered(qmlEngine(this));
+}
+
 void MobileWebViewBackend::geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry)
 {
     QQuickItem::geometryChange(newGeometry, oldGeometry);
@@ -680,6 +755,7 @@ void MobileWebViewBackend::itemChange(ItemChange change, const ItemChangeData &v
     switch (change) {
     case ItemSceneChange:
         if (value.window) {
+            ensureSnapshotImageProviderRegistered(qmlEngine(this));
             QMetaObject::invokeMethod(this, [this, d]() {
                 d->setupNativeViewImpl();
                 // Trigger geometry sync now that m_nativeViewSetup is true.

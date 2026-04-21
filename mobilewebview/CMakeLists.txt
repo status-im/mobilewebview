@@ -40,6 +40,8 @@ set(MOBILEWEBVIEW_COMMON_SOURCES
     src/common/mobilewebviewbackend_p.h
     src/common/snapshotitem.h
     src/common/snapshotitem.cpp
+    src/common/snapshotimageprovider.h
+    src/common/snapshotimageprovider.cpp
     src/common/origin_utils.h
     src/common/origin_utils.cpp
     src/common/userscript_utils.h

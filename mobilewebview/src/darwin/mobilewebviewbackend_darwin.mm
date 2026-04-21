@@ -836,7 +836,7 @@ void DarwinWebViewPrivate::captureSnapshotImpl(quint64 requestId)
             if (!guard) {
                 return;
             }
-            notifyFreezeCaptureFinished(requestId, QImage());
+            notifySnapshotReady(requestId, QImage());
         }, Qt::QueuedConnection);
         return;
     }
@@ -887,7 +887,7 @@ void DarwinWebViewPrivate::captureSnapshotImpl(quint64 requestId)
             if (!guard) {
                 return;
             }
-            notifyFreezeCaptureFinished(requestId, qimg);
+            notifySnapshotReady(requestId, qimg);
         }, Qt::QueuedConnection);
     }];
     [cfg release];
