@@ -6,9 +6,16 @@
 
 #include <QUuid>
 #include <QDebug>
+#include <QPointer>
 #include <QPointF>
+#include <QTimer>
 #include <QtMath>
 #include <mutex>
+
+namespace {
+// Delay before hiding native WebView after overlay is ready (freeze) and before removing overlay (unfreeze).
+constexpr int kFreezeOverlayFrameDelayMs = 48;
+} // namespace
 
 // =============================================================================
 // MobileWebViewBackendPrivate - Common implementation
@@ -134,8 +141,18 @@ void MobileWebViewBackendPrivate::notifyFreezeCaptureFinished(quint64 requestId,
     m_snapshotItem->setVisible(true);
     updateFreezeOverlayGeometry();
 
-    m_freezeState = FreezeState::Frozen;
-    updateNativeVisibility(q_ptr->isVisible());
+    const quint64 captureToken = requestId;
+    QPointer<MobileWebViewBackend> guard(q_ptr);
+    QTimer::singleShot(kFreezeOverlayFrameDelayMs, q_ptr, [this, guard, captureToken]() {
+        if (!guard) {
+            return;
+        }
+        if (m_freezeState != FreezeState::Capturing || m_freezeRequestId != captureToken) {
+            return;
+        }
+        m_freezeState = FreezeState::Frozen;
+        updateNativeVisibility(guard->isVisible());
+    });
 }
 
 void MobileWebViewBackendPrivate::clearFreezeState()
@@ -488,6 +505,20 @@ void MobileWebViewBackend::setFreeze(bool freeze)
     }
 
     if (d->m_freezeState == FS::Idle) {
+        return;
+    }
+
+    if (d->m_freezeState == FS::Frozen) {
+        MobileWebViewSnapshotItem *overlay = d->m_snapshotItem;
+        d->m_snapshotItem = nullptr;
+        d->m_freezeState = FS::Idle;
+        d->updateNativeVisibility(d->q_ptr->isVisible());
+        emit freezeChanged();
+        QTimer::singleShot(kFreezeOverlayFrameDelayMs, this, [overlay]() {
+            if (overlay) {
+                overlay->deleteLater();
+            }
+        });
         return;
     }
 
