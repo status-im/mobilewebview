@@ -1,5 +1,6 @@
 #include <QtTest/QtTest>
 
+#include <QPointer>
 #include <QQuickWindow>
 #include <QSignalSpy>
 #include <QVariantMap>
@@ -164,6 +165,7 @@ private slots:
     void freezeCancelledBeforeNotifyIgnoresStaleCallback();
     void freezeEmptySnapshotAbortsAndEmits();
     void freezeDoubleSetTrueOnlyCapturesOnce();
+    void unfreezeFromFrozenDefersOverlayRemovalAndEmits();
     void lifecycleHooksTriggerNativeCallbacks();
     void bridgeEdgeBranchesAreCovered();
     void navigationDelegateUpdatesStates();
@@ -296,8 +298,9 @@ void MobileWebViewBackendCommonTest::freezeIntentIsSynchronousAndCaptureComplete
     img.fill(QColor(Qt::red));
     d->notifyFreezeCaptureFinished(d->m_freezeRequestId, img);
 
-    QCOMPARE(d->m_freezeState, FS::Frozen);
+    QCOMPARE(d->m_freezeState, FS::Capturing);
     QVERIFY(d->m_snapshotItem != nullptr);
+    QTRY_COMPARE(d->m_freezeState, FS::Frozen);
     QCOMPARE(d->freezeCaptureCalls, 1);
     QCOMPARE(backend.freeze(), true);
     QCOMPARE(freezeSpy.count(), 1);
@@ -360,6 +363,37 @@ void MobileWebViewBackendCommonTest::freezeDoubleSetTrueOnlyCapturesOnce()
     backend.setFreeze(true);
     backend.setFreeze(true);
     QCOMPARE(d->freezeCaptureCalls, 1);
+}
+
+void MobileWebViewBackendCommonTest::unfreezeFromFrozenDefersOverlayRemovalAndEmits()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d != nullptr);
+
+    using FS = MobileWebViewBackendPrivate::FreezeState;
+    QSignalSpy freezeSpy(&backend, &MobileWebViewBackend::freezeChanged);
+
+    backend.setFreeze(true);
+    QCOMPARE(freezeSpy.count(), 1);
+
+    QImage img(2, 2, QImage::Format_ARGB32);
+    img.fill(QColor(Qt::red));
+    d->notifyFreezeCaptureFinished(d->m_freezeRequestId, img);
+
+    QVERIFY(d->m_snapshotItem != nullptr);
+    QTRY_COMPARE(d->m_freezeState, FS::Frozen);
+
+    QPointer<QQuickItem> overlay(d->m_snapshotItem);
+    backend.setFreeze(false);
+
+    QCOMPARE(d->m_freezeState, FS::Idle);
+    QCOMPARE(d->m_snapshotItem, nullptr);
+    QCOMPARE(backend.freeze(), false);
+    QCOMPARE(freezeSpy.count(), 2);
+
+    QTRY_VERIFY(overlay.isNull());
 }
 
 void MobileWebViewBackendCommonTest::lifecycleHooksTriggerNativeCallbacks()
