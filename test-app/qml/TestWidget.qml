@@ -213,7 +213,7 @@ Item {
             Label {
                 width: parent.width
                 visible: freezeTestDialog.opened && !root.freezeDialogSnapshotPending
-                         && !root.freezeDialogSnapshotUrl
+                         && root.freezeDialogSnapshotUrl.toString().length === 0
                 text: qsTr("Snapshot failed or empty.")
                 color: "#c5221f"
                 font.pixelSize: 13

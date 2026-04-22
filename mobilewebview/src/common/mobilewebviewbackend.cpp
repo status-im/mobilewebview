@@ -16,6 +16,7 @@
 #include <QSet>
 #include <QTimer>
 #include <QtMath>
+#include <QQuickWindow>
 #include <mutex>
 
 namespace {
@@ -169,11 +170,17 @@ void MobileWebViewBackendPrivate::notifySnapshotReady(quint64 requestId, const Q
             QImage out = image;
             if (m_publicSnapshotTargetSize.isValid() && m_publicSnapshotTargetSize.width() > 0
                 && m_publicSnapshotTargetSize.height() > 0) {
-                out = image.scaled(m_publicSnapshotTargetSize, Qt::KeepAspectRatio,
-                                    Qt::SmoothTransformation);
+                const int tw = qRound(m_publicSnapshotTargetSize.width() * m_publicSnapshotDpr);
+                const int th = qRound(m_publicSnapshotTargetSize.height() * m_publicSnapshotDpr);
+                if (tw > 0 && th > 0) {
+                    out = image.scaled(QSize(tw, th), Qt::KeepAspectRatio,
+                                        Qt::SmoothTransformation);
+                }
             }
             MobileWebViewSnapshotImageProvider::registerImage(key, out);
             imageUrl = QUrl(QStringLiteral("image://mobilewebview-snapshot/") + key);
+        } else {
+            MobileWebViewSnapshotImageProvider::releaseImage(key);
         }
         emit q_ptr->snapshotReady(imageUrl, ok);
         return;
@@ -329,6 +336,10 @@ void MobileWebViewBackend::requestSnapshot(const QSize &targetSize)
     d->m_publicSnapshotRequestId = ++d->m_nextSnapshotId;
     d->m_publicSnapshotPending = true;
     d->m_publicSnapshotTargetSize = targetSize;
+    d->m_publicSnapshotDpr = 1.0;
+    if (QQuickWindow *w = window()) {
+        d->m_publicSnapshotDpr = w->devicePixelRatio();
+    }
     d->captureSnapshotImpl(d->m_publicSnapshotRequestId);
 }
 

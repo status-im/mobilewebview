@@ -69,6 +69,8 @@ public:
 
     /// Async native snapshot. On success, snapshotReady carries a stable
     /// image://mobilewebview-snapshot/<key> URL for this backend instance (Image.source).
+    /// \a targetSize, if set, is in logical (device-independent) points like QML item sizes;
+    /// the image is scaled to that size times the window devicePixelRatio. Omit for full native size.
     Q_INVOKABLE void requestSnapshot(const QSize &targetSize = QSize());
 
     // Internal methods (used by private implementation and platform delegates)

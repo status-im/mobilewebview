@@ -101,6 +101,8 @@ public:
     bool m_publicSnapshotPending = false;
     quint64 m_publicSnapshotRequestId = 0;
     QSize m_publicSnapshotTargetSize;
+    /// DPR from QQuickWindow at requestSnapshot time; used to convert logical targetSize to pixels.
+    qreal m_publicSnapshotDpr = 1.0;
     MobileWebViewSnapshotItem *m_snapshotItem = nullptr;
 
     // Common methods (implemented in mobilewebviewbackend.cpp)

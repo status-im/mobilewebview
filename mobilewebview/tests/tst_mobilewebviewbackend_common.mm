@@ -178,6 +178,7 @@ private slots:
     void requestSnapshotCompletesAndRegistersProviderImage();
     void requestSnapshotNullImageFails();
     void requestSnapshotScalesToTargetSize();
+    void requestSnapshotScalesLogicalSizeByWindowDevicePixelRatio();
     void freezeAndRequestSnapshotAreIndependent();
 };
 
@@ -568,9 +569,10 @@ void MobileWebViewBackendCommonTest::requestSnapshotCompletesAndRegistersProvide
     }
     QVERIFY(!key.isEmpty());
 
-    MobileWebViewSnapshotImageProvider provider;
+    QQuickImageProvider *provider = view.engine()->imageProvider(QStringLiteral("mobilewebview-snapshot"));
+    QVERIFY(provider != nullptr);
     QSize sz;
-    const QImage got = provider.requestImage(key, &sz, QSize());
+    const QImage got = provider->requestImage(key, &sz, QSize());
     QCOMPARE(got.size(), img.size());
 }
 
@@ -598,6 +600,7 @@ void MobileWebViewBackendCommonTest::requestSnapshotScalesToTargetSize()
     auto *d = g_lastCreatedPrivate;
     QVERIFY(d != nullptr);
 
+    // No QQuickWindow: DPR is 1.0, so logical 10x10 => 10px output.
     QSignalSpy snapshotSpy(&backend, &MobileWebViewBackend::snapshotReady);
     backend.requestSnapshot(QSize(10, 10));
 
@@ -616,6 +619,42 @@ void MobileWebViewBackendCommonTest::requestSnapshotScalesToTargetSize()
     QCOMPARE(got.width(), 10);
     // 40x30 scaled to width 10 (KeepAspectRatio) -> height 7 or 8 depending on rounding
     QVERIFY(got.height() >= 7 && got.height() <= 8);
+}
+
+void MobileWebViewBackendCommonTest::requestSnapshotScalesLogicalSizeByWindowDevicePixelRatio()
+{
+    g_lastCreatedPrivate = nullptr;
+    QQuickView view;
+    view.resize(320, 240);
+    MobileWebViewBackend backend;
+    backend.setParentItem(view.contentItem());
+    view.show();
+    QCoreApplication::processEvents();
+
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d != nullptr);
+
+    QSignalSpy snapshotSpy(&backend, &MobileWebViewBackend::snapshotReady);
+    backend.requestSnapshot(QSize(10, 10));
+    const qreal dpr = d->m_publicSnapshotDpr;
+    const int expectW = qRound(10 * dpr);
+
+    QImage img(400, 300, QImage::Format_ARGB32);
+    img.fill(QColor(Qt::red));
+    d->notifySnapshotReady(d->lastFreezeCaptureRequestId, img);
+
+    QCOMPARE(snapshotSpy.count(), 1);
+    QString key = snapshotSpy.at(0).at(0).toUrl().path();
+    if (key.startsWith(QLatin1Char('/'))) {
+        key = key.mid(1);
+    }
+
+    MobileWebViewSnapshotImageProvider provider;
+    const QImage got = provider.requestImage(key, nullptr, QSize());
+    QCOMPARE(got.width(), expectW);
+    const int expectTarget = qRound(10 * dpr);
+    const QSize expected = img.size().scaled(QSize(expectTarget, expectTarget), Qt::KeepAspectRatio);
+    QCOMPARE(got.size(), expected);
 }
 
 void MobileWebViewBackendCommonTest::freezeAndRequestSnapshotAreIndependent()
