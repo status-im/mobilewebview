@@ -23,6 +23,9 @@ Item {
     readonly property string favicon: webView.favicon
     readonly property real zoomFactor: webView.zoomFactor
 
+    property url freezeDialogSnapshotUrl: ""
+    property bool freezeDialogSnapshotPending: false
+
     // Find-in-page state (updated by findTextResult signal)
     property int findActiveMatch: -1
     property int findMatchCount: 0
@@ -172,15 +175,58 @@ Item {
         modal: true
         parent: Overlay.overlay
         anchors.centerIn: parent
-        width: Math.min(420, root.width - 48)
+        width: Math.min(480, root.width - 48)
         padding: 16
 
-        Label {
-            width: parent.width
-            wrapMode: Text.WordWrap
-            text: qsTr("While this dialog is open, the WebView is frozen to a snapshot (freeze: dialog.opened). Close to resume.")
-            color: "#3c4043"
-            font.pixelSize: 14
+        onOpened: {
+            root.freezeDialogSnapshotUrl = ""
+            root.freezeDialogSnapshotPending = true
+            Qt.callLater(function() {
+                var w = Math.max(120, Math.floor(freezeTestDialog.availableWidth))
+                webView.requestSnapshot(Qt.size(w, 220))
+            })
+        }
+        onClosed: {
+            root.freezeDialogSnapshotUrl = ""
+            root.freezeDialogSnapshotPending = false
+        }
+
+        Column {
+            width: freezeTestDialog.availableWidth
+            spacing: 12
+
+            Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: qsTr("While open, the WebView uses freeze (native view hidden, last frame in scene). Below: a separate platform snapshot for this dialog (requestSnapshot).")
+                color: "#3c4043"
+                font.pixelSize: 14
+            }
+            Label {
+                width: parent.width
+                visible: freezeTestDialog.opened && root.freezeDialogSnapshotPending
+                text: qsTr("Capturing preview…")
+                color: "#5f6368"
+                font.pixelSize: 13
+                font.italic: true
+            }
+            Label {
+                width: parent.width
+                visible: freezeTestDialog.opened && !root.freezeDialogSnapshotPending
+                         && root.freezeDialogSnapshotUrl.toString().length === 0
+                text: qsTr("Snapshot failed or empty.")
+                color: "#c5221f"
+                font.pixelSize: 13
+            }
+            Image {
+                width: parent.width
+                height: 220
+                visible: root.freezeDialogSnapshotUrl.toString().length > 0
+                fillMode: Image.PreserveAspectFit
+                asynchronous: true
+                cache: false
+                source: root.freezeDialogSnapshotUrl
+            }
         }
 
         standardButtons: Dialog.Close
@@ -223,6 +269,13 @@ Item {
             root.findActiveMatch = activeMatchIndex
             root.findMatchCount = matchCount
             root.logMessage("findTextResult active=" + activeMatchIndex + " total=" + matchCount)
+        }
+        function onSnapshotReady(url, ok) {
+            if (!freezeTestDialog.opened)
+                return
+            root.freezeDialogSnapshotPending = false
+            if (ok)
+                root.freezeDialogSnapshotUrl = url
         }
     }
 }

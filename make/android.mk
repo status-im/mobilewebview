@@ -55,12 +55,12 @@ _android_deploy:
 	    --android-platform "android-$(ANDROID_PLATFORM)" \
 	    --gradle \
 	    --no-gdbserver; \
-	JAVA_SRC="$(APP_SOURCE_DIR)/../mobilewebview/android/src/org/mobilewebview/MobileWebView.java"; \
-	JAVA_DST="$(_ANDROID_BUILD_DIR)/android-build/src/org/mobilewebview/MobileWebView.java"; \
-	if [ -f "$$JAVA_SRC" ] && [ ! -f "$$JAVA_DST" ]; then \
-	    echo "Copying MobileWebView Java bridge..."; \
-	    mkdir -p "$$(dirname "$$JAVA_DST")"; \
-	    cp "$$JAVA_SRC" "$$JAVA_DST"; \
+	if [ -d "$(APP_SOURCE_DIR)/../mobilewebview/android/src/org/mobilewebview" ] \
+	    && [ ! -f "$(_ANDROID_BUILD_DIR)/android-build/src/org/mobilewebview/MobileWebView.java" ]; then \
+	    echo "Copying org.mobilewebview Java sources..."; \
+	    mkdir -p "$(_ANDROID_BUILD_DIR)/android-build/src/org/mobilewebview"; \
+	    cp "$(APP_SOURCE_DIR)"/../mobilewebview/android/src/org/mobilewebview/*.java \
+	      "$(_ANDROID_BUILD_DIR)/android-build/src/org/mobilewebview/"; \
 	fi; \
 	MANIFEST="$(_ANDROID_BUILD_DIR)/android-build/AndroidManifest.xml"; \
 	if [ -f "$$MANIFEST" ] && ! grep -q "android.permission.INTERNET" "$$MANIFEST"; then \

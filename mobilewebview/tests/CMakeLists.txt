@@ -86,6 +86,7 @@ if(APPLE)
         tst_mobilewebviewbackend_common.mm
         ../include/MobileWebView/mobilewebviewbackend.h
         ../src/common/mobilewebviewbackend.cpp
+        ../src/common/snapshotimageprovider.cpp
         ../src/common/snapshotitem.cpp
         ../src/common/origin_utils.cpp
         ../src/common/userscript_utils.cpp

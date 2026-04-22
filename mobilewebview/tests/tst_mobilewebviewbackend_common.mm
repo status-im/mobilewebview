@@ -1,12 +1,15 @@
 #include <QtTest/QtTest>
 
+#include <QCoreApplication>
 #include <QPointer>
+#include <QQuickView>
 #include <QQuickWindow>
 #include <QSignalSpy>
 #include <QVariantMap>
 
 #include "MobileWebView/mobilewebviewbackend.h"
 #include "../src/common/mobilewebviewbackend_p.h"
+#include "../src/common/snapshotimageprovider.h"
 #include "../src/common/snapshotitem.h"
 #include "../src/common/userscript_utils.h"
 #include "../src/common/webchanneltransport.h"
@@ -172,6 +175,11 @@ private slots:
     void parseUserScriptsCoversVariants();
     void escapeJsonForJsEscapesRequiredCharacters();
     void extractOriginFromFrameInfoHandlesNull();
+    void requestSnapshotCompletesAndRegistersProviderImage();
+    void requestSnapshotNullImageFails();
+    void requestSnapshotScalesToTargetSize();
+    void requestSnapshotScalesLogicalSizeByWindowDevicePixelRatio();
+    void freezeAndRequestSnapshotAreIndependent();
 };
 
 void MobileWebViewBackendCommonTest::forwardsCallsAndStateChanges()
@@ -296,7 +304,7 @@ void MobileWebViewBackendCommonTest::freezeIntentIsSynchronousAndCaptureComplete
 
     QImage img(2, 2, QImage::Format_ARGB32);
     img.fill(QColor(Qt::red));
-    d->notifyFreezeCaptureFinished(d->m_freezeRequestId, img);
+    d->notifySnapshotReady(d->m_freezeRequestId, img);
 
     QCOMPARE(d->m_freezeState, FS::Capturing);
     QVERIFY(d->m_snapshotItem != nullptr);
@@ -326,7 +334,7 @@ void MobileWebViewBackendCommonTest::freezeCancelledBeforeNotifyIgnoresStaleCall
 
     QImage img(1, 1, QImage::Format_ARGB32);
     img.fill(Qt::blue);
-    d->notifyFreezeCaptureFinished(rid, img);
+    d->notifySnapshotReady(rid, img);
 
     QCOMPARE(d->m_freezeState, FS::Idle);
     QVERIFY(d->m_snapshotItem == nullptr);
@@ -346,7 +354,7 @@ void MobileWebViewBackendCommonTest::freezeEmptySnapshotAbortsAndEmits()
     QCOMPARE(freezeSpy.count(), 1);
 
     QTest::ignoreMessage(QtWarningMsg, "MobileWebViewBackend: freeze snapshot failed or empty");
-    d->notifyFreezeCaptureFinished(d->m_freezeRequestId, QImage());
+    d->notifySnapshotReady(d->m_freezeRequestId, QImage());
 
     QCOMPARE(d->m_freezeState, FS::Idle);
     QCOMPARE(backend.freeze(), false);
@@ -380,7 +388,7 @@ void MobileWebViewBackendCommonTest::unfreezeFromFrozenDefersOverlayRemovalAndEm
 
     QImage img(2, 2, QImage::Format_ARGB32);
     img.fill(QColor(Qt::red));
-    d->notifyFreezeCaptureFinished(d->m_freezeRequestId, img);
+    d->notifySnapshotReady(d->m_freezeRequestId, img);
 
     QVERIFY(d->m_snapshotItem != nullptr);
     QTRY_COMPARE(d->m_freezeState, FS::Frozen);
@@ -526,6 +534,160 @@ void MobileWebViewBackendCommonTest::extractOriginFromFrameInfoHandlesNull()
 {
     NSString *origin = extractOriginFromFrameInfo(nil);
     QVERIFY([origin isEqualToString:@""]);
+}
+
+void MobileWebViewBackendCommonTest::requestSnapshotCompletesAndRegistersProviderImage()
+{
+    g_lastCreatedPrivate = nullptr;
+    QQuickView view;
+    view.resize(320, 240);
+
+    MobileWebViewBackend backend;
+    backend.setParentItem(view.contentItem());
+    view.show();
+    QCoreApplication::processEvents();
+
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d != nullptr);
+
+    QSignalSpy snapshotSpy(&backend, &MobileWebViewBackend::snapshotReady);
+
+    backend.requestSnapshot(QSize());
+    QCOMPARE(d->freezeCaptureCalls, 1);
+    const quint64 rid = d->lastFreezeCaptureRequestId;
+
+    QImage img(3, 3, QImage::Format_ARGB32);
+    img.fill(QColor(Qt::green));
+    d->notifySnapshotReady(rid, img);
+
+    QCOMPARE(snapshotSpy.count(), 1);
+    const QList<QVariant> args = snapshotSpy.takeFirst();
+    QVERIFY(args.at(1).toBool());
+    QString key = args.at(0).toUrl().path();
+    if (key.startsWith(QLatin1Char('/'))) {
+        key = key.mid(1);
+    }
+    QVERIFY(!key.isEmpty());
+
+    auto *provider = static_cast<QQuickImageProvider *>(
+        view.engine()->imageProvider(QStringLiteral("mobilewebview-snapshot")));
+    QVERIFY(provider != nullptr);
+    QSize sz;
+    const QImage got = provider->requestImage(key, &sz, QSize());
+    QCOMPARE(got.size(), img.size());
+}
+
+void MobileWebViewBackendCommonTest::requestSnapshotNullImageFails()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d != nullptr);
+
+    QSignalSpy snapshotSpy(&backend, &MobileWebViewBackend::snapshotReady);
+    backend.requestSnapshot(QSize());
+    d->notifySnapshotReady(d->lastFreezeCaptureRequestId, QImage());
+
+    QCOMPARE(snapshotSpy.count(), 1);
+    QVERIFY(!snapshotSpy.at(0).at(1).toBool());
+    QVERIFY(snapshotSpy.at(0).at(0).toUrl().isEmpty());
+    QVERIFY(!d->m_publicSnapshotPending);
+}
+
+void MobileWebViewBackendCommonTest::requestSnapshotScalesToTargetSize()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d != nullptr);
+
+    // No QQuickWindow: DPR is 1.0, so logical 10x10 => 10px output.
+    QSignalSpy snapshotSpy(&backend, &MobileWebViewBackend::snapshotReady);
+    backend.requestSnapshot(QSize(10, 10));
+
+    QImage img(40, 30, QImage::Format_ARGB32);
+    img.fill(QColor(Qt::red));
+    d->notifySnapshotReady(d->lastFreezeCaptureRequestId, img);
+
+    QCOMPARE(snapshotSpy.count(), 1);
+    QString key = snapshotSpy.at(0).at(0).toUrl().path();
+    if (key.startsWith(QLatin1Char('/'))) {
+        key = key.mid(1);
+    }
+
+    MobileWebViewSnapshotImageProvider provider;
+    const QImage got = provider.requestImage(key, nullptr, QSize());
+    QCOMPARE(got.width(), 10);
+    // 40x30 scaled to width 10 (KeepAspectRatio) -> height 7 or 8 depending on rounding
+    QVERIFY(got.height() >= 7 && got.height() <= 8);
+}
+
+void MobileWebViewBackendCommonTest::requestSnapshotScalesLogicalSizeByWindowDevicePixelRatio()
+{
+    g_lastCreatedPrivate = nullptr;
+    QQuickView view;
+    view.resize(320, 240);
+    MobileWebViewBackend backend;
+    backend.setParentItem(view.contentItem());
+    view.show();
+    QCoreApplication::processEvents();
+
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d != nullptr);
+
+    QSignalSpy snapshotSpy(&backend, &MobileWebViewBackend::snapshotReady);
+    backend.requestSnapshot(QSize(10, 10));
+    const qreal dpr = d->m_publicSnapshotDpr;
+    const int expectW = qRound(10 * dpr);
+
+    QImage img(400, 300, QImage::Format_ARGB32);
+    img.fill(QColor(Qt::red));
+    d->notifySnapshotReady(d->lastFreezeCaptureRequestId, img);
+
+    QCOMPARE(snapshotSpy.count(), 1);
+    QString key = snapshotSpy.at(0).at(0).toUrl().path();
+    if (key.startsWith(QLatin1Char('/'))) {
+        key = key.mid(1);
+    }
+
+    MobileWebViewSnapshotImageProvider provider;
+    const QImage got = provider.requestImage(key, nullptr, QSize());
+    QCOMPARE(got.width(), expectW);
+    const int expectTarget = qRound(10 * dpr);
+    const QSize expected = img.size().scaled(QSize(expectTarget, expectTarget), Qt::KeepAspectRatio);
+    QCOMPARE(got.size(), expected);
+}
+
+void MobileWebViewBackendCommonTest::freezeAndRequestSnapshotAreIndependent()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d != nullptr);
+
+    using FS = MobileWebViewBackendPrivate::FreezeState;
+    QSignalSpy snapshotSpy(&backend, &MobileWebViewBackend::snapshotReady);
+
+    backend.setFreeze(true);
+    QCOMPARE(d->m_freezeRequestId, quint64(1));
+    backend.requestSnapshot(QSize());
+    QCOMPARE(d->lastFreezeCaptureRequestId, quint64(2));
+    QCOMPARE(d->freezeCaptureCalls, 2);
+
+    QImage snapImg(3, 3, QImage::Format_ARGB32);
+    snapImg.fill(QColor(Qt::blue));
+    d->notifySnapshotReady(2, snapImg);
+
+    QCOMPARE(snapshotSpy.count(), 1);
+    QCOMPARE(d->m_freezeState, FS::Capturing);
+
+    QImage freezeImg(2, 2, QImage::Format_ARGB32);
+    freezeImg.fill(QColor(Qt::red));
+    d->notifySnapshotReady(1, freezeImg);
+
+    QVERIFY(d->m_snapshotItem != nullptr);
+    QTRY_COMPARE(d->m_freezeState, FS::Frozen);
+    QCOMPARE(snapshotSpy.count(), 1);
 }
 
 QTEST_MAIN(MobileWebViewBackendCommonTest)

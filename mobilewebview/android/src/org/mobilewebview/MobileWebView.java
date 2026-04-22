@@ -11,6 +11,9 @@ import android.graphics.Rect;
 import android.util.Base64;
 import android.util.Log;
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
+import android.content.Intent;
+import android.net.Uri;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
@@ -24,13 +27,16 @@ import android.webkit.WebBackForwardList;
 import android.webkit.WebHistoryItem;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 
 import java.io.ByteArrayOutputStream;
+import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CountDownLatch;
 
@@ -511,6 +517,64 @@ public class MobileWebView {
     }
 
     /**
+     * Handles custom URL schemes (intent, tel, mailto, geo, market, etc.).
+     * @return true if navigation was handled or cancelled; false to let WebView load
+     */
+    private static boolean handleCustomSchemeUrl(WebView view, Uri uri) {
+        if (uri == null) {
+            return true;
+        }
+        String rawScheme = uri.getScheme();
+        if (rawScheme == null) {
+            return true;
+        }
+        if (WebViewUrlPolicy.isSchemeLeftToWebView(rawScheme)) {
+            return false;
+        }
+        String schemeLower = rawScheme.toLowerCase(Locale.ROOT);
+        Context ctx = view.getContext();
+
+        if ("intent".equals(schemeLower)) {
+            final Intent intent;
+            try {
+                intent = Intent.parseUri(uri.toString(), Intent.URI_INTENT_SCHEME);
+            } catch (URISyntaxException e) {
+                Log.w(TAG, "Invalid intent URL", e);
+                return true;
+            }
+            UrlLoadingHelper.applyWebViewSecurityPolicy(intent);
+            if (intent.resolveActivity(ctx.getPackageManager()) != null) {
+                try {
+                    ctx.startActivity(intent);
+                    return true;
+                } catch (ActivityNotFoundException e) {
+                    // try browser_fallback_url
+                } catch (SecurityException e) {
+                    Log.w(TAG, "Refused to start activity from intent URL", e);
+                }
+            }
+            String fallback = intent.getStringExtra("browser_fallback_url");
+            if (fallback != null && WebViewUrlPolicy.isHttpOrHttpsUrlForFallback(fallback)) {
+                view.loadUrl(fallback);
+            }
+            return true;
+        }
+
+        Intent appIntent = new Intent(Intent.ACTION_VIEW, uri);
+        UrlLoadingHelper.applyWebViewSecurityPolicy(appIntent);
+        if (appIntent.resolveActivity(ctx.getPackageManager()) == null) {
+            return true;
+        }
+        try {
+            ctx.startActivity(appIntent);
+        } catch (ActivityNotFoundException ignored) {
+        } catch (SecurityException e) {
+            Log.w(TAG, "Refused to start view intent", e);
+        }
+        return true;
+    }
+
+    /**
      * WebViewClient for navigation callbacks
      */
     private class MobileWebViewClient extends WebViewClient {
@@ -543,10 +607,30 @@ public class MobileWebView {
             }
         }
 
+        @SuppressWarnings("deprecation")
+        @Override
+        public boolean shouldOverrideUrlLoading(WebView view, String url) {
+            if (url == null) {
+                return false;
+            }
+            // Pre-24 only; no isForMainFrame / hasGesture — stricter only on API 24+.
+            return handleCustomSchemeUrl(view, Uri.parse(url));
+        }
+
         @Override
         public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-            // Allow navigation, but validate origin later
-            return false;
+            if (request == null || !request.isForMainFrame() || request.getUrl() == null) {
+                return false;
+            }
+            Uri u = request.getUrl();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
+                String sch = u.getScheme();
+                String sl = sch != null ? sch.toLowerCase(Locale.ROOT) : "";
+                if (!"intent".equals(sl) && !request.hasGesture()) {
+                    return false;
+                }
+            }
+            return handleCustomSchemeUrl(view, u);
         }
     }
 

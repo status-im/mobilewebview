@@ -14,6 +14,7 @@ int main(int argc, char *argv[])
                                             "QWebChannel is provided via WebChannel QML type");
 
     QQmlApplicationEngine engine;
+
     const QUrl url(QStringLiteral("qrc:/qml/main.qml"));
     QObject::connect(
         &engine,

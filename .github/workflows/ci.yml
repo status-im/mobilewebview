@@ -27,10 +27,13 @@ jobs:
           javac -d build/java-tests \
             mobilewebview/android/src/org/mobilewebview/OriginUtils.java \
             mobilewebview/android/src/org/mobilewebview/BridgeScriptBuilder.java \
+            mobilewebview/android/src/org/mobilewebview/WebViewUrlPolicy.java \
             mobilewebview/android/tests/org/mobilewebview/OriginUtilsTest.java \
-            mobilewebview/android/tests/org/mobilewebview/BridgeScriptBuilderTest.java
+            mobilewebview/android/tests/org/mobilewebview/BridgeScriptBuilderTest.java \
+            mobilewebview/android/tests/org/mobilewebview/WebViewUrlPolicyTest.java
           java -cp build/java-tests org.mobilewebview.OriginUtilsTest
           java -cp build/java-tests org.mobilewebview.BridgeScriptBuilderTest
+          java -cp build/java-tests org.mobilewebview.WebViewUrlPolicyTest
 
       - name: Install Qt and build dependencies
         run: |

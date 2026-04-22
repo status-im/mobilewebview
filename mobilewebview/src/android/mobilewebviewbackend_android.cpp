@@ -770,7 +770,7 @@ void AndroidWebViewPrivate::captureSnapshotImpl(quint64 requestId)
             if (!guard) {
                 return;
             }
-            notifyFreezeCaptureFinished(requestId, QImage());
+            notifySnapshotReady(requestId, QImage());
         }, Qt::QueuedConnection);
         return;
     }
@@ -781,7 +781,7 @@ void AndroidWebViewPrivate::captureSnapshotImpl(quint64 requestId)
             if (!guard) {
                 return;
             }
-            notifyFreezeCaptureFinished(requestId, QImage());
+            notifySnapshotReady(requestId, QImage());
         }, Qt::QueuedConnection);
         return;
     }
@@ -1140,7 +1140,7 @@ Java_org_mobilewebview_MobileWebView_nativeOnFreezeSnapshotReady(JNIEnv *env, jo
                          width, height, width * 4, QImage::Format_ARGB32)
                       .copy();
         }
-        backend->notifyFreezeCaptureFinished(rid, img);
+        backend->notifySnapshotReady(rid, img);
     }, Qt::QueuedConnection);
 }
 
