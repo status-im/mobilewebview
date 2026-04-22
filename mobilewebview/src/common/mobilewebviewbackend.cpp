@@ -16,6 +16,7 @@
 #include <QSet>
 #include <QTimer>
 #include <QtMath>
+#include <QQuickView>
 #include <QQuickWindow>
 #include <mutex>
 
@@ -333,6 +334,13 @@ MobileWebViewBackend::~MobileWebViewBackend()
 void MobileWebViewBackend::requestSnapshot(const QSize &targetSize)
 {
     Q_D(MobileWebViewBackend);
+    QQmlEngine *engine = qmlEngine(this);
+    if (!engine) {
+        if (auto *qv = qobject_cast<QQuickView *>(window())) {
+            engine = qv->engine();
+        }
+    }
+    ensureSnapshotImageProviderRegistered(engine);
     d->m_publicSnapshotRequestId = ++d->m_nextSnapshotId;
     d->m_publicSnapshotPending = true;
     d->m_publicSnapshotTargetSize = targetSize;

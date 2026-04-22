@@ -569,7 +569,8 @@ void MobileWebViewBackendCommonTest::requestSnapshotCompletesAndRegistersProvide
     }
     QVERIFY(!key.isEmpty());
 
-    QQuickImageProvider *provider = view.engine()->imageProvider(QStringLiteral("mobilewebview-snapshot"));
+    auto *provider = static_cast<QQuickImageProvider *>(
+        view.engine()->imageProvider(QStringLiteral("mobilewebview-snapshot")));
     QVERIFY(provider != nullptr);
     QSize sz;
     const QImage got = provider->requestImage(key, &sz, QSize());
