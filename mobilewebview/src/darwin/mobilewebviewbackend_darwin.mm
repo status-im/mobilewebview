@@ -302,6 +302,10 @@ DarwinWebViewPrivate::~DarwinWebViewPrivate()
 bool DarwinWebViewPrivate::initNativeView()
 {
     WKWebViewConfiguration *config = [[WKWebViewConfiguration alloc] init];
+#ifdef Q_OS_IOS
+    config.allowsInlineMediaPlayback = YES;
+    config.mediaTypesRequiringUserActionForPlayback = WKAudiovisualMediaTypeNone;
+#endif
 #ifdef QT_DEBUG
     [config.preferences setValue:@YES forKey:@"developerExtrasEnabled"];
 #endif
