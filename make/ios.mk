@@ -1,8 +1,8 @@
 # iOS targets
 
 _check_ios_sim:
-	@test -n "$(QTDIR)" || (echo "ERROR: QTDIR is not set (e.g. ~/Qt/6.9.2/ios)"; exit 1)
-	@test -n "$(QT_HOST_PATH)" || (echo "ERROR: QT_HOST_PATH is not set (e.g. ~/Qt/6.9.2/macos)"; exit 1)
+	@test -n "$(QTDIR)" || (echo "ERROR: QTDIR is not set (e.g. ~/Qt/6.11.0/ios)"; exit 1)
+	@test -n "$(QT_HOST_PATH)" || (echo "ERROR: QT_HOST_PATH is not set (e.g. ~/Qt/6.11.0/macos)"; exit 1)
 	@command -v "$(QTCMAKE)" >/dev/null 2>&1 || (echo "ERROR: qt-cmake not found: $(QTCMAKE)"; exit 1)
 	@command -v xcodebuild >/dev/null 2>&1 || (echo "ERROR: xcodebuild not found"; exit 1)
 
@@ -42,8 +42,8 @@ _run_ios-simulator:
 	xcrun simctl launch --console-pty --terminate-running-process "$$UDID" "$$BUNDLE_ID"
 
 _check_ios_device:
-	@test -n "$(QTDIR)" || (echo "ERROR: QTDIR is not set (e.g. ~/Qt/6.9.2/ios)"; exit 1)
-	@test -n "$(QT_HOST_PATH)" || (echo "ERROR: QT_HOST_PATH is not set (e.g. ~/Qt/6.9.2/macos)"; exit 1)
+	@test -n "$(QTDIR)" || (echo "ERROR: QTDIR is not set (e.g. ~/Qt/6.11.0/ios)"; exit 1)
+	@test -n "$(QT_HOST_PATH)" || (echo "ERROR: QT_HOST_PATH is not set (e.g. ~/Qt/6.11.0/macos)"; exit 1)
 	@test -n "$(DEVELOPMENT_TEAM)" || (echo "ERROR: DEVELOPMENT_TEAM is not set (Apple team ID, e.g. YOUR_APPLE_TEAM_ID)"; exit 1)
 	@command -v "$(QTCMAKE)" >/dev/null 2>&1 || (echo "ERROR: qt-cmake not found: $(QTCMAKE)"; exit 1)
 	@command -v xcodebuild >/dev/null 2>&1 || (echo "ERROR: xcodebuild not found"; exit 1)
