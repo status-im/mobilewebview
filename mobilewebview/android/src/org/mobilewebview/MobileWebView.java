@@ -430,6 +430,7 @@ public class MobileWebView {
                     return;
                 }
                 Bitmap bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                bitmap.eraseColor(android.graphics.Color.WHITE);
                 Canvas canvas = new Canvas(bitmap);
                 mWebView.draw(canvas);
                 ByteBuffer buffer = ByteBuffer.allocateDirect(w * h * 4);

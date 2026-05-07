@@ -1137,7 +1137,7 @@ Java_org_mobilewebview_MobileWebView_nativeOnFreezeSnapshotReady(JNIEnv *env, jo
         QImage img;
         if (!pixels.isEmpty() && width > 0 && height > 0) {
             img = QImage(reinterpret_cast<const uchar *>(pixels.constData()),
-                         width, height, width * 4, QImage::Format_ARGB32)
+                         width, height, width * 4, QImage::Format_RGBA8888)
                       .copy();
         }
         backend->notifySnapshotReady(rid, img);
