@@ -35,20 +35,25 @@ jobs:
           java -cp build/java-tests org.mobilewebview.BridgeScriptBuilderTest
           java -cp build/java-tests org.mobilewebview.WebViewUrlPolicyTest
 
-      - name: Install Qt and build dependencies
+      - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
             cmake \
             ninja-build \
-            pkg-config \
-            qt6-base-dev \
-            qt6-declarative-dev \
-            qt6-webchannel-dev
+            pkg-config
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.11.0"
+          target: desktop
+          arch: linux_gcc_64
+          modules: qtwebchannel
 
       - name: Configure
-        run: cmake -S mobilewebview -B build -DBUILD_TESTING=ON
+        run: cmake -S mobilewebview -B build -G Ninja -DBUILD_TESTING=ON
 
       - name: Build
         run: cmake --build build --parallel
@@ -66,8 +71,9 @@ jobs:
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
-          version: "6.9.2"
-          modules: "qtwebchannel"
+          version: "6.11.0"
+          arch: clang_64
+          modules: qtwebchannel
 
       - name: Configure
         run: cmake -S mobilewebview -B build -G Ninja -DBUILD_TESTING=ON

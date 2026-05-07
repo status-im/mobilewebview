@@ -5,8 +5,8 @@ _ANDROID_ABI_EMULATOR := $(if $(ARCH),$(ARCH),$(if $(findstring android_x86_64,$
 _ANDROID_ABI_ACTIVE := $(if $(filter android-emulator,$(TARGET_OS)),$(_ANDROID_ABI_EMULATOR),$(_ANDROID_ABI_DEVICE))
 
 _check_android:
-	@test -n "$(QTDIR)" || (echo "ERROR: QTDIR is not set (e.g. ~/Qt/6.9.2/android_arm64_v8a)"; exit 1)
-	@test -n "$(QT_HOST_PATH)" || (echo "ERROR: QT_HOST_PATH is not set (e.g. ~/Qt/6.9.2/macos)"; exit 1)
+	@test -n "$(QTDIR)" || (echo "ERROR: QTDIR is not set (e.g. ~/Qt/6.11.0/android_arm64_v8a)"; exit 1)
+	@test -n "$(QT_HOST_PATH)" || (echo "ERROR: QT_HOST_PATH is not set (e.g. ~/Qt/6.11.0/macos)"; exit 1)
 	@test -n "$(ANDROID_SDK_ROOT)" || (echo "ERROR: ANDROID_SDK_ROOT is not set"; exit 1)
 	@test -n "$(ANDROID_NDK_ROOT)" || (echo "ERROR: ANDROID_NDK_ROOT is not set"; exit 1)
 	@test -n "$(JAVA_HOME)" || (echo "ERROR: JAVA_HOME is not set"; exit 1)
@@ -19,6 +19,7 @@ _build_android: _check_android
 	"$(QTCMAKE)" \
 	    -S "$(APP_SOURCE_DIR)" \
 	    -B "$(BUILD_BASE)/android" \
+	    -DQT_HOST_PATH="$(QT_HOST_PATH)" \
 	    -DANDROID_ABI=$(_ANDROID_ABI_DEVICE) \
 	    -DANDROID_PLATFORM=android-$(ANDROID_PLATFORM) \
 	    -DBUILD_TESTING=OFF
@@ -35,6 +36,7 @@ _build_android-emulator: _check_android
 	"$(QTCMAKE)" \
 	    -S "$(APP_SOURCE_DIR)" \
 	    -B "$(BUILD_BASE)/android-emulator" \
+	    -DQT_HOST_PATH="$(QT_HOST_PATH)" \
 	    -DANDROID_ABI=$(_ANDROID_ABI_EMULATOR) \
 	    -DANDROID_PLATFORM=android-$(ANDROID_PLATFORM) \
 	    -DBUILD_TESTING=OFF
@@ -52,7 +54,7 @@ _android_deploy:
 	androiddeployqt \
 	    --input "$$DEPLOY_JSON" \
 	    --output "$(_ANDROID_BUILD_DIR)/android-build" \
-	    --android-platform "android-$(ANDROID_PLATFORM)" \
+	    --android-platform "android-$(ANDROID_COMPILE_SDK)" \
 	    --gradle \
 	    --no-gdbserver; \
 	if [ -d "$(APP_SOURCE_DIR)/../mobilewebview/android/src/org/mobilewebview" ] \
