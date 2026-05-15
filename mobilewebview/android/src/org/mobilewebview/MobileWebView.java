@@ -56,7 +56,6 @@ public class MobileWebView {
     private volatile long mNativePtr;  // Pointer to C++ AndroidWebViewBackend
     private ViewGroup mRootView;
 
-    // Bridge configuration — guarded by mBridgeLock (NativeBridge may run off main thread)
     private final Object mBridgeLock = new Object();
     private String mBridgeNamespace = "qt";
     private String mInvokeKey = "";
@@ -66,7 +65,6 @@ public class MobileWebView {
     private String mBootstrapBridgeScript = "";
     private volatile String mCurrentMainFrameOrigin = "";
     private volatile boolean mBridgeInjectedForCurrentNavigation = false;
-    /** ScriptHandler instances from androidx.webkit (optional at compile/runtime). */
     private final List<Object> mDocumentStartScriptHandlers = new ArrayList<>();
     private volatile boolean mUseDocumentStartInjection = false;
 
@@ -227,8 +225,6 @@ public class MobileWebView {
             mBridgeInstalled = true;
         }
         runOnMainThread(this::configureBridgeInjectionMode);
-        Log.d(TAG, "Message bridge installed: namespace=" + namespace +
-                   ", invokeKey=" + invokeKey + ", origins=" + mAllowedOrigins.size());
     }
 
     /**
@@ -820,11 +816,17 @@ public class MobileWebView {
             return;
         }
 
-        mUseDocumentStartInjection = true;
-        registerDocumentStartScripts();
+        boolean registeredOk;
+        try {
+            registeredOk = registerDocumentStartScripts();
+        } catch (RuntimeException ignored) {
+            clearDocumentStartScripts();
+            registeredOk = false;
+        }
+        mUseDocumentStartInjection = registeredOk;
     }
 
-    private void registerDocumentStartScripts() {
+    private boolean registerDocumentStartScripts() {
         clearDocumentStartScripts();
 
         final List<String> originsSnap;
@@ -839,24 +841,24 @@ public class MobileWebView {
         }
 
         final Set<String> allowedOriginRules = buildAllowedOriginRules(originsSnap);
-        boolean ok = addDocumentStartScriptIfPresent(pageScript, allowedOriginRules, "bootstrap_page")
-            && addDocumentStartScriptIfPresent(bridgeScript, allowedOriginRules, "bootstrap_bridge_android");
+        boolean ok = addDocumentStartScriptIfPresent(pageScript, allowedOriginRules)
+            && addDocumentStartScriptIfPresent(bridgeScript, allowedOriginRules);
 
         for (String scriptContent : userScriptsSnap) {
             if (scriptContent == null || scriptContent.isEmpty()) {
                 continue;
             }
-            ok = ok && addDocumentStartScriptIfPresent(scriptContent, allowedOriginRules, "user_script");
+            ok = ok && addDocumentStartScriptIfPresent(scriptContent, allowedOriginRules);
         }
 
         if (!ok) {
             Log.w(TAG, "document-start registration failed; using onPageStarted fallback injection");
             clearDocumentStartScripts();
-            mUseDocumentStartInjection = false;
         }
+        return ok;
     }
 
-    private boolean addDocumentStartScriptIfPresent(String script, Set<String> allowedOriginRules, String scriptName) {
+    private boolean addDocumentStartScriptIfPresent(String script, Set<String> allowedOriginRules) {
         if (script == null || script.isEmpty()) {
             return true;
         }
@@ -866,7 +868,7 @@ public class MobileWebView {
             mDocumentStartScriptHandlers.add(handler);
             return true;
         }
-        Log.w(TAG, "Skipping document-start " + scriptName + ": WebViewCompat.addDocumentStartJavaScript failed");
+        Log.w(TAG, "Skipping document-start script: WebViewCompat.addDocumentStartJavaScript failed");
         return false;
     }
 
