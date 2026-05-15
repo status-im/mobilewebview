@@ -32,11 +32,14 @@ import android.os.Handler;
 import android.os.Looper;
 
 import java.io.ByteArrayOutputStream;
+import java.lang.reflect.Method;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CountDownLatch;
 
@@ -53,15 +56,19 @@ public class MobileWebView {
     private volatile long mNativePtr;  // Pointer to C++ AndroidWebViewBackend
     private ViewGroup mRootView;
 
-    // Bridge configuration
+    // Bridge configuration — guarded by mBridgeLock (NativeBridge may run off main thread)
+    private final Object mBridgeLock = new Object();
     private String mBridgeNamespace = "qt";
     private String mInvokeKey = "";
-    private List<String> mAllowedOrigins = new ArrayList<>();
-    private List<String> mUserScripts = new ArrayList<>();
+    private final List<String> mAllowedOrigins = new ArrayList<>();
+    private final List<String> mUserScripts = new ArrayList<>();
     private String mBootstrapPageScript = "";
     private String mBootstrapBridgeScript = "";
     private volatile String mCurrentMainFrameOrigin = "";
     private volatile boolean mBridgeInjectedForCurrentNavigation = false;
+    /** ScriptHandler instances from androidx.webkit (optional at compile/runtime). */
+    private final List<Object> mDocumentStartScriptHandlers = new ArrayList<>();
+    private volatile boolean mUseDocumentStartInjection = false;
 
     // Navigation state
     private boolean mBridgeInstalled = false;
@@ -204,19 +211,22 @@ public class MobileWebView {
     public void installMessageBridge(String namespace, String[] allowedOrigins,
                                      String invokeKey, String[] userScripts,
                                      String bootstrapPageScript, String bootstrapBridgeScript) {
-        mBridgeNamespace = namespace;
-        mInvokeKey = invokeKey;
-        mAllowedOrigins.clear();
-        mAllowedOrigins.addAll(Arrays.asList(allowedOrigins));
-
-        mUserScripts.clear();
-        mUserScripts.addAll(Arrays.asList(userScripts));
-
-        // Store bootstrap scripts
-        mBootstrapPageScript = bootstrapPageScript;
-        mBootstrapBridgeScript = bootstrapBridgeScript;
-
-        mBridgeInstalled = true;
+        synchronized (mBridgeLock) {
+            mBridgeNamespace = namespace != null ? namespace : "";
+            mInvokeKey = invokeKey != null ? invokeKey : "";
+            mAllowedOrigins.clear();
+            if (allowedOrigins != null) {
+                mAllowedOrigins.addAll(Arrays.asList(allowedOrigins));
+            }
+            mUserScripts.clear();
+            if (userScripts != null) {
+                mUserScripts.addAll(Arrays.asList(userScripts));
+            }
+            mBootstrapPageScript = bootstrapPageScript != null ? bootstrapPageScript : "";
+            mBootstrapBridgeScript = bootstrapBridgeScript != null ? bootstrapBridgeScript : "";
+            mBridgeInstalled = true;
+        }
+        runOnMainThread(this::configureBridgeInjectionMode);
         Log.d(TAG, "Message bridge installed: namespace=" + namespace +
                    ", invokeKey=" + invokeKey + ", origins=" + mAllowedOrigins.size());
     }
@@ -225,8 +235,13 @@ public class MobileWebView {
      * Update allowed origins after bridge installation (for dynamic origin changes during navigation)
      */
     public void updateAllowedOrigins(String[] origins) {
-        mAllowedOrigins.clear();
-        mAllowedOrigins.addAll(Arrays.asList(origins));
+        synchronized (mBridgeLock) {
+            mAllowedOrigins.clear();
+            if (origins != null) {
+                mAllowedOrigins.addAll(Arrays.asList(origins));
+            }
+        }
+        runOnMainThread(this::configureBridgeInjectionMode);
     }
 
     /**
@@ -236,8 +251,10 @@ public class MobileWebView {
         Log.d(TAG, "loadUrl: " + url);
         mPendingUrl = url;
 
-        if (!mBridgeInstalled) {
-            Log.w(TAG, "Bridge not installed, loading anyway");
+        synchronized (mBridgeLock) {
+            if (!mBridgeInstalled) {
+                Log.w(TAG, "Bridge not installed, loading anyway");
+            }
         }
 
         runOnMainThread(() -> mWebView.loadUrl(url));
@@ -250,8 +267,10 @@ public class MobileWebView {
         Log.d(TAG, "loadHtml: baseUrl=" + baseUrl);
         mPendingUrl = baseUrl;
 
-        if (!mBridgeInstalled) {
-            Log.w(TAG, "Bridge not installed, loading anyway");
+        synchronized (mBridgeLock) {
+            if (!mBridgeInstalled) {
+                Log.w(TAG, "Bridge not installed, loading anyway");
+            }
         }
 
         runOnMainThread(() -> mWebView.loadDataWithBaseURL(baseUrl, html, "text/html", "UTF-8", null));
@@ -376,7 +395,11 @@ public class MobileWebView {
      * Post message to JavaScript WebChannel transport
      */
     public void postMessageToJavaScript(String json) {
-        String deliverScript = BridgeScriptBuilder.buildDeliverScript(mBridgeNamespace, json);
+        final String namespace;
+        synchronized (mBridgeLock) {
+            namespace = mBridgeNamespace;
+        }
+        String deliverScript = BridgeScriptBuilder.buildDeliverScript(namespace, json);
 
         runOnMainThread(() ->
             mWebView.evaluateJavascript(deliverScript, value ->
@@ -463,6 +486,7 @@ public class MobileWebView {
     public void destroy() {
         mNativePtr = 0;  // zero out immediately so JNI callbacks are ignored
         runOnMainThread(() -> {
+            clearDocumentStartScripts();
             if (mWebView != null) {
                 mWebView.stopLoading();
                 mWebView.loadUrl("about:blank");
@@ -506,8 +530,11 @@ public class MobileWebView {
             }
             final String origin = resolvedOrigin;
 
-            // Validate origin
-            if (!OriginUtils.isOriginAllowed(origin, mAllowedOrigins)) {
+            final List<String> allowedOrigins;
+            synchronized (mBridgeLock) {
+                allowedOrigins = new ArrayList<>(mAllowedOrigins);
+            }
+            if (!OriginUtils.isOriginAllowed(origin, allowedOrigins)) {
                 Log.w(TAG, "Rejected message from disallowed origin: " + origin);
                 return;
             }
@@ -696,12 +723,27 @@ public class MobileWebView {
             return;
         }
 
+        if (mUseDocumentStartInjection) {
+            mBridgeInjectedForCurrentNavigation = true;
+            return;
+        }
+
         injectBridgeScripts();
         mBridgeInjectedForCurrentNavigation = true;
     }
 
     private void injectBridgeScripts() {
-        if (!mBridgeInstalled) {
+        final boolean installed;
+        final List<String> userScripts;
+        final String pageScript;
+        final String bridgeScript;
+        synchronized (mBridgeLock) {
+            installed = mBridgeInstalled;
+            userScripts = new ArrayList<>(mUserScripts);
+            pageScript = mBootstrapPageScript;
+            bridgeScript = mBootstrapBridgeScript;
+        }
+        if (!installed) {
             Log.w(TAG, "injectBridgeScripts skipped: bridge not installed");
             return;
         }
@@ -709,16 +751,16 @@ public class MobileWebView {
             Log.w(TAG, "injectBridgeScripts skipped: WebView is null");
             return;
         }
-        Log.d(TAG, "Injecting bridge scripts: userScripts=" + mUserScripts.size()
-                + ", bootstrapPageLen=" + mBootstrapPageScript.length()
-                + ", bootstrapBridgeLen=" + mBootstrapBridgeScript.length());
+        Log.d(TAG, "Injecting bridge scripts: userScripts=" + userScripts.size()
+                + ", bootstrapPageLen=" + pageScript.length()
+                + ", bootstrapBridgeLen=" + bridgeScript.length());
 
-        injectScriptIfPresent(mBootstrapPageScript, "bootstrap_page");
-        injectScriptIfPresent(mBootstrapBridgeScript, "bootstrap_bridge_android");
+        injectScriptIfPresent(pageScript, "bootstrap_page");
+        injectScriptIfPresent(bridgeScript, "bootstrap_bridge_android");
 
         // Inject user scripts
-        for (String scriptContent : mUserScripts) {
-            if (!scriptContent.isEmpty()) {
+        for (String scriptContent : userScripts) {
+            if (scriptContent != null && !scriptContent.isEmpty()) {
                 mWebView.evaluateJavascript(scriptContent, null);
             }
         }
@@ -737,7 +779,11 @@ public class MobileWebView {
 
     private void handleNavigationLifecycle(WebView view, String url, boolean warnWhenBridgeMissing) {
         mCurrentMainFrameOrigin = OriginUtils.extractOrigin(url);
-        if (mBridgeInstalled) {
+        final boolean installed;
+        synchronized (mBridgeLock) {
+            installed = mBridgeInstalled;
+        }
+        if (installed) {
             injectBridgeScriptsOnce();
         } else if (warnWhenBridgeMissing) {
             Log.w(TAG, "onPageStarted: bridge not installed yet");
@@ -747,11 +793,134 @@ public class MobileWebView {
     }
 
     private void injectScriptIfPresent(String script, String scriptName) {
-        if (!script.isEmpty()) {
+        if (script != null && !script.isEmpty()) {
             mWebView.evaluateJavascript(script, null);
             return;
         }
         Log.w(TAG, scriptName + " script is empty");
+    }
+
+    private void configureBridgeInjectionMode() {
+        if (mWebView == null) {
+            return;
+        }
+        final boolean installed;
+        synchronized (mBridgeLock) {
+            installed = mBridgeInstalled;
+        }
+        if (!installed) {
+            return;
+        }
+
+        final boolean supportsDocumentStart = supportsDocumentStartScript();
+        if (!supportsDocumentStart) {
+            mUseDocumentStartInjection = false;
+            clearDocumentStartScripts();
+            Log.i(TAG, "DOCUMENT_START_SCRIPT unavailable; using onPageStarted fallback injection");
+            return;
+        }
+
+        mUseDocumentStartInjection = true;
+        registerDocumentStartScripts();
+    }
+
+    private void registerDocumentStartScripts() {
+        clearDocumentStartScripts();
+
+        final List<String> originsSnap;
+        final List<String> userScriptsSnap;
+        final String pageScript;
+        final String bridgeScript;
+        synchronized (mBridgeLock) {
+            originsSnap = new ArrayList<>(mAllowedOrigins);
+            userScriptsSnap = new ArrayList<>(mUserScripts);
+            pageScript = mBootstrapPageScript;
+            bridgeScript = mBootstrapBridgeScript;
+        }
+
+        final Set<String> allowedOriginRules = buildAllowedOriginRules(originsSnap);
+        boolean ok = addDocumentStartScriptIfPresent(pageScript, allowedOriginRules, "bootstrap_page")
+            && addDocumentStartScriptIfPresent(bridgeScript, allowedOriginRules, "bootstrap_bridge_android");
+
+        for (String scriptContent : userScriptsSnap) {
+            if (scriptContent == null || scriptContent.isEmpty()) {
+                continue;
+            }
+            ok = ok && addDocumentStartScriptIfPresent(scriptContent, allowedOriginRules, "user_script");
+        }
+
+        if (!ok) {
+            Log.w(TAG, "document-start registration failed; using onPageStarted fallback injection");
+            clearDocumentStartScripts();
+            mUseDocumentStartInjection = false;
+        }
+    }
+
+    private boolean addDocumentStartScriptIfPresent(String script, Set<String> allowedOriginRules, String scriptName) {
+        if (script == null || script.isEmpty()) {
+            return true;
+        }
+
+        Object handler = addDocumentStartJavaScript(script, allowedOriginRules);
+        if (handler != null) {
+            mDocumentStartScriptHandlers.add(handler);
+            return true;
+        }
+        Log.w(TAG, "Skipping document-start " + scriptName + ": WebViewCompat.addDocumentStartJavaScript failed");
+        return false;
+    }
+
+    private static Set<String> buildAllowedOriginRules(List<String> allowedOrigins) {
+        Set<String> allowedOriginRules = new HashSet<>();
+        for (String origin : allowedOrigins) {
+            if (origin != null && !origin.isEmpty()) {
+                allowedOriginRules.add(origin);
+            }
+        }
+
+        if (allowedOriginRules.isEmpty()) {
+            allowedOriginRules.add("*");
+        }
+        return allowedOriginRules;
+    }
+
+    private void clearDocumentStartScripts() {
+        for (Object handler : mDocumentStartScriptHandlers) {
+            if (handler == null) {
+                continue;
+            }
+            try {
+                Method remove = handler.getClass().getMethod("remove");
+                remove.invoke(handler);
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to remove document-start script", e);
+            }
+        }
+        mDocumentStartScriptHandlers.clear();
+    }
+
+    private static boolean supportsDocumentStartScript() {
+        try {
+            Class<?> featureClass = Class.forName("androidx.webkit.WebViewFeature");
+            Object featureName = featureClass.getField("DOCUMENT_START_SCRIPT").get(null);
+            Object supported = featureClass
+                .getMethod("isFeatureSupported", String.class)
+                .invoke(null, featureName);
+            return supported instanceof Boolean && (Boolean) supported;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private Object addDocumentStartJavaScript(String script, Set<String> allowedOriginRules) {
+        try {
+            Class<?> compatClass = Class.forName("androidx.webkit.WebViewCompat");
+            return compatClass
+                .getMethod("addDocumentStartJavaScript", WebView.class, String.class, Set.class)
+                .invoke(null, mWebView, script, allowedOriginRules);
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     private void notifyHistoryState(WebView view) {
