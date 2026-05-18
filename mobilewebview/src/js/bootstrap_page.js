@@ -114,5 +114,6 @@
 
   // Signal that the WebChannel transport is ready
   // This allows other scripts (like ethereum_injector.js) to know when they can initialize
+  window[ns].__ready = true;
   window.dispatchEvent(new Event('qtWebChannelReady'));
 })('%NS%');
