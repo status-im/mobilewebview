@@ -245,17 +245,6 @@ jobject AndroidWebViewPrivate::createWebView()
     jobject globalObj = env->NewGlobalRef(localObj);
     env->DeleteLocalRef(localObj);
 
-    // Get WebView once to verify Java object setup.
-    // View attachment is performed in Java on Android UI thread.
-    jmethodID getWebViewMethod = env->GetMethodID(m_webViewClass, "getWebView",
-        "()Landroid/webkit/WebView;");
-    if (getWebViewMethod) {
-        jobject webView = env->CallObjectMethod(globalObj, getWebViewMethod);
-        if (webView) {
-            env->DeleteLocalRef(webView);
-        }
-    }
-
     if (env->ExceptionCheck()) {
         env->ExceptionDescribe();
         env->ExceptionClear();

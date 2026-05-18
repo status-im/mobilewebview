@@ -40,8 +40,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.CountDownLatch;
 
 /**
  * MobileWebView - Native Android WebView wrapper for Qt integration
@@ -71,6 +69,8 @@ public class MobileWebView {
     // Navigation state
     private boolean mBridgeInstalled = false;
     private String mPendingUrl = null;
+    private final Handler mMainHandler = new Handler(Looper.getMainLooper());
+    private final PendingActionQueue mPendingActionQueue = new PendingActionQueue();
 
     @FunctionalInterface
     private interface NativeCallback {
@@ -89,35 +89,22 @@ public class MobileWebView {
 
         // WebView must be created on Android main/UI thread.
         if (Looper.myLooper() == Looper.getMainLooper()) {
-            mWebView = new WebView(context);
-            setupWebView();
+            initializeWebViewOnMainThread(context);
             return;
         }
 
-        CountDownLatch latch = new CountDownLatch(1);
-        final AtomicReference<RuntimeException> creationError = new AtomicReference<>();
-        Handler mainHandler = new Handler(Looper.getMainLooper());
-        mainHandler.post(() -> {
-            try {
-                mWebView = new WebView(context);
-                setupWebView();
-            } catch (RuntimeException e) {
-                creationError.set(e);
-            } finally {
-                latch.countDown();
-            }
-        });
+        mMainHandler.post(() -> initializeWebViewOnMainThread(context));
+    }
 
+    private void initializeWebViewOnMainThread(Context context) {
         try {
-            latch.await();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("Interrupted while creating WebView on main thread", e);
-        }
-
-        RuntimeException error = creationError.get();
-        if (error != null) {
-            throw error;
+            mWebView = new WebView(context);
+            setupWebView();
+        } catch (RuntimeException e) {
+            Log.e(TAG, "Failed to initialize WebView on main thread", e);
+            mWebView = null;
+        } finally {
+            mPendingActionQueue.markReady();
         }
     }
 
@@ -138,6 +125,10 @@ public class MobileWebView {
     }
 
     private void runOnMainThread(Runnable action) {
+        if (mPendingActionQueue.enqueueIfNotReady(action)) {
+            return;
+        }
+
         if (Looper.myLooper() == Looper.getMainLooper()) {
             action.run();
             return;
@@ -157,7 +148,7 @@ public class MobileWebView {
             }
         }
 
-        new Handler(Looper.getMainLooper()).post(action);
+        mMainHandler.post(action);
     }
 
     /**
@@ -253,7 +244,10 @@ public class MobileWebView {
             }
         }
 
-        runOnMainThread(() -> mWebView.loadUrl(url));
+        runOnMainThread(() -> {
+            if (mWebView == null) return;
+            mWebView.loadUrl(url);
+        });
     }
 
     /**
@@ -269,7 +263,10 @@ public class MobileWebView {
             }
         }
 
-        runOnMainThread(() -> mWebView.loadDataWithBaseURL(baseUrl, html, "text/html", "UTF-8", null));
+        runOnMainThread(() -> {
+            if (mWebView == null) return;
+            mWebView.loadDataWithBaseURL(baseUrl, html, "text/html", "UTF-8", null);
+        });
     }
 
     public void goBack() {
@@ -380,11 +377,12 @@ public class MobileWebView {
      * Evaluate JavaScript and notify result via callback
      */
     public void evaluateJavaScript(String script) {
-        runOnMainThread(() ->
+        runOnMainThread(() -> {
+            if (mWebView == null) return;
             mWebView.evaluateJavascript(script, result ->
                 withNativePtr(ptr -> nativeOnJavaScriptResult(ptr, result != null ? result : "", ""))
-            )
-        );
+            );
+        });
     }
 
     /**
@@ -397,11 +395,12 @@ public class MobileWebView {
         }
         String deliverScript = BridgeScriptBuilder.buildDeliverScript(namespace, json);
 
-        runOnMainThread(() ->
+        runOnMainThread(() -> {
+            if (mWebView == null) return;
             mWebView.evaluateJavascript(deliverScript, value ->
                 Log.d(TAG, "postMessageToJavaScript result: " + value)
-            )
-        );
+            );
+        });
     }
 
     /**
@@ -409,6 +408,7 @@ public class MobileWebView {
      */
     public void setGeometry(int x, int y, int width, int height) {
         runOnMainThread(() -> {
+            if (mWebView == null) return;
             ViewGroup.LayoutParams params = mWebView.getLayoutParams();
             if (params == null) {
                 params = new ViewGroup.LayoutParams(width, height);
@@ -426,7 +426,10 @@ public class MobileWebView {
      * Set WebView visibility
      */
     public void setVisible(boolean visible) {
-        runOnMainThread(() -> mWebView.setVisibility(visible ? View.VISIBLE : View.GONE));
+        runOnMainThread(() -> {
+            if (mWebView == null) return;
+            mWebView.setVisibility(visible ? View.VISIBLE : View.GONE);
+        });
     }
 
     /**
@@ -469,10 +472,9 @@ public class MobileWebView {
 
     public void setInteractionEnabled(boolean enabled) {
         runOnMainThread(() -> {
-            if (mWebView != null) {
-                mWebView.setFocusable(enabled);
-                mWebView.setFocusableInTouchMode(enabled);
-            }
+            if (mWebView == null) return;
+            mWebView.setFocusable(enabled);
+            mWebView.setFocusableInTouchMode(enabled);
         });
     }
 
