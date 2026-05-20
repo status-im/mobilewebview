@@ -152,22 +152,39 @@ void MobileWebViewBackendPrivate::updateUrlState(const QUrl &url)
     emit q_ptr->urlChanged();
 
     if (!newOrigin.isEmpty() && newOrigin != prevOrigin) {
-        QStringList merged = m_allowedOrigins;
-        if (!merged.contains(newOrigin)) {
-            merged.append(newOrigin);
-        }
-        updateAllowedOrigins(merged);
+        appendAllowedOrigin(newOrigin);
     }
 }
 
 void MobileWebViewBackendPrivate::updateAllowedOrigins(const QStringList &origins)
 {
-    // Merge so redirect chains (OpenSea -> Coinbase -> back) keep all origins allowed.
+    QStringList filtered;
     for (const QString &origin : origins) {
-        if (!origin.isEmpty() && !m_allowedOrigins.contains(origin)) {
-            m_allowedOrigins.append(origin);
+        if (!origin.isEmpty() && !filtered.contains(origin)) {
+            filtered.append(origin);
         }
     }
+
+    if (m_allowedOrigins == filtered) {
+        return;
+    }
+
+    m_allowedOrigins = filtered;
+
+    if (m_transport) {
+        m_transport->setAllowedOrigins(m_allowedOrigins);
+    }
+
+    updateAllowedOriginsImpl(m_allowedOrigins);
+}
+
+void MobileWebViewBackendPrivate::appendAllowedOrigin(const QString &origin)
+{
+    if (origin.isEmpty() || m_allowedOrigins.contains(origin)) {
+        return;
+    }
+
+    m_allowedOrigins.append(origin);
 
     if (m_transport) {
         m_transport->setAllowedOrigins(m_allowedOrigins);

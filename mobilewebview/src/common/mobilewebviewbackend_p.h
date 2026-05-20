@@ -116,6 +116,7 @@ public:
     void setFavicon(const QString &favicon);
     void updateUrlState(const QUrl &url);
     void updateAllowedOrigins(const QStringList &origins);
+    void appendAllowedOrigin(const QString &origin);
     void ensureBridgeInstalled();
     void setupTransport();
 };

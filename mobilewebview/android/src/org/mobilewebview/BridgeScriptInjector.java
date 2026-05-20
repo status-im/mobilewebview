@@ -170,9 +170,6 @@ final class BridgeScriptInjector {
         WebView webView = mHost.webView();
         if (webView == null) {
             Log.w(TAG, "injectBridgeScripts skipped: WebView is null");
-            if (onComplete != null) {
-                onComplete.run();
-            }
             return;
         }
 
@@ -226,6 +223,10 @@ final class BridgeScriptInjector {
             }
             ok = ok && addDocumentStartScriptIfPresent(scriptContent, allowedOriginRules);
         }
+
+        final String markScript =
+            "(function(){try{" + MARK_USER_SCRIPTS_LOADED_JS + "}catch(e){}})();";
+        ok = ok && addDocumentStartScriptIfPresent(markScript, allowedOriginRules);
 
         if (!ok) {
             Log.w(TAG, "document-start registration failed; using onPageStarted fallback injection");
