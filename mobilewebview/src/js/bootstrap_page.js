@@ -27,12 +27,27 @@
     return el ? el.dataset.sqBridgeReady === '1' : false;
   }
 
+  var attrObserver = null;
+  var rootObserver = null;
+
+  function disconnectBridgeDatasetObservers() {
+    if (attrObserver) {
+      attrObserver.disconnect();
+      attrObserver = null;
+    }
+    if (rootObserver) {
+      rootObserver.disconnect();
+      rootObserver = null;
+    }
+  }
+
   function markTransportReady() {
     if (_transportReady) {
       flushPendingMessages();
       return;
     }
     _transportReady = true;
+    disconnectBridgeDatasetObservers();
     flushPendingMessages();
   }
 
@@ -133,11 +148,15 @@
         return;
       }
       lastEl = el;
-      new MutationObserver(function() {
+      if (attrObserver) {
+        attrObserver.disconnect();
+      }
+      attrObserver = new MutationObserver(function() {
         if (!_transportReady && isBridgeReady()) {
           markTransportReady();
         }
-      }).observe(el, {
+      });
+      attrObserver.observe(el, {
         attributes: true,
         attributeFilter: ['data-sq-bridge-ready']
       });
@@ -152,12 +171,13 @@
         return;
       }
       onElement(el);
-      new MutationObserver(function() {
+      rootObserver = new MutationObserver(function() {
         var current = getDocumentElement();
         if (current && current !== lastEl) {
           onElement(current);
         }
-      }).observe(document, { childList: true, subtree: true });
+      });
+      rootObserver.observe(document, { childList: true, subtree: true });
     }
     attach();
   })();

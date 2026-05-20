@@ -526,7 +526,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     @Override
     public void onNavigationStarted(String url) {
         final String navUrl = url != null ? url : "";
-        final boolean sameUrlReload = navUrl.equals(mActiveNavigationUrl);
+        final boolean sameUrlReload = !navUrl.isEmpty() && navUrl.equals(mActiveNavigationUrl);
         mActiveNavigationUrl = navUrl;
         mBridgeInjector.resetForNavigation(sameUrlReload);
         withNativePtr(ptr -> nativeOnNavigationStarted(ptr, navUrl));
