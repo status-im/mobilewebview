@@ -7,45 +7,30 @@ import android.graphics.Canvas;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import android.graphics.Rect;
 import android.util.Base64;
 import android.util.Log;
 import android.app.Activity;
-import android.content.ActivityNotFoundException;
-import android.content.Intent;
 import android.net.Uri;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
-import android.webkit.ConsoleMessage;
-import android.webkit.JavascriptInterface;
-import android.webkit.WebChromeClient;
-import android.webkit.WebResourceError;
-import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebBackForwardList;
 import android.webkit.WebHistoryItem;
 import android.webkit.WebView;
-import android.webkit.WebViewClient;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 
 import java.io.ByteArrayOutputStream;
-import java.lang.reflect.Method;
-import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
-import java.util.Set;
 
 /**
  * MobileWebView - Native Android WebView wrapper for Qt integration
  * Provides QWebChannel bridge, user script injection, and origin validation
  */
-public class MobileWebView {
+public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHost, BridgeInjectorHost {
     private static final String TAG = "MobileWebView";
     private static final int ANDROID_CONTENT_VIEW_ID = 0x01020002; // android.R.id.content
 
@@ -62,15 +47,14 @@ public class MobileWebView {
     private String mBootstrapPageScript = "";
     private String mBootstrapBridgeScript = "";
     private volatile String mCurrentMainFrameOrigin = "";
-    private volatile boolean mBridgeInjectedForCurrentNavigation = false;
-    private final List<Object> mDocumentStartScriptHandlers = new ArrayList<>();
-    private volatile boolean mUseDocumentStartInjection = false;
+    private volatile String mActiveNavigationUrl = "";
 
     // Navigation state
     private boolean mBridgeInstalled = false;
     private String mPendingUrl = null;
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
     private final PendingActionQueue mPendingActionQueue = new PendingActionQueue();
+    private final BridgeScriptInjector mBridgeInjector = new BridgeScriptInjector(this);
 
     @FunctionalInterface
     private interface NativeCallback {
@@ -172,11 +156,8 @@ public class MobileWebView {
             WebView.setWebContentsDebuggingEnabled(true);
         }
 
-        // Set WebViewClient for navigation callbacks
-        mWebView.setWebViewClient(new MobileWebViewClient());
-
-        // Set WebChromeClient for console messages
-        mWebView.setWebChromeClient(new MobileWebChromeClient());
+        mWebView.setWebViewClient(new MobileWebViewClient(this));
+        mWebView.setWebChromeClient(new MobileWebChromeClient(this));
 
         // Add to view hierarchy (initially hidden). Must happen on UI thread.
         mWebView.setVisibility(View.GONE);
@@ -190,8 +171,7 @@ public class MobileWebView {
             }
         }
 
-        // JavaScript interface for QWebChannel bridge
-        mWebView.addJavascriptInterface(new NativeBridge(), "NativeBridge");
+        mWebView.addJavascriptInterface(new MobileWebViewNativeBridge(this), "NativeBridge");
     }
 
     /**
@@ -215,7 +195,7 @@ public class MobileWebView {
             mBootstrapBridgeScript = bootstrapBridgeScript != null ? bootstrapBridgeScript : "";
             mBridgeInstalled = true;
         }
-        runOnMainThread(this::configureBridgeInjectionMode);
+        runOnMainThread(mBridgeInjector::configureInjectionMode);
     }
 
     /**
@@ -228,7 +208,7 @@ public class MobileWebView {
                 mAllowedOrigins.addAll(Arrays.asList(origins));
             }
         }
-        runOnMainThread(this::configureBridgeInjectionMode);
+        runOnMainThread(mBridgeInjector::configureInjectionMode);
     }
 
     /**
@@ -296,6 +276,7 @@ public class MobileWebView {
     public void reload() {
         runOnMainThread(() -> {
             if (mWebView != null) {
+                mBridgeInjector.markForceReinject();
                 mWebView.reload();
             }
         });
@@ -484,7 +465,7 @@ public class MobileWebView {
     public void destroy() {
         mNativePtr = 0;  // zero out immediately so JNI callbacks are ignored
         runOnMainThread(() -> {
-            clearDocumentStartScripts();
+            mBridgeInjector.clearDocumentStartScripts();
             if (mWebView != null) {
                 mWebView.stopLoading();
                 mWebView.loadUrl("about:blank");
@@ -507,261 +488,117 @@ public class MobileWebView {
         return mWebView;
     }
 
-    /**
-     * JavaScript interface for Qt bridge
-     */
-    private class NativeBridge {
-        /**
-         * Called from JavaScript via NativeBridge.postMessage()
-         */
-        @JavascriptInterface
-        public void postMessage(String message) {
-            if (!hasNativePtr()) {
-                return;
-            }
+    // --- ChromeHost ---
 
-            // Prefer tracked main-frame origin to avoid transient URL mismatches during redirects.
-            String resolvedOrigin = mCurrentMainFrameOrigin;
-            if (resolvedOrigin == null || resolvedOrigin.isEmpty()) {
-                String currentUrl = mWebView.getUrl();
-                resolvedOrigin = OriginUtils.extractOrigin(currentUrl);
-            }
-            final String origin = resolvedOrigin;
-
-            final List<String> allowedOrigins;
-            synchronized (mBridgeLock) {
-                allowedOrigins = new ArrayList<>(mAllowedOrigins);
-            }
-            if (!OriginUtils.isOriginAllowed(origin, allowedOrigins)) {
-                Log.w(TAG, "Rejected message from disallowed origin: " + origin);
-                return;
-            }
-
-            // Forward to C++ layer
-            withNativePtr(ptr -> nativeOnWebMessageReceived(ptr, message, origin, false));
-        }
+    @Override
+    public void onTitleChanged(String title) {
+        withNativePtr(ptr -> nativeOnTitleChanged(ptr, title));
     }
 
-    /**
-     * Handles custom URL schemes (intent, tel, mailto, geo, market, etc.).
-     * @return true if navigation was handled or cancelled; false to let WebView load
-     */
-    private static boolean handleCustomSchemeUrl(WebView view, Uri uri) {
-        if (uri == null) {
-            return true;
-        }
-        String rawScheme = uri.getScheme();
-        if (rawScheme == null) {
-            return true;
-        }
-        if (WebViewUrlPolicy.isSchemeLeftToWebView(rawScheme)) {
-            return false;
-        }
-        String schemeLower = rawScheme.toLowerCase(Locale.ROOT);
-        Context ctx = view.getContext();
+    @Override
+    public void onProgressChanged(int progress) {
+        withNativePtr(ptr -> nativeOnLoadProgressChanged(ptr, progress));
+    }
 
-        if ("intent".equals(schemeLower)) {
-            final Intent intent;
-            try {
-                intent = Intent.parseUri(uri.toString(), Intent.URI_INTENT_SCHEME);
-            } catch (URISyntaxException e) {
-                Log.w(TAG, "Invalid intent URL", e);
-                return true;
-            }
-            UrlLoadingHelper.applyWebViewSecurityPolicy(intent);
-            if (intent.resolveActivity(ctx.getPackageManager()) != null) {
-                try {
-                    ctx.startActivity(intent);
-                    return true;
-                } catch (ActivityNotFoundException e) {
-                    // try browser_fallback_url
-                } catch (SecurityException e) {
-                    Log.w(TAG, "Refused to start activity from intent URL", e);
-                }
-            }
-            String fallback = intent.getStringExtra("browser_fallback_url");
-            if (fallback != null && WebViewUrlPolicy.isHttpOrHttpsUrlForFallback(fallback)) {
-                view.loadUrl(fallback);
-            }
-            return true;
-        }
-
-        Intent appIntent = new Intent(Intent.ACTION_VIEW, uri);
-        UrlLoadingHelper.applyWebViewSecurityPolicy(appIntent);
-        if (appIntent.resolveActivity(ctx.getPackageManager()) == null) {
-            return true;
+    @Override
+    public void onFavicon(Bitmap icon) {
+        if (icon == null) {
+            return;
         }
         try {
-            ctx.startActivity(appIntent);
-        } catch (ActivityNotFoundException ignored) {
-        } catch (SecurityException e) {
-            Log.w(TAG, "Refused to start view intent", e);
-        }
-        return true;
-    }
-
-    /**
-     * WebViewClient for navigation callbacks
-     */
-    private class MobileWebViewClient extends WebViewClient {
-        @Override
-        public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
-            Log.d(TAG, "onPageStarted: " + url);
-            mBridgeInjectedForCurrentNavigation = false;
-            withNativePtr(MobileWebView.this::nativeOnNavigationStarted);
-            handleNavigationLifecycle(view, url, true);
-        }
-
-        @Override
-        public void onPageCommitVisible(WebView view, String url) {
-            handleNavigationLifecycle(view, url, false);
-        }
-
-        @Override
-        public void onPageFinished(WebView view, String url) {
-            Log.d(TAG, "onPageFinished: " + url);
-            handleNavigationLifecycle(view, url, false);
-            withNativePtr(ptr -> nativeOnNavigationFinished(ptr, url));
-        }
-
-        @Override
-        public void onReceivedError(WebView view, WebResourceRequest request,
-                                   WebResourceError error) {
-            if (request.isForMainFrame()) {
-                Log.e(TAG, "onReceivedError: " + error.getDescription());
-                withNativePtr(MobileWebView.this::nativeOnNavigationFailed);
-            }
-        }
-
-        @SuppressWarnings("deprecation")
-        @Override
-        public boolean shouldOverrideUrlLoading(WebView view, String url) {
-            if (url == null) {
-                return false;
-            }
-            // Pre-24 only; no isForMainFrame / hasGesture — stricter only on API 24+.
-            return handleCustomSchemeUrl(view, Uri.parse(url));
-        }
-
-        @Override
-        public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-            if (request == null || !request.isForMainFrame() || request.getUrl() == null) {
-                return false;
-            }
-            Uri u = request.getUrl();
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
-                String sch = u.getScheme();
-                String sl = sch != null ? sch.toLowerCase(Locale.ROOT) : "";
-                if (!"intent".equals(sl) && !request.hasGesture()) {
-                    return false;
-                }
-            }
-            return handleCustomSchemeUrl(view, u);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            icon.compress(Bitmap.CompressFormat.PNG, 100, baos);
+            String base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
+            String dataUri = "data:image/png;base64," + base64;
+            withNativePtr(ptr -> nativeOnFaviconReceived(ptr, dataUri));
+        } catch (Exception e) {
+            Log.w(TAG, "onReceivedIcon: failed to encode favicon", e);
         }
     }
 
-    /**
-     * WebChromeClient for console messages
-     */
-    private class MobileWebChromeClient extends WebChromeClient {
-        @Override
-        public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, android.os.Message resultMsg) {
-            WebView.HitTestResult hitTestResult = view.getHitTestResult();
-            String requestedUrl = hitTestResult != null ? hitTestResult.getExtra() : null;
-
-            if (requestedUrl != null && !requestedUrl.isEmpty()) {
-                withNativePtr(ptr -> nativeOnNewWindowRequested(ptr, requestedUrl, isUserGesture));
-                return false;
-            }
-
-            return false;
-        }
-
-        @Override
-        public void onReceivedTitle(WebView view, String title) {
-            withNativePtr(ptr -> nativeOnTitleChanged(ptr, title != null ? title : ""));
-        }
-
-        @Override
-        public void onProgressChanged(WebView view, int newProgress) {
-            withNativePtr(ptr -> nativeOnLoadProgressChanged(ptr, newProgress));
-        }
-
-        @Override
-        public void onReceivedIcon(WebView view, Bitmap icon) {
-            if (icon == null) {
-                return;
-            }
-            try {
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                icon.compress(Bitmap.CompressFormat.PNG, 100, baos);
-                String base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
-                String dataUri = "data:image/png;base64," + base64;
-                withNativePtr(ptr -> nativeOnFaviconReceived(ptr, dataUri));
-            } catch (Exception e) {
-                Log.w(TAG, "onReceivedIcon: failed to encode favicon", e);
-            }
-        }
-
-        @Override
-        public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
-            Log.d(TAG, "Console [" + consoleMessage.messageLevel() + "]: " +
-                       consoleMessage.message() + " -- From line " +
-                       consoleMessage.lineNumber() + " of " +
-                       consoleMessage.sourceId());
-            return true;
-        }
+    @Override
+    public void onNewWindowRequested(String url, boolean userGesture) {
+        withNativePtr(ptr -> nativeOnNewWindowRequested(ptr, url, userGesture));
     }
 
-    /**
-     * Inject bootstrap scripts and user scripts at document start
-     */
-    private void injectBridgeScriptsOnce() {
-        if (mBridgeInjectedForCurrentNavigation) {
-            return;
-        }
+    // --- NavigationHost ---
 
-        if (mUseDocumentStartInjection) {
-            mBridgeInjectedForCurrentNavigation = true;
-            return;
-        }
-
-        injectBridgeScripts();
-        mBridgeInjectedForCurrentNavigation = true;
+    @Override
+    public void onNavigationStarted(String url) {
+        final String navUrl = url != null ? url : "";
+        final boolean sameUrlReload = navUrl.equals(mActiveNavigationUrl);
+        mActiveNavigationUrl = navUrl;
+        mBridgeInjector.resetForNavigation(sameUrlReload);
+        withNativePtr(ptr -> nativeOnNavigationStarted(ptr, navUrl));
     }
 
-    private void injectBridgeScripts() {
-        final boolean installed;
-        final List<String> userScripts;
-        final String pageScript;
-        final String bridgeScript;
+    @Override
+    public void onNavigationFinished(String url) {
+        withNativePtr(ptr -> nativeOnNavigationFinished(ptr, url));
+    }
+
+    @Override
+    public void onMainFrameError() {
+        withNativePtr(MobileWebView.this::nativeOnNavigationFailed);
+    }
+
+    @Override
+    public void onNavigationLifecycle(WebView view, String url, boolean warnIfBridgeMissing,
+                                      ScriptInjectionPhase injectionPhase) {
+        handleNavigationLifecycle(view, url, warnIfBridgeMissing, injectionPhase);
+    }
+
+    @Override
+    public boolean handleCustomScheme(WebView view, Uri uri) {
+        return CustomSchemeUrlHandler.handle(view, uri);
+    }
+
+    // --- NativeBridgeHost ---
+
+    @Override
+    public long nativePtr() {
+        return mNativePtr;
+    }
+
+    @Override
+    public String currentMainFrameOrigin() {
+        return mCurrentMainFrameOrigin;
+    }
+
+    @Override
+    public List<String> allowedOriginsSnapshot() {
         synchronized (mBridgeLock) {
-            installed = mBridgeInstalled;
-            userScripts = new ArrayList<>(mUserScripts);
-            pageScript = mBootstrapPageScript;
-            bridgeScript = mBootstrapBridgeScript;
+            return new ArrayList<>(mAllowedOrigins);
         }
-        if (!installed) {
-            Log.w(TAG, "injectBridgeScripts skipped: bridge not installed");
-            return;
-        }
-        if (mWebView == null) {
-            Log.w(TAG, "injectBridgeScripts skipped: WebView is null");
-            return;
-        }
-        Log.d(TAG, "Injecting bridge scripts: userScripts=" + userScripts.size()
-                + ", bootstrapPageLen=" + pageScript.length()
-                + ", bootstrapBridgeLen=" + bridgeScript.length());
+    }
 
-        injectScriptIfPresent(pageScript, "bootstrap_page");
-        injectScriptIfPresent(bridgeScript, "bootstrap_bridge_android");
+    @Override
+    public WebView webView() {
+        return mWebView;
+    }
 
-        // Inject user scripts
-        for (String scriptContent : userScripts) {
-            if (scriptContent != null && !scriptContent.isEmpty()) {
-                mWebView.evaluateJavascript(scriptContent, null);
-            }
+    @Override
+    public void onWebMessage(String message, String origin) {
+        withNativePtr(ptr -> nativeOnWebMessageReceived(ptr, message, origin, false));
+    }
+
+    // --- BridgeInjectorHost ---
+
+    @Override
+    public BridgeState snapshot() {
+        synchronized (mBridgeLock) {
+            return new BridgeState(
+                mBridgeInstalled,
+                new ArrayList<>(mUserScripts),
+                mBootstrapPageScript,
+                mBootstrapBridgeScript,
+                new ArrayList<>(mAllowedOrigins));
         }
+    }
+
+    @Override
+    public String currentOrigin() {
+        return mCurrentMainFrameOrigin;
     }
 
     private boolean hasNativePtr() {
@@ -775,156 +612,37 @@ public class MobileWebView {
         }
     }
 
-    private void handleNavigationLifecycle(WebView view, String url, boolean warnWhenBridgeMissing) {
-        mCurrentMainFrameOrigin = OriginUtils.extractOrigin(url);
+    private void handleNavigationLifecycle(WebView view, String url, boolean warnWhenBridgeMissing,
+                                           ScriptInjectionPhase injectionPhase) {
+        final String newOrigin = OriginUtils.extractOrigin(url);
+        mCurrentMainFrameOrigin = newOrigin;
         final boolean installed;
         synchronized (mBridgeLock) {
             installed = mBridgeInstalled;
         }
+
+        // Track redirect targets (e.g. opensea.io -> www.opensea.io) for NativeBridge and
+        // document-start re-registration.
+        if (newOrigin != null && !newOrigin.isEmpty()) {
+            boolean originsExpanded = false;
+            synchronized (mBridgeLock) {
+                if (!OriginUtils.isOriginAllowed(newOrigin, mAllowedOrigins)) {
+                    mAllowedOrigins.add(newOrigin);
+                    originsExpanded = true;
+                }
+            }
+            if (originsExpanded) {
+                mBridgeInjector.configureInjectionMode();
+            }
+        }
+
         if (installed) {
-            injectBridgeScriptsOnce();
+            mBridgeInjector.injectOnce(injectionPhase);
         } else if (warnWhenBridgeMissing) {
             Log.w(TAG, "onPageStarted: bridge not installed yet");
         }
         withNativePtr(ptr -> nativeOnNavigationStateChanged(ptr, view.canGoBack(), view.canGoForward()));
         notifyHistoryState(view);
-    }
-
-    private void injectScriptIfPresent(String script, String scriptName) {
-        if (script != null && !script.isEmpty()) {
-            mWebView.evaluateJavascript(script, null);
-            return;
-        }
-        Log.w(TAG, scriptName + " script is empty");
-    }
-
-    private void configureBridgeInjectionMode() {
-        if (mWebView == null) {
-            return;
-        }
-        final boolean installed;
-        synchronized (mBridgeLock) {
-            installed = mBridgeInstalled;
-        }
-        if (!installed) {
-            return;
-        }
-
-        final boolean supportsDocumentStart = supportsDocumentStartScript();
-        if (!supportsDocumentStart) {
-            mUseDocumentStartInjection = false;
-            clearDocumentStartScripts();
-            Log.i(TAG, "DOCUMENT_START_SCRIPT unavailable; using onPageStarted fallback injection");
-            return;
-        }
-
-        boolean registeredOk;
-        try {
-            registeredOk = registerDocumentStartScripts();
-        } catch (RuntimeException ignored) {
-            clearDocumentStartScripts();
-            registeredOk = false;
-        }
-        mUseDocumentStartInjection = registeredOk;
-    }
-
-    private boolean registerDocumentStartScripts() {
-        clearDocumentStartScripts();
-
-        final List<String> originsSnap;
-        final List<String> userScriptsSnap;
-        final String pageScript;
-        final String bridgeScript;
-        synchronized (mBridgeLock) {
-            originsSnap = new ArrayList<>(mAllowedOrigins);
-            userScriptsSnap = new ArrayList<>(mUserScripts);
-            pageScript = mBootstrapPageScript;
-            bridgeScript = mBootstrapBridgeScript;
-        }
-
-        final Set<String> allowedOriginRules = buildAllowedOriginRules(originsSnap);
-        boolean ok = addDocumentStartScriptIfPresent(pageScript, allowedOriginRules)
-            && addDocumentStartScriptIfPresent(bridgeScript, allowedOriginRules);
-
-        for (String scriptContent : userScriptsSnap) {
-            if (scriptContent == null || scriptContent.isEmpty()) {
-                continue;
-            }
-            ok = ok && addDocumentStartScriptIfPresent(scriptContent, allowedOriginRules);
-        }
-
-        if (!ok) {
-            Log.w(TAG, "document-start registration failed; using onPageStarted fallback injection");
-            clearDocumentStartScripts();
-        }
-        return ok;
-    }
-
-    private boolean addDocumentStartScriptIfPresent(String script, Set<String> allowedOriginRules) {
-        if (script == null || script.isEmpty()) {
-            return true;
-        }
-
-        Object handler = addDocumentStartJavaScript(script, allowedOriginRules);
-        if (handler != null) {
-            mDocumentStartScriptHandlers.add(handler);
-            return true;
-        }
-        Log.w(TAG, "Skipping document-start script: WebViewCompat.addDocumentStartJavaScript failed");
-        return false;
-    }
-
-    private static Set<String> buildAllowedOriginRules(List<String> allowedOrigins) {
-        Set<String> allowedOriginRules = new HashSet<>();
-        for (String origin : allowedOrigins) {
-            if (origin != null && !origin.isEmpty()) {
-                allowedOriginRules.add(origin);
-            }
-        }
-
-        if (allowedOriginRules.isEmpty()) {
-            allowedOriginRules.add("*");
-        }
-        return allowedOriginRules;
-    }
-
-    private void clearDocumentStartScripts() {
-        for (Object handler : mDocumentStartScriptHandlers) {
-            if (handler == null) {
-                continue;
-            }
-            try {
-                Method remove = handler.getClass().getMethod("remove");
-                remove.invoke(handler);
-            } catch (Exception e) {
-                Log.w(TAG, "Failed to remove document-start script", e);
-            }
-        }
-        mDocumentStartScriptHandlers.clear();
-    }
-
-    private static boolean supportsDocumentStartScript() {
-        try {
-            Class<?> featureClass = Class.forName("androidx.webkit.WebViewFeature");
-            Object featureName = featureClass.getField("DOCUMENT_START_SCRIPT").get(null);
-            Object supported = featureClass
-                .getMethod("isFeatureSupported", String.class)
-                .invoke(null, featureName);
-            return supported instanceof Boolean && (Boolean) supported;
-        } catch (Throwable t) {
-            return false;
-        }
-    }
-
-    private Object addDocumentStartJavaScript(String script, Set<String> allowedOriginRules) {
-        try {
-            Class<?> compatClass = Class.forName("androidx.webkit.WebViewCompat");
-            return compatClass
-                .getMethod("addDocumentStartJavaScript", WebView.class, String.class, Set.class)
-                .invoke(null, mWebView, script, allowedOriginRules);
-        } catch (Throwable t) {
-            return null;
-        }
     }
 
     private void notifyHistoryState(WebView view) {
@@ -960,7 +678,7 @@ public class MobileWebView {
     // Native callback methods (implemented in C++)
     private native void nativeOnWebMessageReceived(long nativePtr, String message,
                                                    String origin, boolean isMainFrame);
-    private native void nativeOnNavigationStarted(long nativePtr);
+    private native void nativeOnNavigationStarted(long nativePtr, String url);
     private native void nativeOnNavigationFinished(long nativePtr, String url);
     private native void nativeOnNavigationFailed(long nativePtr);
     private native void nativeOnJavaScriptResult(long nativePtr, String result, String error);
