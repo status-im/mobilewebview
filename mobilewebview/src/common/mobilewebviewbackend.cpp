@@ -143,21 +143,37 @@ void MobileWebViewBackendPrivate::setFavicon(const QString &favicon)
 
 void MobileWebViewBackendPrivate::updateUrlState(const QUrl &url)
 {
-    if (m_url != url) {
-        m_url = url;
-        emit q_ptr->urlChanged();
+    if (m_url == url) {
+        return;
+    }
+    const QString prevOrigin = extractOrigin(m_url);
+    const QString newOrigin = extractOrigin(url);
+    m_url = url;
+    emit q_ptr->urlChanged();
+
+    if (!newOrigin.isEmpty() && newOrigin != prevOrigin) {
+        QStringList merged = m_allowedOrigins;
+        if (!merged.contains(newOrigin)) {
+            merged.append(newOrigin);
+        }
+        updateAllowedOrigins(merged);
     }
 }
 
 void MobileWebViewBackendPrivate::updateAllowedOrigins(const QStringList &origins)
 {
-    m_allowedOrigins = origins;
-    
-    if (m_transport) {
-        m_transport->setAllowedOrigins(origins);
+    // Merge so redirect chains (OpenSea -> Coinbase -> back) keep all origins allowed.
+    for (const QString &origin : origins) {
+        if (!origin.isEmpty() && !m_allowedOrigins.contains(origin)) {
+            m_allowedOrigins.append(origin);
+        }
     }
 
-    updateAllowedOriginsImpl(origins);
+    if (m_transport) {
+        m_transport->setAllowedOrigins(m_allowedOrigins);
+    }
+
+    updateAllowedOriginsImpl(m_allowedOrigins);
 }
 
 void MobileWebViewBackendPrivate::notifySnapshotReady(quint64 requestId, const QImage &image)

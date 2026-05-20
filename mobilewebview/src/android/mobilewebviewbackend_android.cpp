@@ -65,7 +65,7 @@ public:
     
     // Callback handlers (called from JNI)
     void onWebMessageReceived(const QString &message, const QString &origin, bool isMainFrame);
-    void onNavigationStarted();
+    void onNavigationStarted(const QString &url);
     void onNavigationFinished(const QString &url);
     void onNavigationFailed();
     void onTitleChanged(const QString &title);
@@ -790,8 +790,12 @@ void AndroidWebViewPrivate::onWebMessageReceived(const QString &message, const Q
     emit q_ptr->webMessageReceived(message, origin, isMainFrame);
 }
 
-void AndroidWebViewPrivate::onNavigationStarted()
+void AndroidWebViewPrivate::onNavigationStarted(const QString &url)
 {
+    // Update origins before user scripts / QWebChannel handshake on the next pass.
+    if (!url.isEmpty()) {
+        updateUrlState(QUrl(url));
+    }
     setLoading(true);
     setLoaded(false);
     setLoadProgress(0);
@@ -890,13 +894,20 @@ Java_org_mobilewebview_MobileWebView_nativeOnWebMessageReceived(JNIEnv *env, job
 }
 
 JNIEXPORT void JNICALL
-Java_org_mobilewebview_MobileWebView_nativeOnNavigationStarted(JNIEnv *env, jobject obj, jlong nativePtr)
+Java_org_mobilewebview_MobileWebView_nativeOnNavigationStarted(JNIEnv *env, jobject obj,
+                                                               jlong nativePtr, jstring url)
 {
     if (nativePtr == 0) return;
-    
+
     AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
-    QMetaObject::invokeMethod(backend->q_ptr, [backend]() {
-        backend->onNavigationStarted();
+    QString qUrl;
+    if (url) {
+        const char *urlChars = env->GetStringUTFChars(url, nullptr);
+        qUrl = QString::fromUtf8(urlChars);
+        env->ReleaseStringUTFChars(url, urlChars);
+    }
+    QMetaObject::invokeMethod(backend->q_ptr, [backend, qUrl]() {
+        backend->onNavigationStarted(qUrl);
     }, Qt::QueuedConnection);
 }
 

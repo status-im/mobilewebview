@@ -63,8 +63,34 @@ public class MobileWebView {
     private String mBootstrapBridgeScript = "";
     private volatile String mCurrentMainFrameOrigin = "";
     private volatile boolean mBridgeInjectedForCurrentNavigation = false;
+    /** Same-URL reload/back-forward: force evaluateJavascript reinject (ignore stale script markers). */
+    private volatile boolean mForceScriptReinject = false;
+    private volatile String mActiveNavigationUrl = "";
     private final List<Object> mDocumentStartScriptHandlers = new ArrayList<>();
     private volatile boolean mUseDocumentStartInjection = false;
+
+    /** True when document-start or evaluateJavascript already loaded user scripts. */
+    private static final String SCRIPTS_ALREADY_PRESENT_JS =
+        "(function(){"
+            + "if(window.__SQ_USER_SCRIPTS_LOADED__)return true;"
+            + "if(window.__ETHEREUM_WRAPPER_INSTANCE__)return true;"
+            + "return false;"
+            + "})();";
+
+    private static final String MARK_USER_SCRIPTS_LOADED_JS =
+        "window.__SQ_USER_SCRIPTS_LOADED__=true;";
+
+    /** Clears inject markers so reload of the same URL can reinstall provider scripts. */
+    private static final String CLEAR_INJECT_STATE_JS =
+        "(function(){try{"
+            + "delete window.__SQ_USER_SCRIPTS_LOADED__;"
+            + "delete window.__ETHEREUM_WRAPPER_INSTANCE__;"
+            + "delete window.__ETHEREUM_INSTALLED__;"
+            + "delete window.__STATUS_ETHEREUM_INJECTOR_INIT__;"
+            + "delete window.__STATUS_QWEBCHANNEL_CONNECTED__;"
+            + "var el=document.documentElement;"
+            + "if(el&&el.dataset){delete el.dataset.sqBridgeReady;}"
+            + "}catch(e){}})();";
 
     // Navigation state
     private boolean mBridgeInstalled = false;
@@ -75,6 +101,12 @@ public class MobileWebView {
     @FunctionalInterface
     private interface NativeCallback {
         void invoke(long ptr);
+    }
+
+    private enum ScriptInjectionPhase {
+        NONE,
+        ON_PAGE_STARTED,
+        ON_PAGE_COMMIT_VISIBLE
     }
 
     /**
@@ -296,6 +328,8 @@ public class MobileWebView {
     public void reload() {
         runOnMainThread(() -> {
             if (mWebView != null) {
+                mBridgeInjectedForCurrentNavigation = false;
+                mForceScriptReinject = true;
                 mWebView.reload();
             }
         });
@@ -607,20 +641,26 @@ public class MobileWebView {
         @Override
         public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
             Log.d(TAG, "onPageStarted: " + url);
+            final String navUrl = url != null ? url : "";
+            final boolean sameUrlReload = navUrl.equals(mActiveNavigationUrl);
+            mActiveNavigationUrl = navUrl;
             mBridgeInjectedForCurrentNavigation = false;
-            withNativePtr(MobileWebView.this::nativeOnNavigationStarted);
-            handleNavigationLifecycle(view, url, true);
+            if (sameUrlReload) {
+                mForceScriptReinject = true;
+            }
+            withNativePtr(ptr -> nativeOnNavigationStarted(ptr, navUrl));
+            handleNavigationLifecycle(view, url, true, ScriptInjectionPhase.ON_PAGE_STARTED);
         }
 
         @Override
         public void onPageCommitVisible(WebView view, String url) {
-            handleNavigationLifecycle(view, url, false);
+            handleNavigationLifecycle(view, url, false, ScriptInjectionPhase.ON_PAGE_COMMIT_VISIBLE);
         }
 
         @Override
         public void onPageFinished(WebView view, String url) {
             Log.d(TAG, "onPageFinished: " + url);
-            handleNavigationLifecycle(view, url, false);
+            handleNavigationLifecycle(view, url, false, ScriptInjectionPhase.NONE);
             withNativePtr(ptr -> nativeOnNavigationFinished(ptr, url));
         }
 
@@ -714,23 +754,58 @@ public class MobileWebView {
     }
 
     /**
-     * Inject bootstrap scripts and user scripts at document start
+     * Inject bootstrap and user scripts via evaluateJavascript when document-start
+     * is unavailable or did not cover the current origin.
      */
     private void injectBridgeScriptsOnce() {
-        if (mBridgeInjectedForCurrentNavigation) {
+        if (mBridgeInjectedForCurrentNavigation && !mForceScriptReinject) {
             return;
         }
 
-        if (mUseDocumentStartInjection) {
+        if (!mForceScriptReinject
+                && mUseDocumentStartInjection
+                && isOriginCoveredByAllowedOrigins(mCurrentMainFrameOrigin)) {
+            return;
+        }
+
+        injectBridgeScripts(() -> {
             mBridgeInjectedForCurrentNavigation = true;
-            return;
-        }
-
-        injectBridgeScripts();
-        mBridgeInjectedForCurrentNavigation = true;
+            mForceScriptReinject = false;
+        });
     }
 
-    private void injectBridgeScripts() {
+    /**
+     * Fallback on onPageCommitVisible: inject only if document-start did not set bridge ready.
+     */
+    private void injectBridgeScriptsOnceWithFallbackCheck() {
+        if (mBridgeInjectedForCurrentNavigation && !mForceScriptReinject) {
+            return;
+        }
+        if (mWebView == null) {
+            return;
+        }
+
+        if (!mUseDocumentStartInjection || mForceScriptReinject) {
+            injectBridgeScriptsOnce();
+            return;
+        }
+
+        mWebView.evaluateJavascript(SCRIPTS_ALREADY_PRESENT_JS, value -> {
+            if (mBridgeInjectedForCurrentNavigation && !mForceScriptReinject) {
+                return;
+            }
+            if ("true".equals(value) && !mForceScriptReinject) {
+                mBridgeInjectedForCurrentNavigation = true;
+                return;
+            }
+            injectBridgeScripts(() -> {
+                mBridgeInjectedForCurrentNavigation = true;
+                mForceScriptReinject = false;
+            });
+        });
+    }
+
+    private void injectBridgeScripts(Runnable onComplete) {
         final boolean installed;
         final List<String> userScripts;
         final String pageScript;
@@ -747,21 +822,34 @@ public class MobileWebView {
         }
         if (mWebView == null) {
             Log.w(TAG, "injectBridgeScripts skipped: WebView is null");
+            if (onComplete != null) {
+                onComplete.run();
+            }
             return;
         }
-        Log.d(TAG, "Injecting bridge scripts: userScripts=" + userScripts.size()
-                + ", bootstrapPageLen=" + pageScript.length()
-                + ", bootstrapBridgeLen=" + bridgeScript.length());
 
-        injectScriptIfPresent(pageScript, "bootstrap_page");
-        injectScriptIfPresent(bridgeScript, "bootstrap_bridge_android");
+        final Runnable injectBody = () -> {
+            injectScriptIfPresent(pageScript, "bootstrap_page");
+            injectScriptIfPresent(bridgeScript, "bootstrap_bridge_android");
 
-        // Inject user scripts
-        for (String scriptContent : userScripts) {
-            if (scriptContent != null && !scriptContent.isEmpty()) {
-                mWebView.evaluateJavascript(scriptContent, null);
+            for (String scriptContent : userScripts) {
+                if (scriptContent != null && !scriptContent.isEmpty()) {
+                    mWebView.evaluateJavascript(scriptContent, null);
+                }
             }
+            mWebView.evaluateJavascript(MARK_USER_SCRIPTS_LOADED_JS, value -> {
+                if (onComplete != null) {
+                    onComplete.run();
+                }
+            });
+        };
+
+        if (mForceScriptReinject) {
+            mWebView.evaluateJavascript(CLEAR_INJECT_STATE_JS, value -> injectBody.run());
+            return;
         }
+
+        injectBody.run();
     }
 
     private boolean hasNativePtr() {
@@ -775,19 +863,53 @@ public class MobileWebView {
         }
     }
 
-    private void handleNavigationLifecycle(WebView view, String url, boolean warnWhenBridgeMissing) {
-        mCurrentMainFrameOrigin = OriginUtils.extractOrigin(url);
+    private void handleNavigationLifecycle(WebView view, String url, boolean warnWhenBridgeMissing,
+                                           ScriptInjectionPhase injectionPhase) {
+        final String newOrigin = OriginUtils.extractOrigin(url);
+        mCurrentMainFrameOrigin = newOrigin;
         final boolean installed;
         synchronized (mBridgeLock) {
             installed = mBridgeInstalled;
         }
+
+        // Track redirect targets (e.g. opensea.io -> www.opensea.io) for NativeBridge and
+        // document-start re-registration.
+        if (newOrigin != null && !newOrigin.isEmpty()) {
+            boolean originsExpanded = false;
+            synchronized (mBridgeLock) {
+                if (!OriginUtils.isOriginAllowed(newOrigin, mAllowedOrigins)) {
+                    mAllowedOrigins.add(newOrigin);
+                    originsExpanded = true;
+                }
+            }
+            if (originsExpanded) {
+                configureBridgeInjectionMode();
+            }
+        }
+
         if (installed) {
-            injectBridgeScriptsOnce();
+            switch (injectionPhase) {
+                case ON_PAGE_STARTED:
+                    injectBridgeScriptsOnce();
+                    break;
+                case ON_PAGE_COMMIT_VISIBLE:
+                    injectBridgeScriptsOnceWithFallbackCheck();
+                    break;
+                case NONE:
+                default:
+                    break;
+            }
         } else if (warnWhenBridgeMissing) {
             Log.w(TAG, "onPageStarted: bridge not installed yet");
         }
         withNativePtr(ptr -> nativeOnNavigationStateChanged(ptr, view.canGoBack(), view.canGoForward()));
         notifyHistoryState(view);
+    }
+
+    private boolean isOriginCoveredByAllowedOrigins(String origin) {
+        synchronized (mBridgeLock) {
+            return OriginUtils.isOriginAllowed(origin, mAllowedOrigins);
+        }
     }
 
     private void injectScriptIfPresent(String script, String scriptName) {
@@ -876,6 +998,9 @@ public class MobileWebView {
 
     private static Set<String> buildAllowedOriginRules(List<String> allowedOrigins) {
         Set<String> allowedOriginRules = new HashSet<>();
+        // Wallet/bootstrap scripts must run on redirect targets; NativeBridge still validates origins.
+        allowedOriginRules.add("https://*");
+        allowedOriginRules.add("http://*");
         for (String origin : allowedOrigins) {
             if (origin != null && !origin.isEmpty()) {
                 allowedOriginRules.add(origin);
@@ -960,7 +1085,7 @@ public class MobileWebView {
     // Native callback methods (implemented in C++)
     private native void nativeOnWebMessageReceived(long nativePtr, String message,
                                                    String origin, boolean isMainFrame);
-    private native void nativeOnNavigationStarted(long nativePtr);
+    private native void nativeOnNavigationStarted(long nativePtr, String url);
     private native void nativeOnNavigationFinished(long nativePtr, String url);
     private native void nativeOnNavigationFailed(long nativePtr);
     private native void nativeOnJavaScriptResult(long nativePtr, String result, String error);

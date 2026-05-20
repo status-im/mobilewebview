@@ -172,6 +172,9 @@ private slots:
     void lifecycleHooksTriggerNativeCallbacks();
     void bridgeEdgeBranchesAreCovered();
     void navigationDelegateUpdatesStates();
+    void updateUrlStateRefreshesAllowedOriginsOnCrossOriginNavigation();
+    void updateUrlStateKeepsAllowedOriginsOnSameOriginNavigation();
+    void updateUrlStateAtNavigationStartRefreshesOriginsBeforeFinish();
     void parseUserScriptsCoversVariants();
     void escapeJsonForJsEscapesRequiredCharacters();
     void extractOriginFromFrameInfoHandlesNull();
@@ -494,6 +497,71 @@ void MobileWebViewBackendCommonTest::navigationDelegateUpdatesStates()
 
     [webView release];
     [delegate release];
+}
+
+void MobileWebViewBackendCommonTest::updateUrlStateRefreshesAllowedOriginsOnCrossOriginNavigation()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+
+    auto *d = g_lastCreatedPrivate;
+    QSignalSpy urlSpy(&backend, &MobileWebViewBackend::urlChanged);
+
+    backend.setUrl(QUrl(QStringLiteral("https://a.example/path")));
+    const int originsCallsBefore = d->updateAllowedOriginsCalls;
+    const QStringList originsBefore = d->lastAllowedOrigins;
+    urlSpy.clear();
+
+    backend.updateUrlState(QUrl(QStringLiteral("https://b.example/page")));
+
+    QCOMPARE(backend.url().toString(), QStringLiteral("https://b.example/page"));
+    QCOMPARE(urlSpy.count(), 1);
+    QCOMPARE(d->updateAllowedOriginsCalls, originsCallsBefore + 1);
+    const QStringList expectedOrigins{
+        QStringLiteral("https://a.example"), QStringLiteral("https://b.example")};
+    QCOMPARE(d->lastAllowedOrigins, expectedOrigins);
+    QVERIFY(originsBefore != d->lastAllowedOrigins);
+}
+
+void MobileWebViewBackendCommonTest::updateUrlStateAtNavigationStartRefreshesOriginsBeforeFinish()
+{
+    // Android onPageStarted calls updateUrlState before bridge scripts / QWebChannel connect.
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+
+    auto *d = g_lastCreatedPrivate;
+    backend.setUrl(QUrl(QStringLiteral("https://duckduckgo.com/?q=opensea")));
+
+    backend.updateUrlState(QUrl(QStringLiteral("https://opensea.io/")));
+
+    const QStringList expectedOrigins{
+        QStringLiteral("https://duckduckgo.com"), QStringLiteral("https://opensea.io")};
+    QCOMPARE(d->lastAllowedOrigins, expectedOrigins);
+    QCOMPARE(backend.url().toString(), QStringLiteral("https://opensea.io/"));
+}
+
+void MobileWebViewBackendCommonTest::updateUrlStateKeepsAllowedOriginsOnSameOriginNavigation()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+
+    auto *d = g_lastCreatedPrivate;
+
+    backend.setUrl(QUrl(QStringLiteral("https://a.example/path")));
+    const int originsCallsAfterSetUrl = d->updateAllowedOriginsCalls;
+    const QStringList originsAfterSetUrl = d->lastAllowedOrigins;
+
+    backend.updateUrlState(QUrl(QStringLiteral("https://a.example/other")));
+    QCOMPARE(d->updateAllowedOriginsCalls, originsCallsAfterSetUrl);
+    QCOMPARE(d->lastAllowedOrigins, originsAfterSetUrl);
+    QCOMPARE(backend.url().toString(), QStringLiteral("https://a.example/other"));
+
+    const int originsCallsBeforeRepeat = d->updateAllowedOriginsCalls;
+    backend.updateUrlState(QUrl(QStringLiteral("https://a.example/other")));
+    QCOMPARE(d->updateAllowedOriginsCalls, originsCallsBeforeRepeat);
 }
 
 void MobileWebViewBackendCommonTest::parseUserScriptsCoversVariants()
