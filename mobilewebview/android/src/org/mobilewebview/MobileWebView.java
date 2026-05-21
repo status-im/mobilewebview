@@ -86,7 +86,23 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
 
     private void initializeWebViewOnMainThread(Context context) {
         try {
-            mWebView = new WebView(context);
+            mWebView = new WebView(context) {
+                @Override
+                public boolean dispatchKeyEvent(android.view.KeyEvent event) {
+                    if (event.getKeyCode() == android.view.KeyEvent.KEYCODE_BACK) {
+                        final int action = event.getAction();
+                        if (action == android.view.KeyEvent.ACTION_DOWN
+                                || action == android.view.KeyEvent.ACTION_UP) {
+                            final long ptr = mNativePtr;
+                            if (ptr != 0) {
+                                nativeOnBackRequested(ptr, action == android.view.KeyEvent.ACTION_DOWN);
+                                return true; // consumed only because we forwarded it
+                            }
+                        }
+                    }
+                    return super.dispatchKeyEvent(event);
+                }
+            };
             setupWebView();
         } catch (RuntimeException e) {
             Log.e(TAG, "Failed to initialize WebView on main thread", e);
@@ -414,6 +430,12 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         runOnMainThread(() -> {
             if (mWebView == null) return;
             mWebView.setVisibility(visible ? View.VISIBLE : View.GONE);
+            // Grab focus when shown so the WebView receives key events
+            // (notably KEYCODE_BACK). Without focus, dispatchKeyEvent is not
+            // called and Back is never forwarded to QML.
+            if (visible) {
+                mWebView.requestFocus();
+            }
         });
     }
 
@@ -746,6 +768,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     private native void nativeOnJavaScriptResult(long nativePtr, String result, String error);
     private native void nativeOnTitleChanged(long nativePtr, String title);
     private native void nativeOnNavigationStateChanged(long nativePtr, boolean canGoBack, boolean canGoForward);
+    private native void nativeOnBackRequested(long nativePtr, boolean pressed);
     private native void nativeOnHistoryChanged(long nativePtr, String[] urls, String[] titles, int currentHistoryIndex);
     private native void nativeOnNewWindowRequested(long nativePtr, String url, boolean userInitiated);
     private native void nativeOnLoadProgressChanged(long nativePtr, int progress);

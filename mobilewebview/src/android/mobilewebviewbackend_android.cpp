@@ -7,6 +7,8 @@
 
 #include <QDebug>
 #include <QQuickWindow>
+#include <QKeyEvent>
+#include <QCoreApplication>
 #include <QFile>
 #include <QGuiApplication>
 #include <QJniObject>
@@ -985,6 +987,23 @@ Java_org_mobilewebview_MobileWebView_nativeOnNavigationStateChanged(JNIEnv *env,
     AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
     QMetaObject::invokeMethod(backend->q_ptr, [backend, canGoBack, canGoForward]() {
         backend->onNavigationStateChanged(canGoBack == JNI_TRUE, canGoForward == JNI_TRUE);
+    }, Qt::QueuedConnection);
+}
+
+JNIEXPORT void JNICALL
+Java_org_mobilewebview_MobileWebView_nativeOnBackRequested(JNIEnv *env, jobject obj, jlong nativePtr,
+                                                           jboolean pressed)
+{
+    Q_UNUSED(env)
+    Q_UNUSED(obj)
+    if (nativePtr == 0) return;
+
+    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
+    const QEvent::Type type = (pressed == JNI_TRUE) ? QEvent::KeyPress : QEvent::KeyRelease;
+    QMetaObject::invokeMethod(backend->q_ptr, [backend, type]() {
+        QQuickWindow *win = backend->q_ptr->window();
+        if (!win) return;
+        QCoreApplication::postEvent(win, new QKeyEvent(type, Qt::Key_Back, Qt::NoModifier));
     }, Qt::QueuedConnection);
 }
 
