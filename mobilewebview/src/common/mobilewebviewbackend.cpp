@@ -237,6 +237,11 @@ void MobileWebViewBackendPrivate::notifySnapshotReady(quint64 requestId, const Q
     if (!m_snapshotItem) {
         m_snapshotItem = new MobileWebViewSnapshotItem(q_ptr);
     }
+    if (!m_freezeClipStateStored) {
+        m_clipStateBeforeFreeze = q_ptr->clip();
+        m_freezeClipStateStored = true;
+    }
+    q_ptr->setClip(true);
     m_snapshotItem->setImage(image);
     m_snapshotItem->setVisible(true);
     updateFreezeOverlayGeometry();
@@ -262,6 +267,7 @@ void MobileWebViewBackendPrivate::clearFreezeState()
         m_snapshotItem->deleteLater();
         m_snapshotItem = nullptr;
     }
+    restoreClipState();
     updateNativeVisibility(q_ptr->isVisible());
 }
 
@@ -273,6 +279,15 @@ void MobileWebViewBackendPrivate::updateFreezeOverlayGeometry()
     m_snapshotItem->setPosition(QPointF(0, 0));
     m_snapshotItem->setWidth(q_ptr->width());
     m_snapshotItem->setHeight(q_ptr->height());
+}
+
+void MobileWebViewBackendPrivate::restoreClipState()
+{
+    if (!q_ptr || !m_freezeClipStateStored) {
+        return;
+    }
+    q_ptr->setClip(m_clipStateBeforeFreeze);
+    m_freezeClipStateStored = false;
 }
 
 void MobileWebViewBackendPrivate::setupTransport()
@@ -633,6 +648,7 @@ void MobileWebViewBackend::setFreeze(bool freeze)
         MobileWebViewSnapshotItem *overlay = d->m_snapshotItem;
         d->m_snapshotItem = nullptr;
         d->m_freezeState = FS::Idle;
+        d->restoreClipState();
         d->updateNativeVisibility(d->q_ptr->isVisible());
         emit freezeChanged();
         QTimer::singleShot(kFreezeOverlayFrameDelayMs, this, [overlay]() {
@@ -795,7 +811,6 @@ void MobileWebViewBackend::geometryChange(const QRectF &newGeometry, const QRect
     if (newGeometry != oldGeometry) {
         Q_D(MobileWebViewBackend);
         d->updateNativeGeometry(newGeometry);
-        d->updateFreezeOverlayGeometry();
     }
 }
 
