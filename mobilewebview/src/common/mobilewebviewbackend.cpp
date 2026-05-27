@@ -244,7 +244,7 @@ void MobileWebViewBackendPrivate::notifySnapshotReady(quint64 requestId, const Q
     q_ptr->setClip(true);
     m_snapshotItem->setImage(image);
     m_snapshotItem->setVisible(true);
-    updateFreezeOverlayGeometry();
+    applyFreezeOverlaySizeFromImage(image);
 
     const quint64 captureToken = requestId;
     QPointer<MobileWebViewBackend> guard(q_ptr);
@@ -271,14 +271,23 @@ void MobileWebViewBackendPrivate::clearFreezeState()
     updateNativeVisibility(q_ptr->isVisible());
 }
 
-void MobileWebViewBackendPrivate::updateFreezeOverlayGeometry()
+void MobileWebViewBackendPrivate::applyFreezeOverlaySizeFromImage(const QImage &image)
 {
-    if (!m_snapshotItem || !q_ptr) {
+    if (!m_snapshotItem || !q_ptr || image.isNull()) {
         return;
     }
+
+    qreal dpr = 1.0;
+    if (QQuickWindow *window = q_ptr->window()) {
+        dpr = window->devicePixelRatio();
+    }
+    if (dpr <= 0) {
+        dpr = 1.0;
+    }
+
     m_snapshotItem->setPosition(QPointF(0, 0));
-    m_snapshotItem->setWidth(q_ptr->width());
-    m_snapshotItem->setHeight(q_ptr->height());
+    m_snapshotItem->setWidth(image.width() / dpr);
+    m_snapshotItem->setHeight(image.height() / dpr);
 }
 
 void MobileWebViewBackendPrivate::restoreClipState()

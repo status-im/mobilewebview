@@ -62,7 +62,7 @@ public:
     void notifySnapshotReady(quint64 requestId, const QImage &image);
 
     void clearFreezeState();
-    void updateFreezeOverlayGeometry();
+    void applyFreezeOverlaySizeFromImage(const QImage &image);
     void restoreClipState();
 
     /// Native WebView is hidden only in Frozen state (overlay replaces it).

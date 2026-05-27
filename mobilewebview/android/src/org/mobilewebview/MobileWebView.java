@@ -11,8 +11,11 @@ import android.util.Base64;
 import android.util.Log;
 import android.app.Activity;
 import android.net.Uri;
+import android.content.ContextWrapper;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
+import android.view.PixelCopy;
 import android.view.ViewParent;
 import android.webkit.WebSettings;
 import android.webkit.WebBackForwardList;
@@ -20,6 +23,7 @@ import android.webkit.WebHistoryItem;
 import android.webkit.WebView;
 import android.os.Handler;
 import android.os.Looper;
+import android.graphics.Rect;
 
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
@@ -422,33 +426,91 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
                 return;
             }
             if (mWebView == null) {
-                nativeOnFreezeSnapshotReady(mNativePtr, requestId, 0, 0, null);
+                reportFreezeSnapshotFailure(requestId);
                 return;
             }
+            final int w = mWebView.getWidth();
+            final int h = mWebView.getHeight();
+            if (w <= 0 || h <= 0) {
+                reportFreezeSnapshotFailure(requestId);
+                return;
+            }
+
             try {
-                int w = mWebView.getWidth();
-                int h = mWebView.getHeight();
-                if (w <= 0 || h <= 0) {
-                    nativeOnFreezeSnapshotReady(mNativePtr, requestId, 0, 0, null);
+                final Window window = resolveWindow(mWebView.getContext());
+                if (window == null) {
+                    captureFreezeSoftware(requestId, w, h);
                     return;
                 }
-                Bitmap bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-                bitmap.eraseColor(android.graphics.Color.WHITE);
-                Canvas canvas = new Canvas(bitmap);
-                mWebView.draw(canvas);
-                ByteBuffer buffer = ByteBuffer.allocateDirect(w * h * 4);
-                buffer.order(ByteOrder.nativeOrder());
-                bitmap.copyPixelsToBuffer(buffer);
-                byte[] pixels = new byte[w * h * 4];
-                buffer.rewind();
-                buffer.get(pixels);
-                bitmap.recycle();
-                nativeOnFreezeSnapshotReady(mNativePtr, requestId, w, h, pixels);
+
+                final Bitmap bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                final int[] location = new int[2];
+                mWebView.getLocationInWindow(location);
+                final Rect srcRect = new Rect(location[0], location[1], location[0] + w, location[1] + h);
+
+                PixelCopy.request(window, srcRect, bitmap, result -> {
+                    if (result == PixelCopy.SUCCESS) {
+                        deliverFreezeSnapshot(requestId, bitmap, w, h);
+                        return;
+                    }
+                    bitmap.recycle();
+                    Log.w(TAG, "PixelCopy freeze snapshot failed with code " + result
+                            + ", falling back to software draw");
+                    captureFreezeSoftware(requestId, w, h);
+                }, new Handler(Looper.getMainLooper()));
             } catch (RuntimeException e) {
                 Log.e(TAG, "captureSnapshotForFreeze failed", e);
-                nativeOnFreezeSnapshotReady(mNativePtr, requestId, 0, 0, null);
+                reportFreezeSnapshotFailure(requestId);
             }
         });
+    }
+
+    private void captureFreezeSoftware(long requestId, int w, int h) {
+        try {
+            Bitmap bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            bitmap.eraseColor(android.graphics.Color.WHITE);
+            mWebView.draw(new Canvas(bitmap));
+            deliverFreezeSnapshot(requestId, bitmap, w, h);
+        } catch (RuntimeException e) {
+            Log.e(TAG, "software freeze snapshot failed", e);
+            reportFreezeSnapshotFailure(requestId);
+        }
+    }
+
+    private void deliverFreezeSnapshot(long requestId, Bitmap bitmap, int w, int h) {
+        final byte[] pixels;
+        try {
+            ByteBuffer buffer = ByteBuffer.allocate(w * h * 4);
+            buffer.order(ByteOrder.nativeOrder());
+            bitmap.copyPixelsToBuffer(buffer);
+            pixels = buffer.array();
+        } catch (RuntimeException e) {
+            Log.e(TAG, "deliverFreezeSnapshot failed", e);
+            reportFreezeSnapshotFailure(requestId);
+            return;
+        } finally {
+            bitmap.recycle();
+        }
+        withNativePtr(ptr -> nativeOnFreezeSnapshotReady(ptr, requestId, w, h, pixels));
+    }
+
+    private void reportFreezeSnapshotFailure(long requestId) {
+        withNativePtr(ptr -> nativeOnFreezeSnapshotReady(ptr, requestId, 0, 0, null));
+    }
+
+    private Window resolveWindow(Context context) {
+        Context current = context;
+        while (current instanceof ContextWrapper) {
+            if (current instanceof Activity) {
+                return ((Activity) current).getWindow();
+            }
+            Context base = ((ContextWrapper) current).getBaseContext();
+            if (base == current) {
+                break;
+            }
+            current = base;
+        }
+        return null;
     }
 
     public void setInteractionEnabled(boolean enabled) {
