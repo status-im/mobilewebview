@@ -165,6 +165,8 @@ class MobileWebViewBackendCommonTest : public QObject
 private slots:
     void forwardsCallsAndStateChanges();
     void freezeIntentIsSynchronousAndCaptureCompletes();
+    void freezeOverlayKeepsCaptureSizeOnResize();
+    void freezeOverlayUsesCapturedImageSizeNotCurrentBackend();
     void freezeCancelledBeforeNotifyIgnoresStaleCallback();
     void freezeEmptySnapshotAbortsAndEmits();
     void freezeDoubleSetTrueOnlyCapturesOnce();
@@ -315,6 +317,61 @@ void MobileWebViewBackendCommonTest::freezeIntentIsSynchronousAndCaptureComplete
     QCOMPARE(d->freezeCaptureCalls, 1);
     QCOMPARE(backend.freeze(), true);
     QCOMPARE(freezeSpy.count(), 1);
+}
+
+void MobileWebViewBackendCommonTest::freezeOverlayKeepsCaptureSizeOnResize()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d != nullptr);
+
+    backend.setWidth(200);
+    backend.setHeight(100);
+    backend.setFreeze(true);
+
+    QImage img(200, 100, QImage::Format_ARGB32);
+    img.fill(QColor(Qt::red));
+    d->notifySnapshotReady(d->m_freezeRequestId, img);
+
+    QVERIFY(d->m_snapshotItem != nullptr);
+    QCOMPARE(d->m_snapshotItem->width(), 200.0);
+    QCOMPARE(d->m_snapshotItem->height(), 100.0);
+
+    backend.setWidth(100);
+    backend.setHeight(50);
+    QCOMPARE(d->m_snapshotItem->width(), 200.0);
+    QCOMPARE(d->m_snapshotItem->height(), 100.0);
+
+    backend.setWidth(400);
+    backend.setHeight(200);
+    QCOMPARE(d->m_snapshotItem->width(), 200.0);
+    QCOMPARE(d->m_snapshotItem->height(), 100.0);
+}
+
+void MobileWebViewBackendCommonTest::freezeOverlayUsesCapturedImageSizeNotCurrentBackend()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d != nullptr);
+
+    backend.setWidth(200);
+    backend.setHeight(100);
+    backend.setFreeze(true);
+    const quint64 rid = d->m_freezeRequestId;
+
+    // Simulate a resize while async snapshot capture is still in flight.
+    backend.setWidth(50);
+    backend.setHeight(25);
+
+    QImage img(200, 100, QImage::Format_ARGB32);
+    img.fill(QColor(Qt::red));
+    d->notifySnapshotReady(rid, img);
+
+    QVERIFY(d->m_snapshotItem != nullptr);
+    QCOMPARE(d->m_snapshotItem->width(), 200.0);
+    QCOMPARE(d->m_snapshotItem->height(), 100.0);
 }
 
 void MobileWebViewBackendCommonTest::freezeCancelledBeforeNotifyIgnoresStaleCallback()

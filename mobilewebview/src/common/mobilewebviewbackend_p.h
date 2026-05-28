@@ -62,7 +62,8 @@ public:
     void notifySnapshotReady(quint64 requestId, const QImage &image);
 
     void clearFreezeState();
-    void updateFreezeOverlayGeometry();
+    void applyFreezeOverlaySizeFromImage(const QImage &image);
+    void restoreClipState();
 
     /// Native WebView is hidden only in Frozen state (overlay replaces it).
     bool shouldShowNativeWebView(bool qmlItemVisible) const
@@ -104,6 +105,8 @@ public:
     /// DPR from QQuickWindow at requestSnapshot time; used to convert logical targetSize to pixels.
     qreal m_publicSnapshotDpr = 1.0;
     MobileWebViewSnapshotItem *m_snapshotItem = nullptr;
+    bool m_freezeClipStateStored = false;
+    bool m_clipStateBeforeFreeze = false;
 
     // Common methods (implemented in mobilewebviewbackend.cpp)
     void setLoading(bool loading);
