@@ -134,6 +134,15 @@ bool AndroidWebViewPrivate::initNativeView()
         return false;
     }
 
+    if (m_jniInitialized && m_webViewClass) {
+        m_webViewObject = createWebView();
+        if (!m_webViewObject) {
+            qWarning() << "AndroidWebViewPrivate: Failed to recreate WebView object";
+            return false;
+        }
+        return true;
+    }
+
     // Load MobileWebView class
     jclass localClass = env->FindClass("org/mobilewebview/MobileWebView");
     if (!localClass) {
@@ -230,7 +239,7 @@ jobject AndroidWebViewPrivate::createWebView()
 
     // Create MobileWebView instance
     jmethodID constructor = env->GetMethodID(m_webViewClass, "<init>",
-        "(Landroid/content/Context;JLandroid/view/View;)V");
+        "(Landroid/content/Context;JLandroid/view/View;Ljava/lang/String;Z)V");
     
     if (!constructor) {
         qWarning() << "AndroidWebViewPrivate: Failed to find constructor";
@@ -239,10 +248,17 @@ jobject AndroidWebViewPrivate::createWebView()
         return nullptr;
     }
 
+    const jstring jStorageName = env->NewStringUTF(m_storageName.toUtf8().constData());
+    const jboolean jOffTheRecord = m_offTheRecord ? JNI_TRUE : JNI_FALSE;
+
     jobject localObj = env->NewObject(m_webViewClass, constructor, 
                                       activity.object(), 
                                       reinterpret_cast<jlong>(this),
-                                      rootView);
+                                      rootView,
+                                      jStorageName,
+                                      jOffTheRecord);
+    
+    env->DeleteLocalRef(jStorageName);
     
     if (!localObj) {
         qWarning() << "AndroidWebViewPrivate: Failed to create MobileWebView instance";

@@ -65,13 +65,21 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         void invoke(long ptr);
     }
 
+    private final WebViewProfileManager mProfileManager = new WebViewProfileManager();
+    private String mStorageName = "";
+    private boolean mOffTheRecord = false;
+    private String mActiveProfileName = null;
+
     /**
      * Constructor - creates and initializes WebView
      */
-    public MobileWebView(Context context, long nativePtr, View rootView) {
+    public MobileWebView(Context context, long nativePtr, View rootView,
+                           String storageName, boolean offTheRecord) {
         mContext = context;
         mNativePtr = nativePtr;
         mRootView = resolveRootView(rootView);
+        mStorageName = storageName != null ? storageName : "";
+        mOffTheRecord = offTheRecord;
 
         Log.d(TAG, "MobileWebView created with nativePtr: " + nativePtr);
 
@@ -178,6 +186,8 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
 
         mWebView.setWebViewClient(new MobileWebViewClient(this));
         mWebView.setWebChromeClient(new MobileWebChromeClient(this));
+
+        mActiveProfileName = mProfileManager.configureProfile(mWebView, mStorageName, mOffTheRecord);
 
         // Add to view hierarchy (initially hidden). Must happen on UI thread.
         mWebView.setVisibility(View.GONE);
@@ -551,6 +561,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         runOnMainThread(() -> {
             mBridgeInjector.clearDocumentStartScripts();
             if (mWebView != null) {
+                mProfileManager.flushCookiesIfPersistent(mOffTheRecord);
                 mWebView.stopLoading();
                 mWebView.loadUrl("about:blank");
                 mWebView.clearHistory();
@@ -562,6 +573,8 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
                 mWebView.destroy();
                 mWebView = null;
             }
+            mProfileManager.destroyProfile(mActiveProfileName, mOffTheRecord);
+            mActiveProfileName = null;
         });
     }
 
@@ -618,6 +631,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
 
     @Override
     public void onNavigationFinished(String url) {
+        mProfileManager.flushCookiesIfPersistent(mOffTheRecord);
         withNativePtr(ptr -> nativeOnNavigationFinished(ptr, url));
     }
 
