@@ -35,6 +35,8 @@ class MobileWebViewBackend : public QQuickItem
     Q_PROPERTY(bool findSupported READ findSupported CONSTANT)
     Q_PROPERTY(bool hasNativeFindPanel READ hasNativeFindPanel CONSTANT)
     Q_PROPERTY(bool freeze READ freeze WRITE setFreeze NOTIFY freezeChanged)
+    Q_PROPERTY(bool offTheRecord READ offTheRecord WRITE setOffTheRecord NOTIFY offTheRecordChanged)
+    Q_PROPERTY(QString storageName READ storageName WRITE setStorageName NOTIFY storageNameChanged)
 
 public:
     explicit MobileWebViewBackend(QQuickItem *parent = nullptr);
@@ -66,6 +68,10 @@ public:
     bool hasNativeFindPanel() const;
     bool freeze() const;
     void setFreeze(bool freeze);
+    bool offTheRecord() const;
+    void setOffTheRecord(bool offTheRecord);
+    QString storageName() const;
+    void setStorageName(const QString &storageName);
 
     /// Async native snapshot. On success, snapshotReady carries a stable
     /// image://mobilewebview-snapshot/<key> URL for this backend instance (Image.source).
@@ -135,6 +141,8 @@ signals:
     void faviconChanged();
     void zoomFactorChanged();
     void freezeChanged();
+    void offTheRecordChanged();
+    void storageNameChanged();
 
     // Emitted when a message is received from JavaScript
     void webMessageReceived(const QString &message, const QString &origin, bool isMainFrame);

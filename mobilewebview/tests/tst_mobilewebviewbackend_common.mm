@@ -28,7 +28,13 @@ public:
     {
     }
 
-    bool initNativeView() override { return true; }
+    bool initNativeView() override
+    {
+        ++initNativeViewCalls;
+        return true;
+    }
+
+    void destroyNativeView() override { ++destroyNativeViewCalls; }
 
     void loadUrlImpl(const QUrl &url) override
     {
@@ -132,6 +138,8 @@ public:
     int setupNativeViewCalls = 0;
     int updateAllowedOriginsCalls = 0;
     int freezeCaptureCalls = 0;
+    int initNativeViewCalls = 0;
+    int destroyNativeViewCalls = 0;
     quint64 lastFreezeCaptureRequestId = 0;
 
     bool lastVisible = false;
@@ -185,6 +193,11 @@ private slots:
     void requestSnapshotScalesToTargetSize();
     void requestSnapshotScalesLogicalSizeByWindowDevicePixelRatio();
     void freezeAndRequestSnapshotAreIndependent();
+    void offTheRecordChangeRecreatesNativeViewAndReloadsCurrentUrl();
+    void offTheRecordSameValueDoesNotRecreateNativeView();
+    void storageNameChangeRecreatesNativeViewInStandardMode();
+    void storageNameChangeIgnoredInIncognitoMode();
+    void recreateReinstallsBridgeAndPreservesUserScripts();
 };
 
 void MobileWebViewBackendCommonTest::forwardsCallsAndStateChanges()
@@ -813,6 +826,123 @@ void MobileWebViewBackendCommonTest::freezeAndRequestSnapshotAreIndependent()
     QVERIFY(d->m_snapshotItem != nullptr);
     QTRY_COMPARE(d->m_freezeState, FS::Frozen);
     QCOMPARE(snapshotSpy.count(), 1);
+}
+
+void MobileWebViewBackendCommonTest::offTheRecordChangeRecreatesNativeViewAndReloadsCurrentUrl()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+    auto *d = g_lastCreatedPrivate;
+
+    const QUrl pageUrl(QStringLiteral("https://example.com/page"));
+    backend.setUrl(pageUrl);
+    d->m_nativeViewSetup = true;
+
+    const int loadUrlBefore = d->loadUrlCalls;
+    const int initBefore = d->initNativeViewCalls;
+    const int destroyBefore = d->destroyNativeViewCalls;
+
+    backend.setOffTheRecord(true);
+
+    QCOMPARE(backend.offTheRecord(), true);
+    QCOMPARE(d->destroyNativeViewCalls, destroyBefore + 1);
+    QCOMPARE(d->initNativeViewCalls, initBefore + 1);
+    QCOMPARE(d->loadUrlCalls, loadUrlBefore + 1);
+    QCOMPARE(d->lastLoadedUrl, pageUrl);
+}
+
+void MobileWebViewBackendCommonTest::offTheRecordSameValueDoesNotRecreateNativeView()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+    auto *d = g_lastCreatedPrivate;
+
+    backend.setUrl(QUrl(QStringLiteral("https://example.com/page")));
+    d->m_nativeViewSetup = true;
+
+    const int destroyBefore = d->destroyNativeViewCalls;
+    const int initBefore = d->initNativeViewCalls;
+    const int loadUrlBefore = d->loadUrlCalls;
+
+    backend.setOffTheRecord(false);
+
+    QCOMPARE(d->destroyNativeViewCalls, destroyBefore);
+    QCOMPARE(d->initNativeViewCalls, initBefore);
+    QCOMPARE(d->loadUrlCalls, loadUrlBefore);
+}
+
+void MobileWebViewBackendCommonTest::storageNameChangeRecreatesNativeViewInStandardMode()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+    auto *d = g_lastCreatedPrivate;
+
+    const QUrl pageUrl(QStringLiteral("https://example.com/page"));
+    backend.setUrl(pageUrl);
+    backend.setStorageName(QStringLiteral("Profile_A"));
+    d->m_nativeViewSetup = true;
+
+    const int destroyBefore = d->destroyNativeViewCalls;
+    const int initBefore = d->initNativeViewCalls;
+    const int loadUrlBefore = d->loadUrlCalls;
+
+    backend.setStorageName(QStringLiteral("Profile_B"));
+
+    QCOMPARE(backend.storageName(), QStringLiteral("Profile_B"));
+    QCOMPARE(d->destroyNativeViewCalls, destroyBefore + 1);
+    QCOMPARE(d->initNativeViewCalls, initBefore + 1);
+    QCOMPARE(d->loadUrlCalls, loadUrlBefore + 1);
+    QCOMPARE(d->lastLoadedUrl, pageUrl);
+}
+
+void MobileWebViewBackendCommonTest::storageNameChangeIgnoredInIncognitoMode()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+    auto *d = g_lastCreatedPrivate;
+
+    backend.setUrl(QUrl(QStringLiteral("https://example.com/page")));
+    backend.setOffTheRecord(true);
+    backend.setStorageName(QStringLiteral("Profile_A"));
+    d->m_nativeViewSetup = true;
+
+    const int destroyBefore = d->destroyNativeViewCalls;
+    const int initBefore = d->initNativeViewCalls;
+    const int loadUrlBefore = d->loadUrlCalls;
+
+    backend.setStorageName(QStringLiteral("Profile_B"));
+
+    QCOMPARE(backend.storageName(), QStringLiteral("Profile_B"));
+    QCOMPARE(d->destroyNativeViewCalls, destroyBefore);
+    QCOMPARE(d->initNativeViewCalls, initBefore);
+    QCOMPARE(d->loadUrlCalls, loadUrlBefore);
+}
+
+void MobileWebViewBackendCommonTest::recreateReinstallsBridgeAndPreservesUserScripts()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+    auto *d = g_lastCreatedPrivate;
+
+    const QVariantList scripts{QVariantMap{
+        {QStringLiteral("path"), QStringLiteral(":/script1.js")}}};
+    backend.setUserScripts(scripts);
+    backend.setUrl(QUrl(QStringLiteral("https://example.com/page")));
+    d->m_nativeViewSetup = true;
+
+    const int bridgeCallsBefore = d->installBridgeCalls;
+    QVERIFY(d->m_bridgeInstalled);
+
+    backend.setOffTheRecord(true);
+
+    QCOMPARE(backend.userScripts(), scripts);
+    QCOMPARE(d->installBridgeCalls, bridgeCallsBefore + 1);
+    QVERIFY(d->m_bridgeInstalled);
 }
 
 QTEST_MAIN(MobileWebViewBackendCommonTest)

@@ -364,6 +364,29 @@ void MobileWebViewBackendPrivate::ensureBridgeInstalled()
     }
 }
 
+void MobileWebViewBackendPrivate::recreateNativeViewForStore()
+{
+    const QUrl urlToReload = m_url;
+
+    clearFreezeState();
+    m_bridgeInstalled = false;
+
+    destroyNativeView();
+    m_nativeViewSetup = false;
+
+    if (!initNativeView()) {
+        qWarning() << "MobileWebViewBackend: Failed to re-initialize native view";
+        return;
+    }
+
+    setupNativeViewImpl();
+    ensureBridgeInstalled();
+
+    if (urlToReload.isValid() && !urlToReload.isEmpty()) {
+        loadUrlImpl(urlToReload);
+    }
+}
+
 // =============================================================================
 // MobileWebViewBackend - Public API implementation
 // =============================================================================
@@ -631,6 +654,48 @@ bool MobileWebViewBackend::freeze() const
 {
     Q_D(const MobileWebViewBackend);
     return d->m_freezeState != MobileWebViewBackendPrivate::FreezeState::Idle;
+}
+
+bool MobileWebViewBackend::offTheRecord() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_offTheRecord;
+}
+
+void MobileWebViewBackend::setOffTheRecord(bool offTheRecord)
+{
+    Q_D(MobileWebViewBackend);
+    if (d->m_offTheRecord == offTheRecord) {
+        return;
+    }
+
+    d->m_offTheRecord = offTheRecord;
+    emit offTheRecordChanged();
+
+    if (d->m_nativeViewSetup) {
+        d->recreateNativeViewForStore();
+    }
+}
+
+QString MobileWebViewBackend::storageName() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_storageName;
+}
+
+void MobileWebViewBackend::setStorageName(const QString &storageName)
+{
+    Q_D(MobileWebViewBackend);
+    if (d->m_storageName == storageName) {
+        return;
+    }
+
+    d->m_storageName = storageName;
+    emit storageNameChanged();
+
+    if (d->m_nativeViewSetup && !d->m_offTheRecord) {
+        d->recreateNativeViewForStore();
+    }
 }
 
 void MobileWebViewBackend::setFreeze(bool freeze)

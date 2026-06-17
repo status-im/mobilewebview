@@ -212,6 +212,7 @@ public:
     
     // Platform-specific implementations
     bool initNativeView() override;
+    void destroyNativeView() override;
     void loadUrlImpl(const QUrl &url) override;
     void loadHtmlImpl(const QString &html, const QUrl &baseUrl) override;
     void goBackImpl() override;
@@ -255,6 +256,11 @@ DarwinWebViewPrivate::DarwinWebViewPrivate(MobileWebViewBackend *q)
 
 DarwinWebViewPrivate::~DarwinWebViewPrivate()
 {
+    destroyNativeView();
+}
+
+void DarwinWebViewPrivate::destroyNativeView()
+{
     if (m_navigationDelegate) {
         m_navigationDelegate.owner = nullptr;
     }
@@ -265,7 +271,7 @@ DarwinWebViewPrivate::~DarwinWebViewPrivate()
     if (m_webView && m_stateObserver) {
         WKWebView *webView = m_webView;
         WebViewStateObserver *observer = m_stateObserver;
-        dispatch_async(dispatch_get_main_queue(), ^{
+        runOnMainThread(^{
             @try { [webView removeObserver:observer forKeyPath:@"title"]; } @catch (NSException *) {}
             @try { [webView removeObserver:observer forKeyPath:@"canGoBack"]; } @catch (NSException *) {}
             @try { [webView removeObserver:observer forKeyPath:@"canGoForward"]; } @catch (NSException *) {}
@@ -287,7 +293,7 @@ DarwinWebViewPrivate::~DarwinWebViewPrivate()
         m_navigationDelegate = nullptr;
         m_uiDelegate = nullptr;
 
-        dispatch_async(dispatch_get_main_queue(), ^{
+        runOnMainThread(^{
             [webView stopLoading];
             [webView removeFromSuperview];
             webView.navigationDelegate = nil;

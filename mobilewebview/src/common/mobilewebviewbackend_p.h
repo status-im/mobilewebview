@@ -29,6 +29,7 @@ public:
     
     // Platform-specific virtual methods (pure virtual)
     virtual bool initNativeView() = 0;
+    virtual void destroyNativeView() = 0;
     virtual void loadUrlImpl(const QUrl &url) = 0;
     virtual void loadHtmlImpl(const QString &html, const QUrl &baseUrl) = 0;
     virtual void goBackImpl() = 0;
@@ -78,6 +79,8 @@ public:
     bool m_nativeViewSetup = false;
     bool m_bridgeInstalled = false;
     bool m_interactionEnabled = true;
+    bool m_offTheRecord = false;
+    QString m_storageName;
     QUrl m_url;
     QString m_title;
     bool m_canGoBack = false;
@@ -122,6 +125,7 @@ public:
     void appendAllowedOrigin(const QString &origin);
     void ensureBridgeInstalled();
     void setupTransport();
+    void recreateNativeViewForStore();
 };
 
 // Factory function for creating platform-specific implementation

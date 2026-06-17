@@ -31,6 +31,7 @@ public:
     
     // Platform-specific implementations
     bool initNativeView() override;
+    void destroyNativeView() override;
     void loadUrlImpl(const QUrl &url) override;
     void loadHtmlImpl(const QString &html, const QUrl &baseUrl) override;
     void goBackImpl() override;
@@ -116,6 +117,13 @@ AndroidWebViewPrivate::AndroidWebViewPrivate(MobileWebViewBackend *q)
 AndroidWebViewPrivate::~AndroidWebViewPrivate()
 {
     cleanupJni();
+}
+
+void AndroidWebViewPrivate::destroyNativeView()
+{
+    if (m_webViewObject) {
+        destroyWebView();
+    }
 }
 
 bool AndroidWebViewPrivate::initNativeView()
