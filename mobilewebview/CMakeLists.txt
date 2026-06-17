@@ -10,6 +10,11 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+if(CMAKE_SYSTEM_NAME MATCHES "Darwin" AND NOT CMAKE_SYSTEM_NAME MATCHES "iOS")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0" CACHE STRING "Minimum macOS version" FORCE)
+endif()
+
 include(CTest)
 
 find_package(QT NAMES Qt6 REQUIRED COMPONENTS Core)
@@ -48,6 +53,8 @@ set(MOBILEWEBVIEW_COMMON_SOURCES
     src/common/userscript_utils.cpp
     src/common/webchanneltransport.h
     src/common/webchanneltransport.cpp
+    src/common/storage_profile_utils.h
+    src/common/storage_profile_utils.cpp
 )
 
 set(MOBILEWEBVIEW_DARWIN_SOURCES

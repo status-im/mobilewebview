@@ -382,6 +382,9 @@ void MobileWebViewBackendPrivate::recreateNativeViewForStore()
     setupNativeViewImpl();
     ensureBridgeInstalled();
 
+    setLoading(true);
+    setLoaded(false);
+
     if (urlToReload.isValid() && !urlToReload.isEmpty()) {
         loadUrlImpl(urlToReload);
     }

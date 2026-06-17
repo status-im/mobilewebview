@@ -1,6 +1,7 @@
 #include "MobileWebView/mobilewebviewbackend.h"
 #include "../common/mobilewebviewbackend_p.h"
 #include "../common/origin_utils.h"
+#include "../common/storage_profile_utils.h"
 #include "origin_utils.h"
 #include "navigationdelegate.h"
 #include "userscripts.h"
@@ -315,6 +316,22 @@ bool DarwinWebViewPrivate::initNativeView()
 #ifdef QT_DEBUG
     [config.preferences setValue:@YES forKey:@"developerExtrasEnabled"];
 #endif
+
+    if (m_offTheRecord) {
+        config.websiteDataStore = [WKWebsiteDataStore nonPersistentDataStore];
+    } else if (m_storageName.isEmpty()) {
+        config.websiteDataStore = [WKWebsiteDataStore defaultDataStore];
+    } else {
+        const QUuid profileId = storageProfileIdentifier(m_storageName);
+        const QString uuidStr = profileId.toString(QUuid::WithoutBraces);
+        NSUUID *storeUuid = [[NSUUID alloc] initWithUUIDString:uuidStr.toNSString()];
+        if (storeUuid) {
+            config.websiteDataStore = [WKWebsiteDataStore dataStoreForIdentifier:storeUuid];
+        } else {
+            config.websiteDataStore = [WKWebsiteDataStore defaultDataStore];
+        }
+        [storeUuid release];
+    }
 
     m_webView = [[WKWebView alloc] initWithFrame:CGRectZero configuration:config];
 

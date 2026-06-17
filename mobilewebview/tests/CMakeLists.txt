@@ -42,6 +42,19 @@ target_link_libraries(tst_userscript_utils PRIVATE
 )
 add_test(NAME tst_userscript_utils COMMAND tst_userscript_utils)
 
+add_executable(tst_storage_profile_utils
+    tst_storage_profile_utils.cpp
+    ../src/common/storage_profile_utils.cpp
+)
+target_include_directories(tst_storage_profile_utils PRIVATE
+    ../src/common
+)
+target_link_libraries(tst_storage_profile_utils PRIVATE
+    Qt::Core
+    Qt::Test
+)
+add_test(NAME tst_storage_profile_utils COMMAND tst_storage_profile_utils)
+
 if(APPLE)
     add_executable(tst_userscripts_manager
         tst_userscripts_manager.mm
@@ -81,6 +94,23 @@ if(APPLE)
         Qt::Test
     )
     add_test(NAME tst_mobilewebview_e2e COMMAND tst_mobilewebview_e2e)
+
+    add_executable(tst_storage_profiles
+        tst_storage_profiles.mm
+    )
+    target_include_directories(tst_storage_profiles PRIVATE
+        ../include
+    )
+    target_link_libraries(tst_storage_profiles PRIVATE
+        MobileWebView
+        Qt::Core
+        Qt::Gui
+        Qt::Qml
+        Qt::Quick
+        Qt::WebChannel
+        Qt::Test
+    )
+    add_test(NAME tst_storage_profiles COMMAND tst_storage_profiles)
 
     add_executable(tst_mobilewebviewbackend_common
         tst_mobilewebviewbackend_common.mm
