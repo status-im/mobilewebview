@@ -117,8 +117,15 @@ target_link_libraries(MyApp PRIVATE MobileWebView)
   to handle this automatically; replicate this in your own app's CMakeLists.
 - `MOBILEWEBVIEW_ANDROID_JAVA_DIR` CMake variable is exported to the parent scope
   so the host app can reference it.
+- Per-account storage and incognito mode require **WebView 113+** and the
+  `androidx.webkit` artifact (MULTI_PROFILE). Incognito uses a named profile that
+  is deleted on teardown; it is not fully in-memory like Apple off-the-record.
+- Ensure your app's Gradle dependencies include `androidx.webkit:webkit` (1.11+).
 
 ### macOS
 
-- Uses `WKWebView` via Objective-C++ (`src/darwin/`). Requires macOS 10.15+.
+- Uses `WKWebView` via Objective-C++ (`src/darwin/`). Requires **macOS 14+**
+  (`CMAKE_OSX_DEPLOYMENT_TARGET=14.0`).
 - Links `Foundation` and `WebKit` frameworks.
+- Standard mode persists web data in a `WKWebsiteDataStore` keyed by `storageName`;
+  incognito uses `nonPersistentDataStore`.

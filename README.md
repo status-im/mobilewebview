@@ -64,3 +64,20 @@ make run TARGET_OS=ios
 ```
 
 See [BUILD.md](BUILD.md) for details on building `MobileWebView` as a static or dynamic library.
+
+## Platform requirements
+
+| Platform | Minimum version | Notes |
+|---|---|---|
+| iOS | 17 | Persistent storage uses per-account `WKWebsiteDataStore` identifiers |
+| macOS | 14 | Same storage model as iOS |
+| Android | WebView 113+ | Requires `androidx.webkit` MULTI_PROFILE for per-account isolation and incognito profiles |
+
+## Storage profiles (standard / incognito)
+
+`MobileWebViewBackend` exposes `offTheRecord` and `storageName` properties. Standard mode
+persists cookies, HTTP cache, and DOM storage per `storageName` partition. Incognito mode uses
+an ephemeral store (in-memory on Apple; a deletable Android profile that is removed on
+teardown and swept after crashes).
+
+Changing either property on a live webview recreates the native view and reloads the current URL.
