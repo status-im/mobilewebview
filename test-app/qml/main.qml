@@ -34,6 +34,9 @@ ApplicationWindow {
             findSupported: testWidget.webView.findSupported
             findActiveMatch: testWidget.findActiveMatch
             findMatchCount: testWidget.findMatchCount
+            offTheRecord: testWidget.offTheRecord
+            storageName: testWidget.storageName
+            storageProbeResult: testWidget.storageProbeResult
             onBackRequested: testWidget.webView.goBack()
             onForwardRequested: testWidget.webView.goForward()
             onReloadRequested: testWidget.webView.reload()
@@ -58,6 +61,25 @@ ApplicationWindow {
             onStopFindRequested: testWidget.stopFind()
             onShowFindPanelRequested: testWidget.webView.showFindPanel()
             onHideFindPanelRequested: testWidget.webView.hideFindPanel()
+            onOffTheRecordToggled: function(checked) {
+                testWidget.offTheRecord = checked
+            }
+            onStorageNameSelected: function(name) {
+                testWidget.storageName = name
+            }
+            onLocalStorageWriteRequested: function(key, value) {
+                testWidget.writeLocalStorage(key, value)
+            }
+            onLocalStorageReadRequested: function(key) {
+                testWidget.readLocalStorage(key)
+            }
+            onCookieWriteRequested: function(name, value, maxAge) {
+                testWidget.writeCookie(name, value, maxAge)
+            }
+            onCookieReadRequested: function(name) {
+                testWidget.readCookie(name)
+            }
+            onStorageTestPageRequested: testWidget.loadStorageTestPage()
         }
 
         TestWidget {
@@ -78,7 +100,7 @@ ApplicationWindow {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 24
-            color: "#f0f0f0"
+            color: testWidget.offTheRecord ? "#f3e8fd" : "#f0f0f0"
 
             Label {
                 id: statusLabel

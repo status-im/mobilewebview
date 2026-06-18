@@ -56,6 +56,24 @@ Rectangle {
     property bool hasNativeFindPanel: false
     property bool findSupported: true
 
+    property bool offTheRecord: false
+    property string storageName: "Profile_A"
+    property string storageProbeResult: ""
+
+    onStorageNameChanged: {
+        const idx = storageProfileCombo.model.indexOf(root.storageName)
+        if (idx >= 0 && storageProfileCombo.currentIndex !== idx)
+            storageProfileCombo.currentIndex = idx
+    }
+
+    signal offTheRecordToggled(bool checked)
+    signal storageNameSelected(string name)
+    signal localStorageWriteRequested(string key, string value)
+    signal localStorageReadRequested(string key)
+    signal cookieWriteRequested(string name, string value, int maxAge)
+    signal cookieReadRequested(string name)
+    signal storageTestPageRequested()
+
     function openFind() {
         if (!hasNativeFindPanel) {
             findBarVisible = true
@@ -449,6 +467,140 @@ Rectangle {
                     onClicked: root.zoomResetRequested()
                 }
                 Item { Layout.fillWidth: true }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 4
+
+                Label {
+                    text: "Storage"
+                    color: "#5f6368"
+                    font.pixelSize: 12
+                }
+
+                Switch {
+                    id: incognitoSwitch
+                    text: "Incognito"
+                    checked: root.offTheRecord
+                    onToggled: root.offTheRecordToggled(checked)
+                }
+
+                ComboBox {
+                    id: storageProfileCombo
+                    Layout.preferredWidth: 120
+                    visible: !root.offTheRecord
+                    enabled: !root.offTheRecord
+                    model: ["Profile_A", "Profile_B"]
+                    currentIndex: Math.max(0, model.indexOf(root.storageName))
+                    onActivated: function(index) {
+                        root.storageNameSelected(model[index])
+                    }
+                }
+
+                ToolBtn {
+                    label: "Test page"
+                    onClicked: root.storageTestPageRequested()
+                }
+
+                Item { Layout.fillWidth: true }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 4
+
+                Label {
+                    text: "localStorage"
+                    color: "#5f6368"
+                    font.pixelSize: 12
+                    Layout.preferredWidth: 72
+                }
+                TextField {
+                    id: storageLsKeyInput
+                    Layout.preferredWidth: 88
+                    Layout.preferredHeight: 32
+                    placeholderText: "key"
+                    font.pixelSize: 12
+                    text: "mwv_key"
+                }
+                TextField {
+                    id: storageLsValueInput
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 32
+                    placeholderText: "value"
+                    font.pixelSize: 12
+                    text: "persisted"
+                }
+                ToolBtn {
+                    label: "Write"
+                    accent: true
+                    onClicked: root.localStorageWriteRequested(
+                                   storageLsKeyInput.text.trim(),
+                                   storageLsValueInput.text)
+                }
+                ToolBtn {
+                    label: "Read"
+                    onClicked: root.localStorageReadRequested(storageLsKeyInput.text.trim())
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 4
+
+                Label {
+                    text: "cookie"
+                    color: "#5f6368"
+                    font.pixelSize: 12
+                    Layout.preferredWidth: 72
+                }
+                TextField {
+                    id: storageCookieNameInput
+                    Layout.preferredWidth: 88
+                    Layout.preferredHeight: 32
+                    placeholderText: "name"
+                    font.pixelSize: 12
+                    text: "mwv_cookie"
+                }
+                TextField {
+                    id: storageCookieValueInput
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 32
+                    placeholderText: "value"
+                    font.pixelSize: 12
+                    text: "1"
+                }
+                TextField {
+                    id: storageCookieAgeInput
+                    Layout.preferredWidth: 88
+                    Layout.preferredHeight: 32
+                    placeholderText: "max-age sec"
+                    font.pixelSize: 12
+                    inputMethodHints: Qt.ImhDigitsOnly
+                    text: "31536000"
+                }
+                ToolBtn {
+                    label: "Write"
+                    accent: true
+                    onClicked: root.cookieWriteRequested(
+                                   storageCookieNameInput.text.trim(),
+                                   storageCookieValueInput.text,
+                                   parseInt(storageCookieAgeInput.text.trim(), 10) || 0)
+                }
+                ToolBtn {
+                    label: "Read"
+                    onClicked: root.cookieReadRequested(storageCookieNameInput.text.trim())
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                visible: root.storageProbeResult.length > 0
+                text: "Probe: " + root.storageProbeResult
+                color: root.offTheRecord ? "#7b1fa2" : "#1a73e8"
+                font.pixelSize: 12
+                elide: Text.ElideMiddle
             }
 
             RowLayout {

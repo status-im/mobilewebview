@@ -6,6 +6,8 @@
   var OVERLAY_ID = "__test_webchannel_overlay";
   var connectedObject = null;
   var hideTimer = null;
+  var channelConnecting = false;
+  var connectRetryTimer = null;
 
   function ensureOverlay() {
     var overlay = document.getElementById(OVERLAY_ID);
@@ -76,7 +78,12 @@
     button.style.fontFamily = "sans-serif";
 
     button.addEventListener("click", function() {
-      if (!connectedObject || typeof connectedObject.incrementFromJs !== "function") {
+      if (!connectedObject) {
+        showOverlay("WebChannel not connected");
+        ensureWebChannelConnected();
+        return;
+      }
+      if (typeof connectedObject.incrementFromJs !== "function") {
         showOverlay("incrementFromJs() is unavailable");
         return;
       }
@@ -88,24 +95,37 @@
     document.documentElement.appendChild(button);
   }
 
+  function stopConnectRetry() {
+    if (connectRetryTimer) {
+      clearInterval(connectRetryTimer);
+      connectRetryTimer = null;
+    }
+  }
+
   function connectWebChannel() {
+    if (connectedObject || channelConnecting) {
+      return;
+    }
+
     if (typeof QWebChannel !== "function") {
-      console.error("[test_script] QWebChannel is not loaded");
       return;
     }
 
     var transport = window[NAMESPACE] && window[NAMESPACE].webChannelTransport;
     if (!transport) {
-      console.error("[test_script] qt.webChannelTransport is unavailable");
       return;
     }
 
+    channelConnecting = true;
     new QWebChannel(transport, function(channel) {
+      channelConnecting = false;
       connectedObject = channel.objects[OBJECT_NAME];
       if (!connectedObject) {
         console.error("[test_script] WebChannel object '" + OBJECT_NAME + "' not found");
         return;
       }
+
+      stopConnectRetry();
 
       if (connectedObject.clickCountChanged) {
         connectedObject.clickCountChanged.connect(function() {
@@ -124,6 +144,21 @@
     });
   }
 
+  function ensureWebChannelConnected() {
+    connectWebChannel();
+    if (connectedObject || connectRetryTimer) {
+      return;
+    }
+
+    var attempts = 0;
+    connectRetryTimer = setInterval(function() {
+      connectWebChannel();
+      if (connectedObject || ++attempts >= 50) {
+        stopConnectRetry();
+      }
+    }, 100);
+  }
+
   window.__testWebChannel = {
     showPopupFromQml: function(text) {
       updateOverlayFromBridge("QML -> JS: " + text);
@@ -136,7 +171,12 @@
       showOverlay("counter=" + connectedObject.clickCount, true);
     },
     incrementViaWebChannel: function(reason) {
-      if (!connectedObject || typeof connectedObject.incrementFromJs !== "function") {
+      if (!connectedObject) {
+        showOverlay("WebChannel not connected");
+        ensureWebChannelConnected();
+        return;
+      }
+      if (typeof connectedObject.incrementFromJs !== "function") {
         showOverlay("incrementFromJs() is unavailable");
         return;
       }
@@ -146,13 +186,8 @@
     }
   };
 
-  window.addEventListener("qtWebChannelReady", function() {
-    connectWebChannel();
-  });
+  window.addEventListener("qtWebChannelReady", ensureWebChannelConnected);
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", addTestButton);
-  } else {
-    addTestButton();
-  }
+  // bootstrap_page.js dispatches qtWebChannelReady before this user script runs.
+  ensureWebChannelConnected();
 })();

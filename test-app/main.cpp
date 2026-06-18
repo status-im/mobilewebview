@@ -1,10 +1,21 @@
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
+#include <QQmlContext>
+#include <QFile>
 #include <QUrl>
 #include <QWebChannel>
 #include <qqml.h>
 
 #include "MobileWebView/mobilewebviewbackend.h"
+
+static QString loadTextResource(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return {};
+    }
+    return QString::fromUtf8(file.readAll());
+}
 
 int main(int argc, char *argv[])
 {
@@ -14,6 +25,9 @@ int main(int argc, char *argv[])
                                             "QWebChannel is provided via WebChannel QML type");
 
     QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("_storageTestPageHtml"),
+        loadTextResource(QStringLiteral(":/web/storage_profile_test.html")));
 
     const QUrl url(QStringLiteral("qrc:/qml/main.qml"));
     QObject::connect(

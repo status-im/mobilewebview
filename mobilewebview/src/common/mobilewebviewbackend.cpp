@@ -778,7 +778,13 @@ void MobileWebViewBackend::loadUrl(const QUrl &url)
 void MobileWebViewBackend::loadHtml(const QString &html, const QUrl &baseUrl)
 {
     Q_D(MobileWebViewBackend);
-    
+
+    const QUrl originSource = baseUrl.isValid() ? baseUrl : d->m_url;
+    QString origin = extractOrigin(originSource);
+    if (!origin.isEmpty()) {
+        updateAllowedOrigins({origin});
+    }
+
     d->ensureBridgeInstalled();
     d->loadHtmlImpl(html, baseUrl);
 }

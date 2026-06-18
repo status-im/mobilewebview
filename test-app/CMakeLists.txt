@@ -33,6 +33,7 @@ qt_add_resources(MobileWebViewTest "app_resources"
         qml/TestWidget.qml
         qml/TopBar.qml
         web/test_webchannel.html
+        web/storage_profile_test.html
         js/test_script.js
         js/qwebchannel.js
 )

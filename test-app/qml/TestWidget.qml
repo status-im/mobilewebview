@@ -7,8 +7,12 @@ Item {
     id: root
 
     readonly property alias bridgeObject: testBridge
-    property url initialUrl: "https://www.lipsum.com/"
+    property url initialUrl: "https://example.com/"
     property url testPageUrl: "qrc:/web/test_webchannel.html"
+    property url storageTestPageUrl: "qrc:/web/storage_profile_test.html"
+    property string storageName: "Profile_A"
+    property bool offTheRecord: false
+    property string storageProbeResult: ""
     readonly property alias webView: webView
     readonly property int clickCount: testBridge.clickCount
     readonly property string lastMessage: testBridge.lastMessage
@@ -73,6 +77,77 @@ Item {
             return
         webView.loadUrl(normalized)
         logMessage("loadAddress: " + normalized)
+    }
+
+    function loadStorageTestPage() {
+        const baseUrl = "https://storage-test.local/"
+        if (typeof _storageTestPageHtml === "string" && _storageTestPageHtml.length > 0) {
+            webView.loadHtml(_storageTestPageHtml, baseUrl)
+            logMessage("loadStorageTestPage: " + baseUrl)
+            return
+        }
+
+        var request = new XMLHttpRequest()
+        request.open("GET", storageTestPageUrl)
+        request.onreadystatechange = function() {
+            if (request.readyState !== XMLHttpRequest.DONE)
+                return
+
+            if (request.responseText.length > 0) {
+                webView.loadHtml(request.responseText, baseUrl)
+                logMessage("loadStorageTestPage (xhr): " + baseUrl)
+            } else {
+                logMessage("loadStorageTestPage FAILED: could not read " + storageTestPageUrl)
+            }
+        }
+        request.send()
+    }
+
+    function writeLocalStorage(key, value) {
+        webView.runJavaScript(
+            "(function(){"
+            + "localStorage.setItem(" + toJsLiteral(key) + ", " + toJsLiteral(value) + ");"
+            + "return JSON.stringify({ls: localStorage.getItem(" + toJsLiteral(key) + ")});"
+            + "})()"
+        )
+    }
+
+    function readLocalStorage(key) {
+        webView.runJavaScript(
+            "(function(){"
+            + "return JSON.stringify({ls: localStorage.getItem(" + toJsLiteral(key) + ")});"
+            + "})()"
+        )
+    }
+
+    function writeCookie(name, value, maxAgeSec) {
+        var age = parseInt(maxAgeSec, 10)
+        if (isNaN(age) || age < 0)
+            age = 0
+
+        webView.runJavaScript(
+            "(function(){"
+            + "document.cookie=" + toJsLiteral(name) + "+'='+" + toJsLiteral(value)
+            + "+'; path=/; max-age='+" + age + ";"
+            + "return JSON.stringify({cookieWritten: " + toJsLiteral(name) + "});"
+            + "})()"
+        )
+    }
+
+    function readCookie(name) {
+        webView.runJavaScript(
+            "(function(){"
+            + "var cName=" + toJsLiteral(name) + ";"
+            + "function cookieValue(n){"
+            + "  var parts=document.cookie.split('; ');"
+            + "  for(var i=0;i<parts.length;i++){"
+            + "    if(parts[i].indexOf(n+'=')===0) return parts[i].substring(n.length+1);"
+            + "  }"
+            + "  return null;"
+            + "}"
+            + "return JSON.stringify({cookie: cookieValue(cName)});"
+            + "})()"
+        )
     }
 
     function loadTestPage() {
@@ -236,6 +311,8 @@ Item {
         id: webView
         anchors.fill: parent
         freeze: freezeTestDialog.opened
+        offTheRecord: root.offTheRecord
+        storageName: root.storageName
         webChannelNamespace: "qt"
         webChannel: WebChannel {
             id: channel
@@ -257,8 +334,11 @@ Item {
             var hasError = (error || "").length > 0
             var textResult = result === null || result === undefined ? "" : String(result)
             var hasResult = textResult.length > 0 && textResult !== "null" && textResult !== "undefined"
-            if (hasError || hasResult)
+            if (hasError || hasResult) {
                 root.logMessage("javaScriptResult result=" + result + " error=" + error)
+                if (!hasError && hasResult)
+                    root.storageProbeResult = textResult
+            }
         }
         function onNewWindowRequested(url, userInitiated) {
             root.logMessage("newWindowRequested url=" + url + " userInitiated=" + userInitiated)
