@@ -17,6 +17,9 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Gui Qml Quick WebCha
 if(POLICY QTP0002)
     qt_policy(SET QTP0002 NEW)
 endif()
+if(POLICY QTP0004)
+    qt_policy(SET QTP0004 NEW)
+endif()
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../mobilewebview
                  ${CMAKE_CURRENT_BINARY_DIR}/mobilewebview)
@@ -25,17 +28,36 @@ qt_add_executable(MobileWebViewTest
     main.cpp
 )
 
-qt_add_resources(MobileWebViewTest "app_resources"
-    PREFIX "/"
-    BASE "${CMAKE_CURRENT_SOURCE_DIR}"
-    FILES
+qt_add_qml_module(MobileWebViewTest
+    URI MobileWebViewTest
+    VERSION 1.0
+    RESOURCE_PREFIX /
+    QML_FILES
         qml/main.qml
-        qml/TestWidget.qml
-        qml/TopBar.qml
+        qml/HomeScreen.qml
+        qml/components/AppButton.qml
+        qml/components/AppTextField.qml
+        qml/components/FeatureCard.qml
+        qml/components/ScreenScaffold.qml
+        qml/components/VerdictBadge.qml
+        qml/components/WebViewHost.qml
+        qml/helpers/ProbeUtils.js
+        qml/helpers/Theme.js
+        qml/screens/NavigationScreen.qml
+        qml/screens/FindScreen.qml
+        qml/screens/ZoomScreen.qml
+        qml/screens/CookiesScreen.qml
+        qml/screens/LocalStorageScreen.qml
+        qml/screens/StorageIsolationScreen.qml
+        qml/screens/OriginScreen.qml
+        qml/screens/ScriptsScreen.qml
+        qml/screens/RenderingScreen.qml
+    RESOURCES
         web/test_webchannel.html
         web/storage_profile_test.html
         js/test_script.js
         js/qwebchannel.js
+        js/isolation_probe_script.js
 )
 
 target_link_libraries(MobileWebViewTest PRIVATE
@@ -74,5 +96,3 @@ if(ANDROID)
         QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../mobilewebview/android"
     )
 endif()
-
-qt_finalize_executable(MobileWebViewTest)

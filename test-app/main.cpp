@@ -25,22 +25,16 @@ int main(int argc, char *argv[])
                                             "QWebChannel is provided via WebChannel QML type");
 
     QQmlApplicationEngine engine;
+    engine.addImportPath(QStringLiteral("qrc:/"));
     engine.rootContext()->setContextProperty(
         QStringLiteral("_storageTestPageHtml"),
-        loadTextResource(QStringLiteral(":/web/storage_profile_test.html")));
+        loadTextResource(QStringLiteral(":/MobileWebViewTest/web/storage_profile_test.html")));
 
-    const QUrl url(QStringLiteral("qrc:/qml/main.qml"));
-    QObject::connect(
-        &engine,
-        &QQmlApplicationEngine::objectCreated,
-        &app,
-        [url](QObject *obj, const QUrl &objUrl) {
-            if (!obj && url == objUrl) {
-                QCoreApplication::exit(-1);
-            }
-        },
-        Qt::QueuedConnection);
-    engine.load(url);
+    engine.load(QUrl(QStringLiteral("qrc:/MobileWebViewTest/qml/main.qml")));
+
+    if (engine.rootObjects().isEmpty()) {
+        return -1;
+    }
 
     return app.exec();
 }

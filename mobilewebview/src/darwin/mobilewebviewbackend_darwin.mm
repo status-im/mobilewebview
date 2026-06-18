@@ -769,7 +769,18 @@ void DarwinWebViewPrivate::updateInteractionEnabled(bool enabled)
         }
 #else
         if (!enabled) {
-            [webView.window makeFirstResponder:nil];
+            // Hand first responder to the Qt content view (not nil) so that key
+            // events reach the focused QML item (e.g. an address field) on the
+            // first interaction instead of being swallowed until a second click.
+            NSWindow *window = webView.window;
+            if (window) {
+                NSView *contentView = window.contentView;
+                if (contentView && [contentView acceptsFirstResponder]) {
+                    [window makeFirstResponder:contentView];
+                } else {
+                    [window makeFirstResponder:nil];
+                }
+            }
         }
 #endif
     });

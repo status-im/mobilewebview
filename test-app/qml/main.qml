@@ -2,114 +2,54 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Window
+import MobileWebViewTest
 
 ApplicationWindow {
     id: root
+
     visible: true
-    width: Screen.width
-    height: Screen.height
-    visibility: Window.FullScreen
+    width: Math.min(Screen.width, 960)
+    height: Math.min(Screen.height, 900)
     title: "Mobile WebView Test"
+
+    property string statusText: "Ready"
+    property bool incognitoActive: false
+
+    color: Theme.background
 
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-        TopBar {
-            id: topBar
-            Layout.fillWidth: true
-            Layout.preferredHeight: implicitHeight
-            address: testWidget.currentUrlText.length > 0 ? testWidget.currentUrlText : "https://opensea.io"
-            pageTitle: testWidget.pageTitle
-            clickCount: testWidget.clickCount
-            loading: testWidget.loading
-            canGoBack: testWidget.canGoBack
-            canGoForward: testWidget.canGoForward
-            historyItems: testWidget.historyItems
-            currentHistoryIndex: testWidget.currentHistoryIndex
-            loadProgress: testWidget.loadProgress
-            favicon: testWidget.favicon
-            zoomFactor: testWidget.zoomFactor
-            hasNativeFindPanel: testWidget.webView.hasNativeFindPanel
-            findSupported: testWidget.webView.findSupported
-            findActiveMatch: testWidget.findActiveMatch
-            findMatchCount: testWidget.findMatchCount
-            offTheRecord: testWidget.offTheRecord
-            storageName: testWidget.storageName
-            storageProbeResult: testWidget.storageProbeResult
-            onBackRequested: testWidget.webView.goBack()
-            onForwardRequested: testWidget.webView.goForward()
-            onReloadRequested: testWidget.webView.reload()
-            onStopRequested: testWidget.webView.stop()
-            onGoRequested: function(address) {
-                testWidget.loadAddress(address)
-            }
-            onIncrementRequested: testWidget.incrementCounter()
-            onDecrementRequested: testWidget.decrementCounter()
-            onJsPopupRequested: testWidget.qmlShowStaticPopup()
-            onFreezeDialogRequested: testWidget.openFreezeTestDialog()
-            onClearHistoryRequested: testWidget.webView.clearHistory()
-            onGoBackOrForwardRequested: function(offset) {
-                testWidget.webView.goBackOrForward(offset)
-            }
-            onZoomInRequested: testWidget.webView.zoomFactor = Math.min(testWidget.zoomFactor + 0.25, 5.0)
-            onZoomOutRequested: testWidget.webView.zoomFactor = Math.max(testWidget.zoomFactor - 0.25, 0.25)
-            onZoomResetRequested: testWidget.webView.zoomFactor = 1.0
-            onFindRequested: testWidget.findText(text, flags)
-            onFindNextRequested: testWidget.findText(topBar.findText, 0)
-            onFindPreviousRequested: testWidget.findText(topBar.findText, 1)
-            onStopFindRequested: testWidget.stopFind()
-            onShowFindPanelRequested: testWidget.webView.showFindPanel()
-            onHideFindPanelRequested: testWidget.webView.hideFindPanel()
-            onOffTheRecordToggled: function(checked) {
-                testWidget.offTheRecord = checked
-            }
-            onStorageNameSelected: function(name) {
-                testWidget.storageName = name
-            }
-            onLocalStorageWriteRequested: function(key, value) {
-                testWidget.writeLocalStorage(key, value)
-            }
-            onLocalStorageReadRequested: function(key) {
-                testWidget.readLocalStorage(key)
-            }
-            onCookieWriteRequested: function(name, value, maxAge) {
-                testWidget.writeCookie(name, value, maxAge)
-            }
-            onCookieReadRequested: function(name) {
-                testWidget.readCookie(name)
-            }
-            onStorageTestPageRequested: testWidget.loadStorageTestPage()
-        }
-
-        TestWidget {
-            id: testWidget
+        StackView {
+            id: stack
             Layout.fillWidth: true
             Layout.fillHeight: true
-
-            Binding {
-                target: testWidget.webView
-                property: "interactionEnabled"
-                value: !topBar.hasInputFocus
+            initialItem: HomeScreen {
+                stackView: stack
             }
-            onLogMessage: function(message) {
-                statusLabel.text = message
+
+            onCurrentItemChanged: {
+                if (currentItem && currentItem.statusMessage) {
+                    currentItem.statusMessage.connect(function(message) {
+                        root.statusText = message
+                    })
+                }
             }
         }
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 24
-            color: testWidget.offTheRecord ? "#f3e8fd" : "#f0f0f0"
+            Layout.preferredHeight: Theme.statusBarHeight
+            color: root.incognitoActive ? Theme.statusBarIncognito : Theme.statusBar
 
             Label {
-                id: statusLabel
                 anchors.fill: parent
-                anchors.leftMargin: 8
-                anchors.rightMargin: 8
-                color: "#5f6368"
-                font.pixelSize: 11
-                text: "Ready"
+                anchors.leftMargin: Theme.spacingSm
+                anchors.rightMargin: Theme.spacingSm
+                text: root.statusText
+                color: Theme.textSecondary
+                font.pixelSize: Theme.fontXs
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
             }
