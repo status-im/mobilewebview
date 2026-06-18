@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import "../helpers/Theme.js" as Theme
 import MobileWebViewTest
 
 Item {
@@ -10,7 +9,6 @@ Item {
     property string title: ""
     property bool showNavBar: true
 
-    // Built-in primary WebView configuration.
     property bool hasWebView: true
     property url initialUrl: "https://example.com/"
     property bool autoLoad: true
@@ -19,8 +17,13 @@ Item {
     property bool freeze: false
     property int webViewHeight: 420
 
-    readonly property var webView: webLoader.item ? webLoader.item.webView : null
+    property var externalWebView: null
+    readonly property var webView: externalWebView
+        ? externalWebView
+        : (webLoader.item ? webLoader.item.webView : null)
+
     property bool addressFocused: false
+    property bool contentInputFocused: false
 
     default property alias contentData: contentSlot.data
 
@@ -36,11 +39,29 @@ Item {
         backRequested()
     }
 
+    function navigateTo(rawText) {
+        var text = (rawText || "").trim()
+        if (text.length === 0)
+            return
+        if (text.indexOf("://") === -1)
+            text = "https://" + text
+
+        if (root.externalWebView) {
+            root.externalWebView.loadUrl(text)
+        } else if (webLoader.item) {
+            webLoader.item.loadAddress(rawText)
+        } else {
+            return
+        }
+
+        addressField.focus = false
+        root.statusMessage("loadAddress: " + text)
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-        // Header: menu + title
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: headerRow.implicitHeight + Theme.spacingSm * 2
@@ -70,11 +91,10 @@ Item {
             }
         }
 
-        // Shared navigation chrome (address + back/forward/reload)
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: navRow.implicitHeight + Theme.spacingSm * 2
-            visible: root.showNavBar && root.hasWebView
+            visible: root.showNavBar && (root.hasWebView || root.externalWebView)
             color: Theme.surface
 
             RowLayout {
@@ -115,8 +135,6 @@ Item {
                     text: root.webView ? root.webView.url.toString() : ""
                     onEditingFocusChanged: function(focused) {
                         root.addressFocused = focused
-                        if (webLoader.item)
-                            webLoader.item.inputFocused = focused
                     }
                     onAccepted: root.navigateTo(text)
                 }
@@ -129,7 +147,6 @@ Item {
             }
         }
 
-        // Progress bar
         Rectangle {
             Layout.fillWidth: true
             height: 3
@@ -143,7 +160,6 @@ Item {
             }
         }
 
-        // Content + WebView
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -180,7 +196,7 @@ Item {
                 Loader {
                     id: webLoader
                     Layout.fillWidth: true
-                    Layout.preferredHeight: root.webViewHeight
+                    Layout.preferredHeight: root.hasWebView ? root.webViewHeight : 0
                     active: root.hasWebView
                     sourceComponent: WebViewHost {
                         initialUrl: root.initialUrl
@@ -188,17 +204,18 @@ Item {
                         userScripts: root.userScripts
                         webChannel: root.webChannel
                         freeze: root.freeze
+                        inputFocused: root.addressFocused || root.contentInputFocused
                     }
                 }
             }
         }
     }
 
-    function navigateTo(rawText) {
-        if (!webLoader.item)
-            return
-        webLoader.item.loadAddress(rawText)
-        addressField.focus = false
-        root.statusMessage("loadAddress: " + rawText)
+    Connections {
+        target: root.webView
+        function onUrlChanged() {
+            if (!addressField.activeFocus && root.webView)
+                addressField.text = root.webView.url.toString()
+        }
     }
 }

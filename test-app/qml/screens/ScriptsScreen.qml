@@ -11,10 +11,23 @@ ScreenScaffold {
     required property var stackView
 
     title: "Scripts & isolation"
+    autoLoad: false
+    webViewHeight: 420
+
     property string bridgeProbe: ""
     property string isolationProbe: ""
     property string isolationVerdict: "unknown"
-    property bool inputFocused: false
+
+    readonly property var scriptResources: [
+        { "path": "qrc:/MobileWebViewTest/js/qwebchannel.js", "runOnSubFrames": false },
+        { "path": "qrc:/MobileWebViewTest/js/test_script.js", "runOnSubFrames": false },
+        { "path": "qrc:/MobileWebViewTest/js/isolation_probe_script.js", "runOnSubFrames": false }
+    ]
+
+    userScripts: scriptResources
+    webChannel: WebChannel {
+        registeredObjects: [testBridge]
+    }
 
     onBackRequested: stackView.pop()
 
@@ -35,23 +48,26 @@ ScreenScaffold {
     }
 
     function loadBridgePage() {
+        if (!root.webView)
+            return
         var request = new XMLHttpRequest()
-        request.open("GET", "qrc:/web/test_webchannel.html")
+        request.open("GET", "qrc:/MobileWebViewTest/web/test_webchannel.html")
         request.onreadystatechange = function() {
             if (request.readyState !== XMLHttpRequest.DONE)
                 return
             if (request.responseText.length > 0) {
-                webHost.loadHtml(request.responseText, "https://test.local")
+                root.webView.loadHtml(request.responseText, "https://test.local")
                 root.statusMessage("loadTestPage (loadHtml)")
             } else {
-                webHost.webView.loadUrl("qrc:/web/test_webchannel.html")
+                root.webView.loadUrl("qrc:/MobileWebViewTest/web/test_webchannel.html")
             }
         }
         request.send()
     }
 
     function runIsolationProbe() {
-        webHost.webView.runJavaScript(ProbeUtils.isolationProbeScript())
+        if (root.webView)
+            root.webView.runJavaScript(ProbeUtils.isolationProbeScript())
     }
 
     function evaluateIsolationResult(text) {
@@ -63,6 +79,8 @@ ScreenScaffold {
                 && parsed.userscriptSeesPage === "undefined"
         root.isolationVerdict = isolated ? "isolated" : "shared"
     }
+
+    Component.onCompleted: loadBridgePage()
 
     ColumnLayout {
         width: parent.width
@@ -91,7 +109,7 @@ ScreenScaffold {
             }
             AppButton {
                 label: "JS popup"
-                onClicked: webHost.webView.runJavaScript(
+                onClicked: root.webView.runJavaScript(
                     "if (window.__testWebChannel) { window.__testWebChannel.showStaticPopup(); 'ok'; }")
             }
             AppButton {
@@ -115,23 +133,6 @@ ScreenScaffold {
             verdict: root.isolationVerdict
             detail: root.isolationProbe
         }
-
-        WebViewHost {
-            id: webHost
-            Layout.fillWidth: true
-            Layout.preferredHeight: 420
-            autoLoad: false
-            inputFocused: root.inputFocused
-            webChannel: WebChannel {
-                registeredObjects: [testBridge]
-            }
-            userScripts: [
-                { "path": "qrc:/js/qwebchannel.js", "runOnSubFrames": false },
-                { "path": "qrc:/js/test_script.js", "runOnSubFrames": false },
-                { "path": "qrc:/js/isolation_probe_script.js", "runOnSubFrames": false }
-            ]
-            Component.onCompleted: root.loadBridgePage()
-        }
     }
 
     Connections {
@@ -143,7 +144,7 @@ ScreenScaffold {
     }
 
     Connections {
-        target: webHost.webView
+        target: root.webView
         function onJavaScriptResult(result, error) {
             if ((error || "").length > 0) {
                 root.statusMessage("javaScriptResult error=" + error)

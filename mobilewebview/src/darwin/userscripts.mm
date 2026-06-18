@@ -88,7 +88,17 @@ class API_AVAILABLE(macos(11.0), ios(14.0)) IsolatedWorldContext : public WorldC
 public:
     IsolatedWorldContext()
     {
-        m_world = [WKContentWorld worldWithName:@"MobileWebViewBridge"];
+        // worldWithName: returns an autoreleased instance; retain it so the world
+        // outlives the current autorelease pool (the bridge may be installed in a
+        // later event-loop turn, e.g. via Qt.callLater), otherwise it dangles and
+        // removeScriptMessageHandlerForName:contentWorld: crashes on a freed object.
+        m_world = [[WKContentWorld worldWithName:@"MobileWebViewBridge"] retain];
+    }
+
+    ~IsolatedWorldContext() override
+    {
+        [m_world release];
+        m_world = nil;
     }
 
     void addMessageHandler(WKUserContentController *ucc,

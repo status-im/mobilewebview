@@ -9,10 +9,11 @@ ScreenScaffold {
     required property var stackView
 
     title: "Find in page"
+    initialUrl: "https://example.com/"
+    webViewHeight: 460
 
     property int findActiveMatch: -1
     property int findMatchCount: 0
-    property bool inputFocused: false
 
     onBackRequested: stackView.pop()
 
@@ -25,15 +26,21 @@ ScreenScaffold {
             wrapMode: Text.WordWrap
             color: Theme.textSecondary
             font.pixelSize: Theme.fontSm
-            text: webHost.webView.hasNativeFindPanel
-                  ? "This platform exposes a native find panel."
-                  : "Custom find bar is used on this platform."
+            text: {
+                if (!root.webView)
+                    return ""
+                if (root.webView.hasNativeFindPanel)
+                    return "This platform exposes a native find panel."
+                if (!root.webView.findSupported)
+                    return "Find in page is not supported on this platform."
+                return "Custom find bar is used on this platform."
+            }
         }
 
         RowLayout {
             Layout.fillWidth: true
             spacing: Theme.spacingXs
-            visible: !webHost.webView.hasNativeFindPanel
+            visible: root.webView && root.webView.findSupported && !root.webView.hasNativeFindPanel
 
             AppTextField {
                 id: findField
@@ -41,19 +48,24 @@ ScreenScaffold {
                 placeholderText: "Find in page\u2026"
                 compact: true
                 onEditingFocusChanged: function(focused) {
-                    root.inputFocused = focused
-                    webHost.inputFocused = focused
+                    root.contentInputFocused = focused
                 }
                 onTextChanged: {
+                    if (!root.webView)
+                        return
                     if (text.length > 0)
-                        webHost.webView.findText(text, caseBtn.checked ? 2 : 0)
+                        root.webView.findText(text, caseBtn.checked ? 2 : 0)
                     else
-                        webHost.webView.stopFind()
+                        root.webView.stopFind()
                 }
-                Keys.onReturnPressed: webHost.webView.findText(text, caseBtn.checked ? 2 : 0)
+                Keys.onReturnPressed: {
+                    if (root.webView)
+                        root.webView.findText(text, caseBtn.checked ? 2 : 0)
+                }
                 Keys.onEscapePressed: {
                     text = ""
-                    webHost.webView.stopFind()
+                    if (root.webView)
+                        root.webView.stopFind()
                 }
             }
 
@@ -74,12 +86,12 @@ ScreenScaffold {
             AppButton {
                 label: "\u25B2"
                 enabled: findField.text.length > 0
-                onClicked: webHost.webView.findText(findField.text, 1 | (caseBtn.checked ? 2 : 0))
+                onClicked: root.webView.findText(findField.text, 1 | (caseBtn.checked ? 2 : 0))
             }
             AppButton {
                 label: "\u25BC"
                 enabled: findField.text.length > 0
-                onClicked: webHost.webView.findText(findField.text, caseBtn.checked ? 2 : 0)
+                onClicked: root.webView.findText(findField.text, caseBtn.checked ? 2 : 0)
             }
             AppButton {
                 id: caseBtn
@@ -91,31 +103,23 @@ ScreenScaffold {
 
         RowLayout {
             Layout.fillWidth: true
-            visible: webHost.webView.hasNativeFindPanel
+            visible: root.webView && root.webView.hasNativeFindPanel
             spacing: Theme.spacingSm
 
             AppButton {
                 label: "Show native panel"
                 accent: true
-                onClicked: webHost.webView.showFindPanel()
+                onClicked: root.webView.showFindPanel()
             }
             AppButton {
                 label: "Hide native panel"
-                onClicked: webHost.webView.hideFindPanel()
+                onClicked: root.webView.hideFindPanel()
             }
-        }
-
-        WebViewHost {
-            id: webHost
-            Layout.fillWidth: true
-            Layout.preferredHeight: 460
-            initialUrl: "https://example.com/"
-            inputFocused: root.inputFocused
         }
     }
 
     Connections {
-        target: webHost.webView
+        target: root.webView
         function onFindTextResult(activeMatchIndex, matchCount) {
             root.findActiveMatch = activeMatchIndex
             root.findMatchCount = matchCount

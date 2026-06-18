@@ -10,29 +10,45 @@ ScreenScaffold {
     required property var stackView
 
     title: "Origin"
-    property string writeValue: "origin-a-" + Date.now()
+    hasWebView: false
+
+    readonly property string fixedKey: "mwv_iso"
+    readonly property string htmlTemplate: "<!doctype html><html><head><meta charset='utf-8'><title>Origin probe</title></head><body><h1>Origin probe</h1><p id='origin'></p><script>document.getElementById('origin').textContent=location.origin;</script></body></html>"
+
+    property string writeValue: ""
     property string paneARead: ""
     property string paneBRead: ""
     property string verdict: "unknown"
-    property bool inputFocused: false
+    property string step: "idle"
 
-    onBackRequested: stackView.pop()
+    externalWebView: paneALoader.item ? paneALoader.item.webView : null
 
-    readonly property string htmlTemplate: "<!doctype html><html><head><meta charset='utf-8'><title>Origin probe</title></head><body><h1>Origin probe</h1><p id='origin'></p><script>document.getElementById('origin').textContent=location.origin;</script></body></html>"
+    onBackRequested: {
+        paneALoader.active = false
+        paneBLoader.active = false
+        stackView.pop()
+    }
 
     function loadBothPages() {
-        paneA.loadHtml(htmlTemplate, "https://a.local/")
-        paneB.loadHtml(htmlTemplate, "https://b.local/")
+        if (paneALoader.item)
+            paneALoader.item.loadHtml(htmlTemplate, "https://a.local/")
+        if (paneBLoader.item)
+            paneBLoader.item.loadHtml(htmlTemplate, "https://b.local/")
     }
 
-    function updateVerdict() {
-        var parsedA = ProbeUtils.parseProbeValue(paneARead)
-        var parsedB = ProbeUtils.parseProbeValue(paneBRead)
-        var valueA = parsedA ? (parsedA.ls || "") : ""
-        var valueB = parsedB ? (parsedB.ls || "") : ""
-        root.verdict = ProbeUtils.compareIsolation(root.writeValue, valueB)
-        root.statusMessage("A=" + valueA + " B=" + valueB + " wrote=" + root.writeValue)
+    function runIsolationTest() {
+        if (!paneALoader.item || !paneBLoader.item)
+            return
+        writeValue = "v-" + Date.now()
+        paneARead = ""
+        paneBRead = ""
+        verdict = "unknown"
+        step = "afterWriteA"
+        paneALoader.item.webView.runJavaScript(
+            ProbeUtils.writeLocalStorageScript(fixedKey, writeValue))
     }
+
+    Component.onCompleted: Qt.callLater(loadBothPages)
 
     ColumnLayout {
         width: parent.width
@@ -50,34 +66,14 @@ ScreenScaffold {
             Layout.fillWidth: true
             spacing: Theme.spacingSm
 
-            Label { text: "key"; color: Theme.textSecondary; font.pixelSize: Theme.fontSm }
-            AppTextField {
-                id: lsKey
-                Layout.preferredWidth: 120
-                compact: true
-                text: "mwv_key"
-                onEditingFocusChanged: function(f) { root.inputFocused = f }
-            }
             AppButton {
-                label: "Load pages"
+                label: "Reload pages"
                 onClicked: root.loadBothPages()
             }
             AppButton {
-                label: "Write A"
+                label: "Run isolation test"
                 accent: true
-                onClicked: {
-                    root.writeValue = "origin-a-" + Date.now()
-                    paneA.webView.runJavaScript(
-                        ProbeUtils.writeLocalStorageScript(lsKey.text.trim(), root.writeValue))
-                }
-            }
-            AppButton {
-                label: "Read A"
-                onClicked: paneA.webView.runJavaScript(ProbeUtils.readLocalStorageScript(lsKey.text.trim()))
-            }
-            AppButton {
-                label: "Read B"
-                onClicked: paneB.webView.runJavaScript(ProbeUtils.readLocalStorageScript(lsKey.text.trim()))
+                onClicked: root.runIsolationTest()
             }
         }
 
@@ -89,7 +85,7 @@ ScreenScaffold {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: 360
+            Layout.preferredHeight: 320
             spacing: Theme.spacingSm
 
             ColumnLayout {
@@ -103,13 +99,17 @@ ScreenScaffold {
                     color: Theme.textPrimary
                     font.pixelSize: Theme.fontSm
                 }
-                WebViewHost {
-                    id: paneA
+
+                Loader {
+                    id: paneALoader
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    storageName: "Profile_A"
-                    autoLoad: false
-                    inputFocused: root.inputFocused
+                    active: true
+                    sourceComponent: WebViewHost {
+                        storageName: "Profile_A"
+                        autoLoad: false
+                        inputFocused: root.addressFocused || root.contentInputFocused
+                    }
                 }
             }
 
@@ -124,35 +124,44 @@ ScreenScaffold {
                     color: Theme.textPrimary
                     font.pixelSize: Theme.fontSm
                 }
-                WebViewHost {
-                    id: paneB
+
+                Loader {
+                    id: paneBLoader
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    storageName: "Profile_A"
-                    autoLoad: false
-                    inputFocused: root.inputFocused
+                    active: true
+                    sourceComponent: WebViewHost {
+                        storageName: "Profile_A"
+                        autoLoad: false
+                        inputFocused: root.addressFocused || root.contentInputFocused
+                    }
                 }
             }
         }
     }
 
-    Component.onCompleted: loadBothPages()
-
     Connections {
-        target: paneA.webView
+        target: paneALoader.item ? paneALoader.item.webView : null
         function onJavaScriptResult(result, error) {
-            if ((error || "").length === 0 && result !== undefined && result !== null)
-                root.paneARead = String(result)
-            root.updateVerdict()
+            if (root.step !== "afterWriteA" || (error || "").length > 0)
+                return
+            root.paneARead = String(result)
+            root.step = "afterReadB"
+            if (paneBLoader.item)
+                paneBLoader.item.webView.runJavaScript(ProbeUtils.readLocalStorageScript(root.fixedKey))
         }
     }
 
     Connections {
-        target: paneB.webView
+        target: paneBLoader.item ? paneBLoader.item.webView : null
         function onJavaScriptResult(result, error) {
-            if ((error || "").length === 0 && result !== undefined && result !== null)
-                root.paneBRead = String(result)
-            root.updateVerdict()
+            if (root.step !== "afterReadB" || (error || "").length > 0)
+                return
+            root.paneBRead = String(result)
+            root.step = "idle"
+            var parsedB = ProbeUtils.parseProbeValue(root.paneBRead)
+            root.verdict = ProbeUtils.compareIsolation(root.writeValue, parsedB ? parsedB.ls : "")
+            root.statusMessage("isolation A=" + root.paneARead + " B=" + root.paneBRead)
         }
     }
 }

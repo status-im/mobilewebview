@@ -10,18 +10,24 @@ ScreenScaffold {
     required property var stackView
 
     title: "localStorage"
+    autoLoad: false
+    webViewHeight: 420
+
     property string probeResult: ""
-    property bool inputFocused: false
 
     onBackRequested: stackView.pop()
 
+    Component.onCompleted: loadStoragePage()
+
     function loadStoragePage() {
+        if (!root.webView)
+            return
         if (typeof _storageTestPageHtml === "string" && _storageTestPageHtml.length > 0) {
-            webHost.loadHtml(_storageTestPageHtml, "https://storage-test.local/")
+            root.webView.loadHtml(_storageTestPageHtml, "https://storage-test.local/")
             root.statusMessage("loadStorageTestPage")
             return
         }
-        webHost.webView.loadUrl("qrc:/web/storage_profile_test.html")
+        root.webView.loadUrl("qrc:/MobileWebViewTest/web/storage_profile_test.html")
     }
 
     ColumnLayout {
@@ -43,7 +49,7 @@ ScreenScaffold {
                 Layout.preferredWidth: 120
                 compact: true
                 text: "mwv_key"
-                onEditingFocusChanged: function(f) { root.inputFocused = f; webHost.inputFocused = f }
+                onEditingFocusChanged: function(f) { root.contentInputFocused = f }
             }
             Label {
                 text: "value"
@@ -55,7 +61,7 @@ ScreenScaffold {
                 Layout.fillWidth: true
                 compact: true
                 text: "persisted"
-                onEditingFocusChanged: function(f) { root.inputFocused = f; webHost.inputFocused = f }
+                onEditingFocusChanged: function(f) { root.contentInputFocused = f }
             }
         }
 
@@ -70,16 +76,16 @@ ScreenScaffold {
             AppButton {
                 label: "Write"
                 accent: true
-                onClicked: webHost.webView.runJavaScript(
+                onClicked: root.webView.runJavaScript(
                     ProbeUtils.writeLocalStorageScript(lsKey.text.trim(), lsValue.text))
             }
             AppButton {
                 label: "Read"
-                onClicked: webHost.webView.runJavaScript(ProbeUtils.readLocalStorageScript(lsKey.text.trim()))
+                onClicked: root.webView.runJavaScript(ProbeUtils.readLocalStorageScript(lsKey.text.trim()))
             }
             AppButton {
                 label: "Reload"
-                onClicked: webHost.webView.reload()
+                onClicked: root.webView.reload()
             }
         }
 
@@ -91,19 +97,10 @@ ScreenScaffold {
             font.pixelSize: Theme.fontSm
             elide: Text.ElideMiddle
         }
-
-        WebViewHost {
-            id: webHost
-            Layout.fillWidth: true
-            Layout.preferredHeight: 420
-            autoLoad: false
-            inputFocused: root.inputFocused
-            Component.onCompleted: root.loadStoragePage()
-        }
     }
 
     Connections {
-        target: webHost.webView
+        target: root.webView
         function onJavaScriptResult(result, error) {
             if ((error || "").length > 0) {
                 root.statusMessage("javaScriptResult error=" + error)

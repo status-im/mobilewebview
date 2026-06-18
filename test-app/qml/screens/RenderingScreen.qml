@@ -9,6 +9,10 @@ ScreenScaffold {
     required property var stackView
 
     title: "Snapshot & Freeze"
+    initialUrl: "https://example.com/"
+    webViewHeight: 360
+    freeze: freezeDialog.opened
+
     property url snapshotUrl: ""
     property bool snapshotPending: false
 
@@ -35,38 +39,6 @@ ScreenScaffold {
                 accent: true
                 onClicked: freezeDialog.open()
             }
-            AppButton {
-                label: "Capture snapshot"
-                highlighted: true
-                onClicked: requestSnapshot()
-            }
-        }
-
-        Label {
-            Layout.fillWidth: true
-            visible: root.snapshotPending
-            text: "Capturing preview\u2026"
-            color: Theme.textSecondary
-            font.italic: true
-            font.pixelSize: Theme.fontSm
-        }
-
-        Image {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 220
-            visible: root.snapshotUrl.toString().length > 0
-            fillMode: Image.PreserveAspectFit
-            asynchronous: true
-            cache: false
-            source: root.snapshotUrl
-        }
-
-        WebViewHost {
-            id: webHost
-            Layout.fillWidth: true
-            Layout.preferredHeight: 360
-            initialUrl: "https://example.com/"
-            freeze: freezeDialog.opened
         }
     }
 
@@ -79,7 +51,14 @@ ScreenScaffold {
         width: Math.min(480, root.width - 48)
         padding: Theme.spacingLg
 
-        onOpened: requestSnapshot()
+        onOpened: {
+            root.snapshotPending = true
+            root.snapshotUrl = ""
+            Qt.callLater(function() {
+                if (root.webView)
+                    root.webView.requestSnapshot(Qt.size(Math.floor(freezeDialog.availableWidth), 220))
+            })
+        }
 
         Column {
             width: freezeDialog.availableWidth
@@ -88,14 +67,23 @@ ScreenScaffold {
             Label {
                 width: parent.width
                 wrapMode: Text.WordWrap
-                text: qsTr("While open, the WebView uses freeze (native view hidden, last frame in scene).")
+                text: qsTr("While open, the WebView uses freeze (native view hidden, last frame in scene). Below: a platform snapshot for this dialog.")
                 color: Theme.textPrimary
                 font.pixelSize: Theme.fontMd
             }
 
+            Label {
+                width: parent.width
+                visible: root.snapshotPending
+                text: qsTr("Capturing preview\u2026")
+                color: Theme.textSecondary
+                font.italic: true
+                font.pixelSize: Theme.fontSm
+            }
+
             Image {
                 width: parent.width
-                height: 180
+                height: 220
                 visible: root.snapshotUrl.toString().length > 0
                 fillMode: Image.PreserveAspectFit
                 asynchronous: true
@@ -107,17 +95,8 @@ ScreenScaffold {
         standardButtons: Dialog.Close
     }
 
-    function requestSnapshot() {
-        root.snapshotPending = true
-        root.snapshotUrl = ""
-        Qt.callLater(function() {
-            var w = Math.max(120, Math.floor(root.width - Theme.spacingXl * 2))
-            webHost.webView.requestSnapshot(Qt.size(w, 220))
-        })
-    }
-
     Connections {
-        target: webHost.webView
+        target: root.webView
         function onSnapshotReady(url, ok) {
             root.snapshotPending = false
             if (ok)
