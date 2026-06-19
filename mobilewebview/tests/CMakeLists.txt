@@ -112,6 +112,23 @@ if(APPLE)
     )
     add_test(NAME tst_storage_profiles COMMAND tst_storage_profiles)
 
+    add_executable(tst_world_isolation
+        tst_world_isolation.mm
+    )
+    target_include_directories(tst_world_isolation PRIVATE
+        ../include
+    )
+    target_link_libraries(tst_world_isolation PRIVATE
+        MobileWebView
+        Qt::Core
+        Qt::Gui
+        Qt::Qml
+        Qt::Quick
+        Qt::WebChannel
+        Qt::Test
+    )
+    add_test(NAME tst_world_isolation COMMAND tst_world_isolation)
+
     add_executable(tst_mobilewebviewbackend_common
         tst_mobilewebviewbackend_common.mm
         ../include/MobileWebView/mobilewebviewbackend.h
