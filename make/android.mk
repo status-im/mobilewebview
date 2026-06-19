@@ -70,6 +70,12 @@ _android_deploy:
 	    awk '/<manifest/ && !inserted {print; print "    <uses-permission android:name=\"android.permission.INTERNET\"/>"; inserted=1; next} {print}' \
 	        "$$MANIFEST" > "$$MANIFEST.tmp" && mv "$$MANIFEST.tmp" "$$MANIFEST"; \
 	fi; \
+	GRADLE="$(_ANDROID_BUILD_DIR)/android-build/build.gradle"; \
+	if [ -f "$$GRADLE" ] && ! grep -q "androidx.webkit:webkit" "$$GRADLE"; then \
+	    echo "Adding androidx.webkit dependency to build.gradle (MULTI_PROFILE isolation)"; \
+	    awk '/implementation .androidx.core:core/ && !inserted {print; print "    implementation '"'"'androidx.webkit:webkit:1.16.0'"'"'"; inserted=1; next} {print}' \
+	        "$$GRADLE" > "$$GRADLE.tmp" && mv "$$GRADLE.tmp" "$$GRADLE"; \
+	fi; \
 	cd "$(_ANDROID_BUILD_DIR)/android-build" && ./gradlew assembleDebug --no-daemon
 
 _ANDROID_BUILD_DIR_DEVICE := $(if $(filter android-emulator,$(TARGET_OS)),$(BUILD_BASE)/android-emulator,$(BUILD_BASE)/android)

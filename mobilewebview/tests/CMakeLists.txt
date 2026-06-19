@@ -55,6 +55,19 @@ target_link_libraries(tst_storage_profile_utils PRIVATE
 )
 add_test(NAME tst_storage_profile_utils COMMAND tst_storage_profile_utils)
 
+add_executable(tst_android_js_result
+    tst_android_js_result.cpp
+    ../src/common/android_js_result.cpp
+)
+target_include_directories(tst_android_js_result PRIVATE
+    ../src/common
+)
+target_link_libraries(tst_android_js_result PRIVATE
+    Qt::Core
+    Qt::Test
+)
+add_test(NAME tst_android_js_result COMMAND tst_android_js_result)
+
 if(APPLE)
     add_executable(tst_userscripts_manager
         tst_userscripts_manager.mm

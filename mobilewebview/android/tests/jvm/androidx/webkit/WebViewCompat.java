@@ -14,8 +14,8 @@ public final class WebViewCompat {
         return webView.addDocumentStartJavaScript(script);
     }
 
-    public static void setProfile(WebView webView, Profile profile) {
-        sLastProfileName = profile != null ? profile.getName() : null;
+    public static void setProfile(WebView webView, String profileName) {
+        sLastProfileName = profileName;
     }
 
     public static String lastProfileName() {

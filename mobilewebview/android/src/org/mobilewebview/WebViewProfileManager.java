@@ -83,8 +83,8 @@ final class WebViewProfileManager {
             }
 
             Class<?> compatClass = Class.forName("androidx.webkit.WebViewCompat");
-            Method setProfile = compatClass.getMethod("setProfile", WebView.class, profile.getClass());
-            setProfile.invoke(null, webView, profile);
+            Method setProfile = compatClass.getMethod("setProfile", WebView.class, String.class);
+            setProfile.invoke(null, webView, profileName);
             return profileName;
         } catch (ReflectiveOperationException e) {
             Log.w(TAG, "configureProfile failed", e);

@@ -2,6 +2,7 @@
 #include "../common/mobilewebviewbackend_p.h"
 #include "../common/origin_utils.h"
 #include "../common/userscript_utils.h"
+#include "../common/android_js_result.h"
 
 #ifdef Q_OS_ANDROID
 
@@ -866,8 +867,10 @@ void AndroidWebViewPrivate::onNewWindowRequested(const QString &url, bool userIn
 void AndroidWebViewPrivate::onJavaScriptResult(const QString &result, const QString &error)
 {
     QVariant qResult;
-    if (error.isEmpty() && !result.isEmpty()) {
-        qResult = result;
+    if (error.isEmpty()) {
+        // Android's evaluateJavascript JSON-encodes every result; decode it so the
+        // javaScriptResult signal carries the same value types as the Apple backend.
+        qResult = decodeAndroidEvaluateJsResult(result);
     }
     emit q_ptr->javaScriptResult(qResult, error);
 }

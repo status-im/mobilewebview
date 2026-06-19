@@ -55,6 +55,8 @@ set(MOBILEWEBVIEW_COMMON_SOURCES
     src/common/webchanneltransport.cpp
     src/common/storage_profile_utils.h
     src/common/storage_profile_utils.cpp
+    src/common/android_js_result.h
+    src/common/android_js_result.cpp
 )
 
 set(MOBILEWEBVIEW_DARWIN_SOURCES
