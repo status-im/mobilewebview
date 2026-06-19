@@ -186,6 +186,12 @@
     }
   };
 
+  // The isolated bridge-world cannot call window.__testWebChannel directly
+  // (globals are not shared), so it triggers actions through the shared DOM.
+  document.addEventListener("__test_show_popup__", function() {
+    window.__testWebChannel.showStaticPopup();
+  });
+
   window.addEventListener("qtWebChannelReady", ensureWebChannelConnected);
 
   // bootstrap_page.js dispatches qtWebChannelReady before this user script runs.

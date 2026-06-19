@@ -15,6 +15,8 @@ Rectangle {
             return Theme.successSurface
         if (verdict === "shared" || verdict === "fail")
             return Theme.dangerSurface
+        if (verdict === "inconclusive")
+            return Theme.accentSurface
         return Theme.accentSurface
     }
     border.color: {
@@ -22,6 +24,8 @@ Rectangle {
             return Theme.success
         if (verdict === "shared" || verdict === "fail")
             return Theme.danger
+        if (verdict === "inconclusive")
+            return Theme.accent
         return Theme.accent
     }
     border.width: 1

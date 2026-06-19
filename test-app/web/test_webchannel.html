@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>WebChannel test page</title>
+  <title>JS world isolation</title>
   <style>
     body {
       margin: 0;
@@ -13,31 +13,159 @@
       color: #141414;
     }
     .card {
-      max-width: 720px;
-      margin: 0 auto;
+      max-width: 760px;
+      margin: 0 auto 12px;
       background: #fff;
       border-radius: 12px;
       box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
       padding: 16px;
+    }
+    h2 {
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
+    p {
+      margin: 6px 0;
+      line-height: 1.4;
     }
     code {
       background: #f0f2f8;
       border-radius: 4px;
       padding: 2px 4px;
     }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 8px 6px;
+      border-bottom: 1px solid #eef0f5;
+    }
+    .val {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .ok {
+      color: #1a7f37;
+      font-weight: 600;
+    }
+    .bad {
+      color: #b3261e;
+      font-weight: 600;
+    }
+    .muted {
+      color: #666;
+    }
   </style>
 </head>
 <body>
   <div class="card">
-    <h2>WebChannel test UI</h2>
+    <h2>JS world isolation</h2>
     <p>
-      This page is loaded from Qt resources. The user script
-      <code>test_script.js</code> connects to WebChannel and draws the overlay.
+      This page demonstrates how the <strong>bridge-world</strong> (WebChannel transport)
+      is isolated from the <strong>page-world</strong> (page JS and user scripts).
     </p>
     <p>
-      Use top controls in QML or the button in the page corner to validate
-      <strong>QML -> JS</strong> and <strong>JS -> QML</strong>.
+      JS globals are <strong>not shared</strong> between worlds, but the
+      <strong>DOM is shared</strong>. The bridge therefore uses DOM events
+      <code>__sq_req__</code> / <code>__sq_push__</code> to communicate.
+    </p>
+    <p class="muted">
+      Use QML controls or the in-page button to exercise the WebChannel round-trip
+      while globals stay isolated.
     </p>
   </div>
+
+  <div class="card">
+    <h2>World matrix</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Check</th>
+          <th>Value</th>
+          <th>Verdict</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Page-world sees bridge-global <code>__bridgeVar</code></td>
+          <td class="val" id="pageBridge">—</td>
+          <td id="pageBridgeV" class="muted">waiting for probe</td>
+        </tr>
+        <tr>
+          <td>Page-world sees userscript-global <code>__userscriptVar</code></td>
+          <td class="val" id="pageUser">—</td>
+          <td id="pageUserV" class="muted">waiting for probe</td>
+        </tr>
+        <tr>
+          <td>DOM marker from bridge visible in page-world</td>
+          <td class="val" id="pageDom">—</td>
+          <td id="pageDomV" class="muted">waiting for probe</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="muted">
+      Rows fill automatically when you press <strong>Run isolation probe</strong> in QML.
+    </p>
+  </div>
+
+  <script>
+  (function () {
+    "use strict";
+
+    window.__pageVar = "PAGE";
+    var root = document.documentElement;
+
+    function setCell(id, vId, value, expectUndefined) {
+      var cell = document.getElementById(id);
+      var verdict = document.getElementById(vId);
+      if (!cell || !verdict) {
+        return;
+      }
+
+      cell.textContent = String(value);
+      var good = expectUndefined
+        ? (value === "undefined")
+        : (value && value !== "undefined" && value !== "null");
+      verdict.textContent = good
+        ? (expectUndefined ? "isolated ✓" : "shared (page world) ✓")
+        : (value === "string" ? "shared (page world)" : "shared");
+      verdict.className = good ? "ok" : "bad";
+    }
+
+    function respond(nonce) {
+      var seesBridge = typeof window.__bridgeVar;
+      var seesUser = typeof window.__userscriptVar;
+      var domMarker = root.getAttribute("data-bridge-marker");
+
+      setCell("pageBridge", "pageBridgeV", seesBridge, true);
+      setCell("pageUser", "pageUserV", seesUser, false);
+      setCell("pageDom", "pageDomV", domMarker || "null", false);
+
+      root.setAttribute("data-page-sees-bridge", seesBridge);
+      root.setAttribute("data-page-sees-userscript", seesUser);
+      root.setAttribute("data-page-dom-marker", domMarker || "null");
+      root.setAttribute("data-page-nonce", nonce || "");
+    }
+
+    var observer = new MutationObserver(function () {
+      var nonce = root.getAttribute("data-probe-nonce");
+      if (nonce && nonce !== root.getAttribute("data-page-nonce")) {
+        respond(nonce);
+      }
+    });
+    observer.observe(root, {
+      attributes: true,
+      attributeFilter: ["data-probe-nonce"]
+    });
+
+    var preNonce = root.getAttribute("data-probe-nonce");
+    if (preNonce) {
+      respond(preNonce);
+    }
+  })();
+  </script>
 </body>
 </html>

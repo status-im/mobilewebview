@@ -29,6 +29,9 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(
         QStringLiteral("_storageTestPageHtml"),
         loadTextResource(QStringLiteral(":/MobileWebViewTest/web/storage_profile_test.html")));
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("_webChannelTestPageHtml"),
+        loadTextResource(QStringLiteral(":/MobileWebViewTest/web/test_webchannel.html")));
 
     engine.load(QUrl(QStringLiteral("qrc:/MobileWebViewTest/qml/main.qml")));
 

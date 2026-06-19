@@ -18,6 +18,10 @@ ScreenScaffold {
     property string isolationProbe: ""
     property string isolationVerdict: "unknown"
 
+    property bool _bridgePageLoaded: false
+    property string _probeNonce: ""
+    property var _probePart: null
+
     readonly property var scriptResources: [
         { "path": "qrc:/MobileWebViewTest/js/qwebchannel.js", "runOnSubFrames": false },
         { "path": "qrc:/MobileWebViewTest/js/test_script.js", "runOnSubFrames": false },
@@ -30,6 +34,16 @@ ScreenScaffold {
     }
 
     onBackRequested: stackView.pop()
+
+    Component.onCompleted: tryAutoLoad()
+
+    Timer {
+        id: autoLoadTimer
+        interval: 50
+        repeat: true
+        running: !root._bridgePageLoaded
+        onTriggered: root.tryAutoLoad()
+    }
 
     QtObject {
         id: testBridge
@@ -47,40 +61,90 @@ ScreenScaffold {
         }
     }
 
+    function tryAutoLoad() {
+        if (root._bridgePageLoaded || !root.webView)
+            return
+        root._bridgePageLoaded = true
+        loadBridgePage()
+    }
+
     function loadBridgePage() {
         if (!root.webView)
             return
-        var request = new XMLHttpRequest()
-        request.open("GET", "qrc:/MobileWebViewTest/web/test_webchannel.html")
-        request.onreadystatechange = function() {
-            if (request.readyState !== XMLHttpRequest.DONE)
-                return
-            if (request.responseText.length > 0) {
-                root.webView.loadHtml(request.responseText, "https://test.local")
-                root.statusMessage("loadTestPage (loadHtml)")
-            } else {
-                root.webView.loadUrl("qrc:/MobileWebViewTest/web/test_webchannel.html")
-            }
+
+        root.isolationVerdict = "unknown"
+        root.isolationProbe = ""
+
+        if (typeof _webChannelTestPageHtml === "string" && _webChannelTestPageHtml.length > 0) {
+            root.webView.loadHtml(_webChannelTestPageHtml, "https://test.local/")
+            root.statusMessage("loadTestPage (loadHtml)")
+            return
         }
-        request.send()
+        root.webView.loadUrl("qrc:/MobileWebViewTest/web/test_webchannel.html")
+        root.statusMessage("loadTestPage (loadUrl fallback)")
     }
 
     function runIsolationProbe() {
-        if (root.webView)
-            root.webView.runJavaScript(ProbeUtils.isolationProbeScript())
-    }
-
-    function evaluateIsolationResult(text) {
-        var parsed = ProbeUtils.parseProbeValue(text)
-        if (!parsed)
+        if (!root.webView)
             return
-        var isolated = parsed.pageSeesUserscriptVar === "undefined"
-                && parsed.userscriptDomMarker === "set"
-                && parsed.userscriptSeesPage === "undefined"
-        root.isolationVerdict = isolated ? "isolated" : "shared"
+
+        readbackTimer.stop()
+        root.isolationVerdict = "inconclusive"
+        root.isolationProbe = "Running probe…"
+        root._probePart = null
+        root._probeNonce = String(Date.now())
+        root.webView.runJavaScript(ProbeUtils.isolationProbeScript(root._probeNonce))
     }
 
-    Component.onCompleted: loadBridgePage()
+    function finalizeVerdict(readback) {
+        var probe = root._probePart
+        var userscriptRan = probe && probe.userscriptRan === "set"
+        var pageReacted = readback && readback.pageNonce === root._probeNonce
+
+        if (!probe || !userscriptRan || !pageReacted) {
+            root.isolationVerdict = "inconclusive"
+            root.isolationProbe = "Page or user scripts not ready — load the bridge page and retry."
+            root.statusMessage("isolation verdict=inconclusive")
+            return
+        }
+
+        var isolatedGlobals = probe.isolatedSeesPageVar === "undefined"
+                && readback.pageSeesBridgeVar === "undefined"
+        var domShared = readback.pageDomMarker === "set"
+
+        if (isolatedGlobals && domShared) {
+            root.isolationVerdict = "isolated"
+            root.isolationProbe = "Platform provides an isolated content world: bridge globals are "
+                    + "hidden from the page; the shared channel is the DOM. User scripts run in "
+                    + "page-world (sees __userscriptVar=" + readback.pageSeesUserscriptVar + ")."
+        } else {
+            root.isolationVerdict = "shared"
+            root.isolationProbe = "Bridge runs in page-world on this platform (Android / pre-iOS14 / "
+                    + "pre-macOS11): globals are shared. The DOM bridge channel still works."
+        }
+        root.statusMessage("isolation verdict=" + root.isolationVerdict)
+    }
+
+    Timer {
+        id: readbackTimer
+        interval: 50
+        repeat: true
+        property int attempts: 0
+
+        onTriggered: {
+            if (!root.webView) {
+                stop()
+                return
+            }
+            attempts += 1
+            if (attempts > 20) {
+                stop()
+                root.finalizeVerdict(null)
+                return
+            }
+            root.webView.runJavaScript(ProbeUtils.isolationReadbackScript())
+        }
+    }
 
     ColumnLayout {
         width: parent.width
@@ -91,7 +155,8 @@ ScreenScaffold {
             wrapMode: Text.WordWrap
             color: Theme.textSecondary
             font.pixelSize: Theme.fontSm
-            text: "WebChannel bridge round-trip plus userscript/page JS world isolation probe."
+            text: "WebChannel uses the shared DOM while bridge and page JS globals stay isolated. "
+                    + "Buttons below exercise the round-trip; Run isolation probe measures the split."
         }
 
         RowLayout {
@@ -99,7 +164,7 @@ ScreenScaffold {
             spacing: Theme.spacingSm
 
             AppButton {
-                label: "Load bridge page"
+                label: "Load / reload bridge page"
                 onClicked: root.loadBridgePage()
             }
             AppButton {
@@ -110,7 +175,7 @@ ScreenScaffold {
             AppButton {
                 label: "JS popup"
                 onClicked: root.webView.runJavaScript(
-                    "if (window.__testWebChannel) { window.__testWebChannel.showStaticPopup(); 'ok'; }")
+                    "document.dispatchEvent(new CustomEvent('__test_show_popup__')); 'ok'")
             }
             AppButton {
                 label: "Run isolation probe"
@@ -150,11 +215,20 @@ ScreenScaffold {
                 root.statusMessage("javaScriptResult error=" + error)
                 return
             }
-            var text = result === null || result === undefined ? "" : String(result)
-            if (text.indexOf("pageSeesUserscriptVar") >= 0) {
-                root.isolationProbe = text
-                root.evaluateIsolationResult(text)
-                root.statusMessage("isolation probe " + text)
+
+            var parsed = ProbeUtils.parseProbeValue(result === null || result === undefined ? "" : String(result))
+            if (!parsed)
+                return
+
+            if (parsed.kind === "probe") {
+                root._probePart = parsed
+                readbackTimer.attempts = 0
+                readbackTimer.start()
+            } else if (parsed.kind === "readback") {
+                if (parsed.pageNonce === root._probeNonce) {
+                    readbackTimer.stop()
+                    root.finalizeVerdict(parsed)
+                }
             }
         }
     }

@@ -52,13 +52,31 @@ function readCookieScript(name) {
         + "})()"
 }
 
-function isolationProbeScript() {
+function isolationProbeScript(nonce) {
     return "(function(){"
-        + "window.__pageVar='PAGE';"
+        + "var r=document.documentElement;"
+        + "window.__bridgeVar='BRIDGE';"
+        + "r.setAttribute('data-bridge-marker','set');"
+        + "r.setAttribute('data-probe-nonce'," + toJsLiteral(String(nonce)) + ");"
         + "return JSON.stringify({"
-        + "  pageSeesUserscriptVar: typeof window.__userscriptVar,"
-        + "  userscriptDomMarker: document.documentElement.getAttribute('data-userscript-var'),"
-        + "  userscriptSeesPage: document.documentElement.getAttribute('data-userscript-sees-page')"
+        + "  kind:'probe',"
+        + "  nonce:" + toJsLiteral(String(nonce)) + ","
+        + "  isolatedSeesPageVar: typeof window.__pageVar,"
+        + "  isolatedSeesUserscriptVar: typeof window.__userscriptVar,"
+        + "  userscriptRan: r.getAttribute('data-userscript-var')"
+        + "});"
+        + "})()"
+}
+
+function isolationReadbackScript() {
+    return "(function(){"
+        + "var r=document.documentElement;"
+        + "return JSON.stringify({"
+        + "  kind:'readback',"
+        + "  pageNonce: r.getAttribute('data-page-nonce'),"
+        + "  pageSeesBridgeVar: r.getAttribute('data-page-sees-bridge'),"
+        + "  pageSeesUserscriptVar: r.getAttribute('data-page-sees-userscript'),"
+        + "  pageDomMarker: r.getAttribute('data-page-dom-marker')"
         + "});"
         + "})()"
 }
