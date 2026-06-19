@@ -379,13 +379,18 @@ void MobileWebViewBackendPrivate::recreateNativeViewForStore()
         return;
     }
 
+    m_viewStoreOffTheRecord = m_offTheRecord;
+    m_viewStoreName = m_storageName;
+
     setupNativeViewImpl();
     ensureBridgeInstalled();
 
     setLoading(true);
     setLoaded(false);
 
-    if (urlToReload.isValid() && !urlToReload.isEmpty()) {
+    if (m_hasLastHtml) {
+        loadHtmlImpl(m_lastHtml, m_lastHtmlBaseUrl);
+    } else if (urlToReload.isValid() && !urlToReload.isEmpty()) {
         loadUrlImpl(urlToReload);
     }
 }
@@ -771,6 +776,7 @@ void MobileWebViewBackend::loadUrl(const QUrl &url)
         updateAllowedOrigins({origin});
     }
 
+    d->m_hasLastHtml = false;
     d->ensureBridgeInstalled();
     d->loadUrlImpl(url);
 }
@@ -785,6 +791,9 @@ void MobileWebViewBackend::loadHtml(const QString &html, const QUrl &baseUrl)
         updateAllowedOrigins({origin});
     }
 
+    d->m_hasLastHtml = true;
+    d->m_lastHtml = html;
+    d->m_lastHtmlBaseUrl = baseUrl;
     d->ensureBridgeInstalled();
     d->loadHtmlImpl(html, baseUrl);
 }
@@ -908,6 +917,12 @@ void MobileWebViewBackend::itemChange(ItemChange change, const ItemChangeData &v
             ensureSnapshotImageProviderRegistered(qmlEngine(this));
             QMetaObject::invokeMethod(this, [this, d]() {
                 d->setupNativeViewImpl();
+                // The native view was created in the platform ctor with the default
+                // store; if storageName/offTheRecord were set before scene attachment
+                // (the usual QML binding path), rebind it to the requested store now.
+                if (!d->nativeViewStoreMatches()) {
+                    d->recreateNativeViewForStore();
+                }
                 // Trigger geometry sync now that m_nativeViewSetup is true.
                 polish();
             }, Qt::QueuedConnection);

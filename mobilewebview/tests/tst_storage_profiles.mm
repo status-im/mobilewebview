@@ -70,6 +70,13 @@ static void loadExamplePage(MobileWebViewBackend &backend)
     QVERIFY2(waitForLoaded(backend), "Page did not finish loading");
 }
 
+static void loadPageAt(MobileWebViewBackend &backend, const QString &baseUrl)
+{
+    backend.loadHtml(QStringLiteral("<!doctype html><html><body>storage</body></html>"),
+                     QUrl(baseUrl));
+    QVERIFY2(waitForLoaded(backend), "Page did not finish loading");
+}
+
 } // namespace
 
 class StorageProfilesE2ETest : public QObject
@@ -81,7 +88,60 @@ private slots:
     void incognitoProfileDoesNotPersistLocalStorageAcrossRecreate();
     void standardProfilesAreIsolatedByStorageName();
     void incognitoIsIsolatedFromStandardProfile();
+    void threeSimultaneousProfilesIsolateLocalStorage();
 };
+
+void StorageProfilesE2ETest::threeSimultaneousProfilesIsolateLocalStorage()
+{
+    const QString base = QStringLiteral("https://storage-test.local/");
+
+    // Mirror the app: three backends as siblings in ONE window, stores assigned
+    // via property setters before the views are attached to the scene.
+    QQuickWindow window;
+    window.setGeometry(0, 0, 960, 320);
+
+    MobileWebViewBackend backendA;
+    MobileWebViewBackend backendB;
+    MobileWebViewBackend backendInco;
+
+    backendA.setStorageName(QStringLiteral("Profile_A"));
+    backendA.setOffTheRecord(false);
+    backendB.setStorageName(QStringLiteral("Profile_B"));
+    backendB.setOffTheRecord(false);
+    backendInco.setOffTheRecord(true);
+
+    for (MobileWebViewBackend *b : {&backendA, &backendB, &backendInco}) {
+        b->setParentItem(window.contentItem());
+        b->setWidth(320);
+        b->setHeight(240);
+        b->setVisible(true);
+    }
+    window.show();
+    QCoreApplication::processEvents();
+
+    loadPageAt(backendA, base);
+    loadPageAt(backendB, base);
+    loadPageAt(backendInco, base);
+
+    // Dispatch all three writes in parallel (mirrors the QML screen), each confirmed,
+    // then read all back as a separate round (also mirrors the screen's read-back phase).
+    QCOMPARE(runJsAndWaitResult(backendA,
+                                QStringLiteral("localStorage.setItem('mwv_iso','v-A'); 'ok'")),
+             QStringLiteral("ok"));
+    QCOMPARE(runJsAndWaitResult(backendB,
+                                QStringLiteral("localStorage.setItem('mwv_iso','v-B'); 'ok'")),
+             QStringLiteral("ok"));
+    QCOMPARE(runJsAndWaitResult(backendInco,
+                                QStringLiteral("localStorage.setItem('mwv_iso','v-INCO'); 'ok'")),
+             QStringLiteral("ok"));
+
+    QCOMPARE(runJsAndWaitResult(backendA, QStringLiteral("localStorage.getItem('mwv_iso')")),
+             QStringLiteral("v-A"));
+    QCOMPARE(runJsAndWaitResult(backendB, QStringLiteral("localStorage.getItem('mwv_iso')")),
+             QStringLiteral("v-B"));
+    QCOMPARE(runJsAndWaitResult(backendInco, QStringLiteral("localStorage.getItem('mwv_iso')")),
+             QStringLiteral("v-INCO"));
+}
 
 void StorageProfilesE2ETest::standardProfilePersistsLocalStorageAcrossRecreate()
 {

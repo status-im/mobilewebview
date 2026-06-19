@@ -48,7 +48,7 @@ qt_add_qml_module(MobileWebViewTest
         qml/screens/ZoomScreen.qml
         qml/screens/CookiesScreen.qml
         qml/screens/LocalStorageScreen.qml
-        qml/screens/StorageIsolationScreen.qml
+        qml/screens/ProfileIsolationScreen.qml
         qml/screens/OriginScreen.qml
         qml/screens/ScriptsScreen.qml
         qml/screens/RenderingScreen.qml

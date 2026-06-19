@@ -16,6 +16,7 @@ Item {
     property var webChannel: null
     property bool freeze: false
     property int webViewHeight: 420
+    property bool contentFillsViewport: false
 
     property var externalWebView: null
     readonly property var webView: externalWebView
@@ -169,6 +170,7 @@ Item {
                 spacing: 0
 
                 Flickable {
+                    id: contentFlickable
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     contentWidth: width
@@ -188,7 +190,9 @@ Item {
                         Item {
                             id: contentSlot
                             width: parent.width
-                            implicitHeight: childrenRect.height
+                            implicitHeight: root.contentFillsViewport
+                                ? Math.max(0, contentFlickable.height - topPadding - bottomPadding)
+                                : childrenRect.height
                         }
                     }
                 }

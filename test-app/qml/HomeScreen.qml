@@ -35,9 +35,9 @@ Item {
             screen: Qt.resolvedUrl("screens/LocalStorageScreen.qml")
         },
         {
-            title: "Storage isolation",
-            subtitle: "Same origin, different partitions",
-            screen: Qt.resolvedUrl("screens/StorageIsolationScreen.qml")
+            title: "Profile isolation",
+            subtitle: "3 profiles, persistence after recreate",
+            screen: Qt.resolvedUrl("screens/ProfileIsolationScreen.qml")
         },
         {
             title: "Origin",

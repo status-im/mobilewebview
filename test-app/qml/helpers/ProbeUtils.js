@@ -89,3 +89,65 @@ function compareIsolation(writeValue, readValue) {
         return "shared"
     return "isolated"
 }
+
+function writeProfileMarkerScript(key, value, maxAgeSec) {
+    var age = parseInt(maxAgeSec, 10)
+    if (isNaN(age) || age < 0)
+        age = 0
+
+    return "(function(){"
+        + "localStorage.setItem(" + toJsLiteral(key) + ", " + toJsLiteral(value) + ");"
+        + "document.cookie=" + toJsLiteral(key) + "+'='+" + toJsLiteral(value)
+        + "+'; path=/; max-age='+" + age + ";"
+        + "function cookieValue(n){"
+        + "  var parts=document.cookie.split('; ');"
+        + "  for(var i=0;i<parts.length;i++){"
+        + "    if(parts[i].indexOf(n+'=')===0) return parts[i].substring(n.length+1);"
+        + "  }"
+        + "  return null;"
+        + "}"
+        + "return JSON.stringify({ls: localStorage.getItem(" + toJsLiteral(key) + "), cookie: cookieValue(" + toJsLiteral(key) + ")});"
+        + "})()"
+}
+
+function readProfileMarkerScript(key) {
+    return "(function(){"
+        + "function cookieValue(n){"
+        + "  var parts=document.cookie.split('; ');"
+        + "  for(var i=0;i<parts.length;i++){"
+        + "    if(parts[i].indexOf(n+'=')===0) return parts[i].substring(n.length+1);"
+        + "  }"
+        + "  return null;"
+        + "}"
+        + "return JSON.stringify({ls: localStorage.getItem(" + toJsLiteral(key) + "), cookie: cookieValue(" + toJsLiteral(key) + ")});"
+        + "})()"
+}
+
+function evaluateProfileMatrix(panes, markers, before, after) {
+    for (var i = 0; i < panes.length; i++) {
+        var p = panes[i]
+        var m = markers[p.id]
+        var b = before[p.id] || {}
+        var a = after[p.id] || {}
+
+        if (b.ls !== m || b.cookie !== m)
+            return "fail"
+
+        for (var j = 0; j < panes.length; j++) {
+            if (j === i)
+                continue
+            var foreign = markers[panes[j].id]
+            if (b.ls === foreign || b.cookie === foreign)
+                return "fail"
+        }
+
+        if (p.persistent) {
+            if (a.ls !== m || a.cookie !== m)
+                return "fail"
+        } else {
+            if (a.ls || a.cookie)
+                return "fail"
+        }
+    }
+    return "pass"
+}
