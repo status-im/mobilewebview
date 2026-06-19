@@ -23,6 +23,24 @@ ScreenScaffold {
             Layout.fillWidth: true
             spacing: Theme.spacingSm
 
+            AppButton {
+                label: "Google"
+                onClicked: root.navigateTo("google.com")
+            }
+            AppButton {
+                label: "Netflix"
+                onClicked: root.navigateTo("netflix.com")
+            }
+            AppButton {
+                label: "Amazon"
+                onClicked: root.navigateTo("amazon.com")
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Theme.spacingSm
+
             Image {
                 source: root.webView ? (root.webView.favicon || "") : ""
                 Layout.preferredWidth: 16
