@@ -24,10 +24,14 @@ _run_ios-simulator:
 	@APP="$(BUILD_BASE)/ios-simulator/$(CONFIGURATION)-iphonesimulator/MobileWebViewTest.app"; \
 	test -d "$$APP" || (echo "ERROR: app not found: $$APP"; exit 1); \
 	BUNDLE_ID="$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$$APP/Info.plist")"; \
-	UDID="$$(xcrun simctl list devices | awk -F'[()]' '/Booted/{print $$2; exit}')"; \
+	if [ -n "$(DEVICE_ID)" ]; then \
+	    UDID="$(DEVICE_ID)"; \
+	else \
+	    UDID="$$(xcrun simctl list devices | awk -F'[()]' '/iPhone/ && /Booted/{print $$2; exit}')"; \
+	fi; \
 	if [ -z "$$UDID" ]; then \
 	    UDID="$$(xcrun simctl list devices | awk -F'[()]' '/iPhone/ && /Shutdown/{print $$2; exit}')"; \
-	    test -n "$$UDID" || (echo "ERROR: no iOS simulator found"; exit 1); \
+	    test -n "$$UDID" || (echo "ERROR: no iPhone simulator found"; exit 1); \
 	    echo "Booting simulator $$UDID..."; \
 	    open -a Simulator; \
 	    xcrun simctl boot "$$UDID" >/dev/null 2>&1 || true; \
@@ -72,8 +76,8 @@ _run_ios:
 	if [ -n "$(DEVICE_ID)" ]; then \
 	    UDID="$(DEVICE_ID)"; \
 	else \
-	    UDID="$$(xcrun devicectl list devices 2>/dev/null | awk -F'   +' 'NR>2 && $$4~/^available/{print $$3; exit}')"; \
-	    test -n "$$UDID" || (echo "ERROR: no available iOS device found. Connect and unlock your iPhone."; exit 1); \
+	    UDID="$$(xcrun devicectl list devices 2>/dev/null | awk -F'   +' 'NR>2 && $$4~/^available/ && $$5~/iPhone/{print $$3; exit}')"; \
+	    test -n "$$UDID" || (echo "ERROR: no available iPhone found. Connect and unlock your iPhone."; exit 1); \
 	fi; \
 	echo "Installing on device $$UDID"; \
 	xcrun devicectl device install app --device "$$UDID" "$$APP"; \
