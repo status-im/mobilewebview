@@ -194,6 +194,8 @@ private slots:
     void requestSnapshotScalesLogicalSizeByWindowDevicePixelRatio();
     void freezeAndRequestSnapshotAreIndependent();
     void offTheRecordChangeRecreatesNativeViewAndReloadsCurrentUrl();
+    void loadUrlContentSurvivesStoreRecreate();
+    void loadHtmlContentSurvivesStoreRecreate();
     void offTheRecordSameValueDoesNotRecreateNativeView();
     void storageNameChangeRecreatesNativeViewInStandardMode();
     void storageNameChangeIgnoredInIncognitoMode();
@@ -850,6 +852,48 @@ void MobileWebViewBackendCommonTest::offTheRecordChangeRecreatesNativeViewAndRel
     QCOMPARE(d->initNativeViewCalls, initBefore + 1);
     QCOMPARE(d->loadUrlCalls, loadUrlBefore + 1);
     QCOMPARE(d->lastLoadedUrl, pageUrl);
+}
+
+void MobileWebViewBackendCommonTest::loadUrlContentSurvivesStoreRecreate()
+{
+    // A page loaded via the imperative loadUrl() must be reloaded after an internal
+    // store recreate, exactly like one set via setUrl(). Currently loadUrl() never
+    // records the URL for replay, so the page is lost on store switch.
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+    auto *d = g_lastCreatedPrivate;
+
+    const QUrl pageUrl(QStringLiteral("https://example.com/page"));
+    backend.loadUrl(pageUrl);
+    d->m_nativeViewSetup = true;
+
+    const int loadUrlBefore = d->loadUrlCalls;
+
+    backend.setOffTheRecord(true);
+
+    QCOMPARE(d->loadUrlCalls, loadUrlBefore + 1);
+    QCOMPARE(d->lastLoadedUrl, pageUrl);
+}
+
+void MobileWebViewBackendCommonTest::loadHtmlContentSurvivesStoreRecreate()
+{
+    // Contrast to loadUrlContentSurvivesStoreRecreate: loadHtml() content is replayed
+    // after a store recreate because m_lastHtml is preserved.
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+    auto *d = g_lastCreatedPrivate;
+
+    backend.loadHtml(QStringLiteral("<html/>"), QUrl(QStringLiteral("https://example.com/")));
+    d->m_nativeViewSetup = true;
+
+    const int loadHtmlBefore = d->loadHtmlCalls;
+
+    backend.setOffTheRecord(true);
+
+    QCOMPARE(d->loadHtmlCalls, loadHtmlBefore + 1);
+    QCOMPARE(d->lastHtml, QStringLiteral("<html/>"));
 }
 
 void MobileWebViewBackendCommonTest::offTheRecordSameValueDoesNotRecreateNativeView()

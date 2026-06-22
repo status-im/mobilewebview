@@ -807,6 +807,12 @@ void MobileWebViewBackend::loadUrl(const QUrl &url)
     }
 
     d->m_hasLastHtml = false;
+    // Record the requested URL so it survives an internal store recreate (and a
+    // deferred native-view setup), matching setUrl() and loadHtml() replay semantics.
+    if (d->m_url != url) {
+        d->m_url = url;
+        emit urlChanged();
+    }
     d->ensureBridgeInstalled();
     d->loadUrlImpl(url);
 }
