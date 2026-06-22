@@ -7,6 +7,7 @@
 #include <QRectF>
 #include <QImage>
 #include <QSize>
+#include <QMetaObject>
 #include <functional>
 
 class MobileWebViewBackend;
@@ -90,10 +91,7 @@ public:
     bool m_interactionEnabled = true;
     bool m_offTheRecord = false;
     QString m_storageName;
-    // Store parameters the live native view was actually built with. The view is
-    // created in the platform ctor with the default store (offTheRecord=false, empty
-    // storageName); these track that so setupNativeViewImpl can rebind if the QML
-    // properties were set before the view was attached to a scene.
+    // Store parameters the live native view was actually built with.
     bool m_viewStoreOffTheRecord = false;
     QString m_viewStoreName;
     // Last content loaded, replayed verbatim after an internal store recreate so
@@ -146,6 +144,17 @@ public:
     void ensureBridgeInstalled();
     void setupTransport();
     void recreateNativeViewForStore();
+
+    /// Re-sync native overlay position from mapToScene (e.g. after StackView slide).
+    void syncNativeGeometryFromScene();
+
+    /// Hide and detach the native view when the QML item leaves the scene (e.g. StackView pop).
+    void detachNativeViewFromScene();
+
+    /// Platform hook: remove native view from the window hierarchy (Darwin: removeFromSuperview).
+    virtual void detachNativeViewFromSceneImpl() {}
+
+    QMetaObject::Connection m_afterAnimatingConnection;
 };
 
 // Factory function for creating platform-specific implementation

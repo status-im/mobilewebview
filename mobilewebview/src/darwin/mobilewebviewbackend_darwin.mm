@@ -23,6 +23,7 @@
 #include <QPointer>
 #include <QFile>
 #include <QVariantMap>
+#include <optional>
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
 
 namespace {
@@ -239,6 +240,7 @@ public:
     void showFindPanelImpl() override;
     void hideFindPanelImpl() override;
     void captureSnapshotImpl(quint64 requestId) override;
+    void detachNativeViewFromSceneImpl() override;
 
 private:
     WKWebView *m_webView = nullptr;
@@ -247,12 +249,13 @@ private:
     WebViewStateObserver *m_stateObserver = nullptr;
     UserScriptsManager *m_userScriptsManager = nullptr;
     void *m_hostView = nullptr;
+
+    std::optional<QRect> m_lastGeometry;
 };
 
 DarwinWebViewPrivate::DarwinWebViewPrivate(MobileWebViewBackend *q)
     : MobileWebViewBackendPrivate(q)
 {
-    initNativeView();
 }
 
 DarwinWebViewPrivate::~DarwinWebViewPrivate()
@@ -304,6 +307,8 @@ void DarwinWebViewPrivate::destroyNativeView()
             [uiDelegate release];
         });
     }
+
+    m_lastGeometry.reset();
 }
 
 bool DarwinWebViewPrivate::initNativeView()
@@ -371,6 +376,9 @@ bool DarwinWebViewPrivate::initNativeView()
 #endif
 
     [m_webView setHidden:YES];
+
+    m_viewStoreOffTheRecord = m_offTheRecord;
+    m_viewStoreName = m_storageName;
 
     return true;
 }
@@ -588,9 +596,16 @@ void DarwinWebViewPrivate::updateNativeGeometry(const QRectF &rect)
     CGFloat w = itemWidth;
     CGFloat h = itemHeight;
 
+    const QRect geometry(qRound(x), qRound(y), qRound(w), qRound(h));
+    if (m_lastGeometry == geometry) {
+        return;
+    }
+
     runOnMainThread(^{
         webView.frame = CGRectMake(x, y, w, h);
     });
+
+    m_lastGeometry = geometry;
 #else
     NSView *hostView = reinterpret_cast<NSView *>(m_hostView);
     if (!hostView) {
@@ -609,9 +624,16 @@ void DarwinWebViewPrivate::updateNativeGeometry(const QRectF &rect)
         y = hostHeight - scenePos.y() - itemHeight;
     }
 
+    const QRect geometry(qRound(x), qRound(y), qRound(w), qRound(h));
+    if (m_lastGeometry == geometry) {
+        return;
+    }
+
     runOnMainThread(^{
         webView.frame = NSMakeRect(x, y, w, h);
     });
+
+    m_lastGeometry = geometry;
 #endif
 }
 
@@ -626,6 +648,22 @@ void DarwinWebViewPrivate::updateNativeVisibility(bool visible)
 
     runOnMainThread(^{
         [webView setHidden:!shouldBeVisible];
+    });
+}
+
+void DarwinWebViewPrivate::detachNativeViewFromSceneImpl()
+{
+    m_lastGeometry.reset();
+    m_hostView = nullptr;
+
+    if (!m_webView) {
+        return;
+    }
+
+    WKWebView *webView = m_webView;
+    runOnMainThread(^{
+        [webView setHidden:YES];
+        [webView removeFromSuperview];
     });
 }
 
@@ -788,7 +826,9 @@ void DarwinWebViewPrivate::updateInteractionEnabled(bool enabled)
 
 void DarwinWebViewPrivate::setupNativeViewImpl()
 {
-    if (!m_webView) {
+    const bool createdNow = !m_webView;
+    if (!m_webView && !initNativeView()) {
+        qWarning() << "DarwinWebViewPrivate::setupNativeViewImpl: initNativeView failed";
         return;
     }
 
@@ -847,7 +887,16 @@ void DarwinWebViewPrivate::setupNativeViewImpl()
     const bool currentVisible = q_ptr->isVisible();
     const bool showNativeWeb = shouldShowNativeWebView(currentVisible);
 
+    DarwinWebViewPrivate *self = this;
+    QPointer<MobileWebViewBackend> guard(backend);
     dispatch_async(dispatch_get_main_queue(), ^{
+        if (!guard || !self || webView != self->m_webView) {
+            if (webView) {
+                [webView setHidden:YES];
+                [webView removeFromSuperview];
+            }
+            return;
+        }
         if (wasSetup) {
             [webView removeFromSuperview];
         }
@@ -864,6 +913,15 @@ void DarwinWebViewPrivate::setupNativeViewImpl()
         // ItemVisibleHasChanged handler will call updateNativeVisibility later.
         [webView setHidden:!showNativeWeb];
     });
+
+    if (createdNow) {
+        ensureBridgeInstalled();
+        if (m_hasLastHtml) {
+            loadHtmlImpl(m_lastHtml, m_lastHtmlBaseUrl);
+        } else if (m_url.isValid() && !m_url.isEmpty()) {
+            loadUrlImpl(m_url);
+        }
+    }
 }
 
 void DarwinWebViewPrivate::captureSnapshotImpl(quint64 requestId)

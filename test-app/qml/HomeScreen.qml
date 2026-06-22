@@ -56,45 +56,50 @@ Item {
         }
     ]
 
-    ColumnLayout {
+    ScrollView {
+        id: homeScroll
         anchors.fill: parent
         anchors.margins: Theme.spacingLg
-        spacing: Theme.spacingLg
+        clip: true
 
-        Label {
-            Layout.fillWidth: true
-            text: "MobileWebView Test Harness"
-            font.pixelSize: 24
-            font.bold: true
-            color: Theme.textPrimary
-        }
+        ColumnLayout {
+            width: homeScroll.availableWidth
+            spacing: Theme.spacingLg
 
-        Label {
-            Layout.fillWidth: true
-            text: "Pick a feature to open an isolated test screen."
-            font.pixelSize: Theme.fontMd
-            color: Theme.textSecondary
-            wrapMode: Text.WordWrap
-        }
+            Label {
+                Layout.fillWidth: true
+                text: "MobileWebView Test Harness"
+                font.pixelSize: 24
+                font.bold: true
+                color: Theme.textPrimary
+            }
 
-        GridLayout {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            columns: width > Theme.contentMaxWidth ? 3 : (width > 480 ? 2 : 1)
-            columnSpacing: Theme.spacingMd
-            rowSpacing: Theme.spacingMd
+            Label {
+                Layout.fillWidth: true
+                text: "Pick a feature to open an isolated test screen."
+                font.pixelSize: Theme.fontMd
+                color: Theme.textSecondary
+                wrapMode: Text.WordWrap
+            }
 
-            Repeater {
-                model: root.features
+            GridLayout {
+                Layout.fillWidth: true
+                columns: width > Theme.contentMaxWidth ? 3 : (width > 480 ? 2 : 1)
+                columnSpacing: Theme.spacingMd
+                rowSpacing: Theme.spacingMd
 
-                FeatureCard {
-                    Layout.fillWidth: true
-                    title: modelData.title
-                    subtitle: modelData.subtitle
-                    onClicked: {
-                        root.stackView.push(modelData.screen, {
-                            stackView: root.stackView
-                        })
+                Repeater {
+                    model: root.features
+
+                    FeatureCard {
+                        Layout.fillWidth: true
+                        title: modelData.title
+                        subtitle: modelData.subtitle
+                        onClicked: {
+                            root.stackView.push(modelData.screen, {
+                                stackView: root.stackView
+                            })
+                        }
                     }
                 }
             }

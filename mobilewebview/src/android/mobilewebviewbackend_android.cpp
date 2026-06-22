@@ -19,6 +19,7 @@
 #include <QImage>
 #include <QByteArray>
 #include <QPointer>
+#include <optional>
 
 // =============================================================================
 // AndroidWebViewPrivate - Android-specific implementation
@@ -58,6 +59,7 @@ public:
     void showFindPanelImpl() override;
     void hideFindPanelImpl() override;
     void captureSnapshotImpl(quint64 requestId) override;
+    void detachNativeViewFromSceneImpl() override;
 
     // JNI helper methods
     void cleanupJni();
@@ -107,12 +109,13 @@ private:
 
     bool m_jniInitialized = false;
     QMutex m_jniMutex;  // Protect JNI calls
+
+    std::optional<QRect> m_lastGeometry;
 };
 
 AndroidWebViewPrivate::AndroidWebViewPrivate(MobileWebViewBackend *q)
     : MobileWebViewBackendPrivate(q)
 {
-    initNativeView();
 }
 
 AndroidWebViewPrivate::~AndroidWebViewPrivate()
@@ -189,6 +192,10 @@ bool AndroidWebViewPrivate::initNativeView()
     m_captureSnapshotForFreezeMethod = env->GetMethodID(m_webViewClass, "captureSnapshotForFreeze", "(J)V");
 
     m_jniInitialized = true;
+
+    m_viewStoreOffTheRecord = m_offTheRecord;
+    m_viewStoreName = m_storageName;
+
     return true;
 }
 
@@ -293,6 +300,7 @@ void AndroidWebViewPrivate::destroyWebView()
 
     env->DeleteGlobalRef(m_webViewObject);
     m_webViewObject = nullptr;
+    m_lastGeometry.reset();
 
     clearJniExceptionIfAny(env);
 }
@@ -498,7 +506,14 @@ void AndroidWebViewPrivate::updateNativeGeometry(const QRectF &rect)
     const jint wPx = static_cast<jint>(qRound(itemWidth * dpr));
     const jint hPx = static_cast<jint>(qRound(itemHeight * dpr));
 
+    const QRect geometry(xPx, yPx, wPx, hPx);
+    if (m_lastGeometry == geometry) {
+        return;
+    }
+
     env->CallVoidMethod(m_webViewObject, m_setGeometryMethod, xPx, yPx, wPx, hPx);
+
+    m_lastGeometry = geometry;
 
     clearJniExceptionIfAny(env);
 }
@@ -520,6 +535,11 @@ void AndroidWebViewPrivate::updateNativeVisibility(bool visible)
     env->CallVoidMethod(m_webViewObject, m_setVisibleMethod, shouldBeVisible ? JNI_TRUE : JNI_FALSE);
 
     clearJniExceptionIfAny(env);
+}
+
+void AndroidWebViewPrivate::detachNativeViewFromSceneImpl()
+{
+    m_lastGeometry.reset();
 }
 
 bool AndroidWebViewPrivate::installBridgeImpl(const QString &ns, const QStringList &origins, 
@@ -656,7 +676,9 @@ void AndroidWebViewPrivate::postMessageToJavaScript(const QString &json)
 
 void AndroidWebViewPrivate::setupNativeViewImpl()
 {
-    if (!m_jniInitialized) {
+    const bool createdNow = !m_jniInitialized;
+    if (!m_jniInitialized && !initNativeView()) {
+        qWarning() << "AndroidWebViewPrivate::setupNativeViewImpl: initNativeView failed";
         return;
     }
 
@@ -666,10 +688,18 @@ void AndroidWebViewPrivate::setupNativeViewImpl()
         return;
     }
 
-    // WebView is already created in initNativeView, just mark as setup
     m_nativeViewSetup = true;
     updateNativeVisibility(q_ptr->isVisible());
     updateNativeGeometry(QRectF(0, 0, q_ptr->width(), q_ptr->height()));
+
+    if (createdNow) {
+        ensureBridgeInstalled();
+        if (m_hasLastHtml) {
+            loadHtmlImpl(m_lastHtml, m_lastHtmlBaseUrl);
+        } else if (m_url.isValid() && !m_url.isEmpty()) {
+            loadUrlImpl(m_url);
+        }
+    }
 }
 
 void AndroidWebViewPrivate::updateAllowedOriginsImpl(const QStringList &origins)

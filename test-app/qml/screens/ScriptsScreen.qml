@@ -159,7 +159,7 @@ ScreenScaffold {
                     + "Buttons below exercise the round-trip; Run isolation probe measures the split."
         }
 
-        RowLayout {
+        Flow {
             Layout.fillWidth: true
             spacing: Theme.spacingSm
 

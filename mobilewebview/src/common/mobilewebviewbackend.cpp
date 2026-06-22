@@ -70,6 +70,36 @@ MobileWebViewBackendPrivate::MobileWebViewBackendPrivate(MobileWebViewBackend *q
 
 MobileWebViewBackendPrivate::~MobileWebViewBackendPrivate()
 {
+    QObject::disconnect(m_afterAnimatingConnection);
+}
+
+void MobileWebViewBackendPrivate::syncNativeGeometryFromScene()
+{
+    if (!m_nativeViewSetup || !q_ptr->isVisible()) {
+        return;
+    }
+
+    const qreal w = q_ptr->width();
+    const qreal h = q_ptr->height();
+    if (w <= 0 || h <= 0) {
+        return;
+    }
+
+    updateNativeGeometry(QRectF(0, 0, w, h));
+}
+
+void MobileWebViewBackendPrivate::detachNativeViewFromScene()
+{
+    if (m_freezeState != FreezeState::Idle) {
+        m_freezeState = FreezeState::Idle;
+        if (m_snapshotItem) {
+            m_snapshotItem->deleteLater();
+            m_snapshotItem = nullptr;
+        }
+        restoreClipState();
+    }
+    updateNativeVisibility(false);
+    detachNativeViewFromSceneImpl();
 }
 
 void MobileWebViewBackendPrivate::setLoading(bool loading)
@@ -913,19 +943,31 @@ void MobileWebViewBackend::itemChange(ItemChange change, const ItemChangeData &v
 
     switch (change) {
     case ItemSceneChange:
+        QObject::disconnect(d->m_afterAnimatingConnection);
         if (value.window) {
             ensureSnapshotImageProviderRegistered(qmlEngine(this));
+
+            QQuickWindow *window = value.window;
+            QPointer<MobileWebViewBackend> guard(this);
+            MobileWebViewBackendPrivate *backend = d;
+            d->m_afterAnimatingConnection = QObject::connect(
+                window,
+                &QQuickWindow::afterAnimating,
+                this,
+                [guard, backend]() {
+                    if (!guard) {
+                        return;
+                    }
+                    backend->syncNativeGeometryFromScene();
+                });
+
             QMetaObject::invokeMethod(this, [this, d]() {
                 d->setupNativeViewImpl();
-                // The native view was created in the platform ctor with the default
-                // store; if storageName/offTheRecord were set before scene attachment
-                // (the usual QML binding path), rebind it to the requested store now.
-                if (!d->nativeViewStoreMatches()) {
-                    d->recreateNativeViewForStore();
-                }
                 // Trigger geometry sync now that m_nativeViewSetup is true.
                 polish();
             }, Qt::QueuedConnection);
+        } else {
+            d->detachNativeViewFromScene();
         }
         break;
 

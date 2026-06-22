@@ -17,6 +17,7 @@ Item {
     property bool freeze: false
     property int webViewHeight: 420
     property bool contentFillsViewport: false
+    readonly property int webViewMinimumHeight: root.hasWebView ? Math.min(root.webViewHeight, 160) : 0
 
     property var externalWebView: null
     readonly property var webView: externalWebView
@@ -32,6 +33,8 @@ Item {
     signal statusMessage(string message)
 
     function teardown() {
+        if (webLoader.item && webLoader.item.webView)
+            webLoader.item.webView.visible = false
         webLoader.active = false
     }
 
@@ -152,7 +155,9 @@ Item {
             Layout.fillWidth: true
             height: 3
             color: Theme.borderStrong
-            visible: root.webView && (root.webView.loading || (root.webView.loadProgress > 0 && root.webView.loadProgress < 100))
+            // Always reserve 3px so toggling load progress never shifts the
+            // content/native WebView geometry; just fade the strip instead.
+            opacity: (root.webView && (root.webView.loading || (root.webView.loadProgress > 0 && root.webView.loadProgress < 100))) ? 1 : 0
 
             Rectangle {
                 width: parent.width * (root.webView ? Math.max(0, Math.min(root.webView.loadProgress, 100)) / 100 : 0)
@@ -172,10 +177,18 @@ Item {
                 Flickable {
                     id: contentFlickable
                     Layout.fillWidth: true
-                    Layout.fillHeight: true
+                    // When a WebView is present, the content area only takes the
+                    // space its controls need and the WebView fills the rest.
+                    // Without a WebView (e.g. multi-pane screens) it fills.
+                    Layout.fillHeight: !root.hasWebView
+                    Layout.preferredHeight: root.hasWebView
+                        ? Math.min(contentColumn.implicitHeight,
+                                   Math.max(0, parent.height - root.webViewMinimumHeight))
+                        : -1
                     contentWidth: width
                     contentHeight: contentColumn.implicitHeight
                     clip: true
+                    interactive: contentHeight > height
 
                     Column {
                         id: contentColumn
@@ -200,6 +213,8 @@ Item {
                 Loader {
                     id: webLoader
                     Layout.fillWidth: true
+                    Layout.fillHeight: root.hasWebView
+                    Layout.minimumHeight: root.webViewMinimumHeight
                     Layout.preferredHeight: root.hasWebView ? root.webViewHeight : 0
                     active: root.hasWebView
                     sourceComponent: WebViewHost {
