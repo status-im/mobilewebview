@@ -7,6 +7,7 @@
 #include <QRectF>
 #include <QImage>
 #include <QSize>
+#include <QMetaObject>
 #include <functional>
 
 class MobileWebViewBackend;
@@ -29,6 +30,7 @@ public:
     
     // Platform-specific virtual methods (pure virtual)
     virtual bool initNativeView() = 0;
+    virtual void destroyNativeView() = 0;
     virtual void loadUrlImpl(const QUrl &url) = 0;
     virtual void loadHtmlImpl(const QString &html, const QUrl &baseUrl) = 0;
     virtual void goBackImpl() = 0;
@@ -71,6 +73,15 @@ public:
         return qmlItemVisible && m_nativeViewSetup && m_freezeState != FreezeState::Frozen;
     }
 
+    /// Whether the live native view's data store matches the requested store.
+    bool nativeViewStoreMatches() const
+    {
+        if (m_viewStoreOffTheRecord != m_offTheRecord)
+            return false;
+        // storageName is irrelevant for incognito (always a fresh ephemeral store).
+        return m_offTheRecord || m_viewStoreName == m_storageName;
+    }
+
     // Common state shared between platforms
     MobileWebViewBackend *q_ptr;
     bool m_loading = false;
@@ -78,6 +89,16 @@ public:
     bool m_nativeViewSetup = false;
     bool m_bridgeInstalled = false;
     bool m_interactionEnabled = true;
+    bool m_offTheRecord = false;
+    QString m_storageName;
+    // Store parameters the live native view was actually built with.
+    bool m_viewStoreOffTheRecord = false;
+    QString m_viewStoreName;
+    // Last content loaded, replayed verbatim after an internal store recreate so
+    // loadHtml() content survives teardown+rebuild (ADR 0001), not just URL loads.
+    bool m_hasLastHtml = false;
+    QString m_lastHtml;
+    QUrl m_lastHtmlBaseUrl;
     QUrl m_url;
     QString m_title;
     bool m_canGoBack = false;
@@ -122,6 +143,18 @@ public:
     void appendAllowedOrigin(const QString &origin);
     void ensureBridgeInstalled();
     void setupTransport();
+    void recreateNativeViewForStore();
+
+    /// Re-sync native overlay position from mapToScene (e.g. after StackView slide).
+    void syncNativeGeometryFromScene();
+
+    /// Hide and detach the native view when the QML item leaves the scene (e.g. StackView pop).
+    void detachNativeViewFromScene();
+
+    /// Platform hook: remove native view from the window hierarchy (Darwin: removeFromSuperview).
+    virtual void detachNativeViewFromSceneImpl() {}
+
+    QMetaObject::Connection m_afterAnimatingConnection;
 };
 
 // Factory function for creating platform-specific implementation

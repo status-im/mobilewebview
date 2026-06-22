@@ -1,0 +1,109 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Storage profile test</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 24px 16px 16px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f6f7fb;
+      color: #141414;
+    }
+    .card {
+      max-width: 720px;
+      margin: 0 auto 12px;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+      padding: 16px;
+    }
+    h2 { margin: 0 0 4px; font-size: 18px; }
+    h3 { margin: 0 0 8px; font-size: 14px; color: #5f6368; }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 6px 0;
+      border-bottom: 1px solid #eef0f4;
+    }
+    .row:last-child { border-bottom: none; }
+    .key { color: #5f6368; word-break: break-all; }
+    .value { font-weight: 600; word-break: break-all; text-align: right; }
+    .empty { color: #9aa0a6; font-style: italic; }
+    code { background: #f0f2f8; border-radius: 4px; padding: 2px 4px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Storage profile test page</h2>
+    <p>Origin: <code id="origin">-</code>. Live view, refreshes automatically.</p>
+  </div>
+
+  <div class="card">
+    <h3>localStorage</h3>
+    <div id="lsList"></div>
+  </div>
+
+  <div class="card">
+    <h3>cookies</h3>
+    <div id="cookieList"></div>
+  </div>
+
+  <script>
+    function renderEntries(container, entries) {
+      container.textContent = "";
+      if (entries.length === 0) {
+        var empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "(empty)";
+        container.appendChild(empty);
+        return;
+      }
+      entries.forEach(function(entry) {
+        var row = document.createElement("div");
+        row.className = "row";
+        var key = document.createElement("span");
+        key.className = "key";
+        key.textContent = entry[0];
+        var value = document.createElement("span");
+        value.className = "value";
+        value.textContent = entry[1];
+        row.appendChild(key);
+        row.appendChild(value);
+        container.appendChild(row);
+      });
+    }
+
+    function readLocalStorage() {
+      var out = [];
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        out.push([k, localStorage.getItem(k)]);
+      }
+      return out;
+    }
+
+    function readCookies() {
+      if (!document.cookie) return [];
+      return document.cookie.split("; ").map(function(part) {
+        var idx = part.indexOf("=");
+        return idx === -1 ? [part, ""] : [part.substring(0, idx), part.substring(idx + 1)];
+      });
+    }
+
+    function updateDisplay() {
+      document.getElementById("origin").textContent = location.origin || location.href;
+      renderEntries(document.getElementById("lsList"), readLocalStorage());
+      renderEntries(document.getElementById("cookieList"), readCookies());
+    }
+
+    updateDisplay();
+    // Self-refresh: QML probes run in an isolated content world and cannot call
+    // page-world functions, so we poll the shared per-origin storage instead.
+    setInterval(updateDisplay, 500);
+  </script>
+</body>
+</html>

@@ -70,6 +70,36 @@ MobileWebViewBackendPrivate::MobileWebViewBackendPrivate(MobileWebViewBackend *q
 
 MobileWebViewBackendPrivate::~MobileWebViewBackendPrivate()
 {
+    QObject::disconnect(m_afterAnimatingConnection);
+}
+
+void MobileWebViewBackendPrivate::syncNativeGeometryFromScene()
+{
+    if (!m_nativeViewSetup || !q_ptr->isVisible()) {
+        return;
+    }
+
+    const qreal w = q_ptr->width();
+    const qreal h = q_ptr->height();
+    if (w <= 0 || h <= 0) {
+        return;
+    }
+
+    updateNativeGeometry(QRectF(0, 0, w, h));
+}
+
+void MobileWebViewBackendPrivate::detachNativeViewFromScene()
+{
+    if (m_freezeState != FreezeState::Idle) {
+        m_freezeState = FreezeState::Idle;
+        if (m_snapshotItem) {
+            m_snapshotItem->deleteLater();
+            m_snapshotItem = nullptr;
+        }
+        restoreClipState();
+    }
+    updateNativeVisibility(false);
+    detachNativeViewFromSceneImpl();
 }
 
 void MobileWebViewBackendPrivate::setLoading(bool loading)
@@ -364,6 +394,37 @@ void MobileWebViewBackendPrivate::ensureBridgeInstalled()
     }
 }
 
+void MobileWebViewBackendPrivate::recreateNativeViewForStore()
+{
+    const QUrl urlToReload = m_url;
+
+    clearFreezeState();
+    m_bridgeInstalled = false;
+
+    destroyNativeView();
+    m_nativeViewSetup = false;
+
+    if (!initNativeView()) {
+        qWarning() << "MobileWebViewBackend: Failed to re-initialize native view";
+        return;
+    }
+
+    m_viewStoreOffTheRecord = m_offTheRecord;
+    m_viewStoreName = m_storageName;
+
+    setupNativeViewImpl();
+    ensureBridgeInstalled();
+
+    setLoading(true);
+    setLoaded(false);
+
+    if (m_hasLastHtml) {
+        loadHtmlImpl(m_lastHtml, m_lastHtmlBaseUrl);
+    } else if (urlToReload.isValid() && !urlToReload.isEmpty()) {
+        loadUrlImpl(urlToReload);
+    }
+}
+
 // =============================================================================
 // MobileWebViewBackend - Public API implementation
 // =============================================================================
@@ -633,6 +694,48 @@ bool MobileWebViewBackend::freeze() const
     return d->m_freezeState != MobileWebViewBackendPrivate::FreezeState::Idle;
 }
 
+bool MobileWebViewBackend::offTheRecord() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_offTheRecord;
+}
+
+void MobileWebViewBackend::setOffTheRecord(bool offTheRecord)
+{
+    Q_D(MobileWebViewBackend);
+    if (d->m_offTheRecord == offTheRecord) {
+        return;
+    }
+
+    d->m_offTheRecord = offTheRecord;
+    emit offTheRecordChanged();
+
+    if (d->m_nativeViewSetup) {
+        d->recreateNativeViewForStore();
+    }
+}
+
+QString MobileWebViewBackend::storageName() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_storageName;
+}
+
+void MobileWebViewBackend::setStorageName(const QString &storageName)
+{
+    Q_D(MobileWebViewBackend);
+    if (d->m_storageName == storageName) {
+        return;
+    }
+
+    d->m_storageName = storageName;
+    emit storageNameChanged();
+
+    if (d->m_nativeViewSetup && !d->m_offTheRecord) {
+        d->recreateNativeViewForStore();
+    }
+}
+
 void MobileWebViewBackend::setFreeze(bool freeze)
 {
     Q_D(MobileWebViewBackend);
@@ -703,6 +806,13 @@ void MobileWebViewBackend::loadUrl(const QUrl &url)
         updateAllowedOrigins({origin});
     }
 
+    d->m_hasLastHtml = false;
+    // Record the requested URL so it survives an internal store recreate (and a
+    // deferred native-view setup), matching setUrl() and loadHtml() replay semantics.
+    if (d->m_url != url) {
+        d->m_url = url;
+        emit urlChanged();
+    }
     d->ensureBridgeInstalled();
     d->loadUrlImpl(url);
 }
@@ -710,7 +820,16 @@ void MobileWebViewBackend::loadUrl(const QUrl &url)
 void MobileWebViewBackend::loadHtml(const QString &html, const QUrl &baseUrl)
 {
     Q_D(MobileWebViewBackend);
-    
+
+    const QUrl originSource = baseUrl.isValid() ? baseUrl : d->m_url;
+    QString origin = extractOrigin(originSource);
+    if (!origin.isEmpty()) {
+        updateAllowedOrigins({origin});
+    }
+
+    d->m_hasLastHtml = true;
+    d->m_lastHtml = html;
+    d->m_lastHtmlBaseUrl = baseUrl;
     d->ensureBridgeInstalled();
     d->loadHtmlImpl(html, baseUrl);
 }
@@ -830,13 +949,31 @@ void MobileWebViewBackend::itemChange(ItemChange change, const ItemChangeData &v
 
     switch (change) {
     case ItemSceneChange:
+        QObject::disconnect(d->m_afterAnimatingConnection);
         if (value.window) {
             ensureSnapshotImageProviderRegistered(qmlEngine(this));
+
+            QQuickWindow *window = value.window;
+            QPointer<MobileWebViewBackend> guard(this);
+            MobileWebViewBackendPrivate *backend = d;
+            d->m_afterAnimatingConnection = QObject::connect(
+                window,
+                &QQuickWindow::afterAnimating,
+                this,
+                [guard, backend]() {
+                    if (!guard) {
+                        return;
+                    }
+                    backend->syncNativeGeometryFromScene();
+                });
+
             QMetaObject::invokeMethod(this, [this, d]() {
                 d->setupNativeViewImpl();
                 // Trigger geometry sync now that m_nativeViewSetup is true.
                 polish();
             }, Qt::QueuedConnection);
+        } else {
+            d->detachNativeViewFromScene();
         }
         break;
 

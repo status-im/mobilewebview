@@ -1,6 +1,7 @@
 #include "MobileWebView/mobilewebviewbackend.h"
 #include "../common/mobilewebviewbackend_p.h"
 #include "../common/origin_utils.h"
+#include "../common/storage_profile_utils.h"
 #include "origin_utils.h"
 #include "navigationdelegate.h"
 #include "userscripts.h"
@@ -22,6 +23,7 @@
 #include <QPointer>
 #include <QFile>
 #include <QVariantMap>
+#include <optional>
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
 
 namespace {
@@ -212,6 +214,7 @@ public:
     
     // Platform-specific implementations
     bool initNativeView() override;
+    void destroyNativeView() override;
     void loadUrlImpl(const QUrl &url) override;
     void loadHtmlImpl(const QString &html, const QUrl &baseUrl) override;
     void goBackImpl() override;
@@ -237,6 +240,7 @@ public:
     void showFindPanelImpl() override;
     void hideFindPanelImpl() override;
     void captureSnapshotImpl(quint64 requestId) override;
+    void detachNativeViewFromSceneImpl() override;
 
 private:
     WKWebView *m_webView = nullptr;
@@ -245,15 +249,21 @@ private:
     WebViewStateObserver *m_stateObserver = nullptr;
     UserScriptsManager *m_userScriptsManager = nullptr;
     void *m_hostView = nullptr;
+
+    std::optional<QRect> m_lastGeometry;
 };
 
 DarwinWebViewPrivate::DarwinWebViewPrivate(MobileWebViewBackend *q)
     : MobileWebViewBackendPrivate(q)
 {
-    initNativeView();
 }
 
 DarwinWebViewPrivate::~DarwinWebViewPrivate()
+{
+    destroyNativeView();
+}
+
+void DarwinWebViewPrivate::destroyNativeView()
 {
     if (m_navigationDelegate) {
         m_navigationDelegate.owner = nullptr;
@@ -265,7 +275,7 @@ DarwinWebViewPrivate::~DarwinWebViewPrivate()
     if (m_webView && m_stateObserver) {
         WKWebView *webView = m_webView;
         WebViewStateObserver *observer = m_stateObserver;
-        dispatch_async(dispatch_get_main_queue(), ^{
+        runOnMainThread(^{
             @try { [webView removeObserver:observer forKeyPath:@"title"]; } @catch (NSException *) {}
             @try { [webView removeObserver:observer forKeyPath:@"canGoBack"]; } @catch (NSException *) {}
             @try { [webView removeObserver:observer forKeyPath:@"canGoForward"]; } @catch (NSException *) {}
@@ -287,7 +297,7 @@ DarwinWebViewPrivate::~DarwinWebViewPrivate()
         m_navigationDelegate = nullptr;
         m_uiDelegate = nullptr;
 
-        dispatch_async(dispatch_get_main_queue(), ^{
+        runOnMainThread(^{
             [webView stopLoading];
             [webView removeFromSuperview];
             webView.navigationDelegate = nil;
@@ -297,6 +307,8 @@ DarwinWebViewPrivate::~DarwinWebViewPrivate()
             [uiDelegate release];
         });
     }
+
+    m_lastGeometry.reset();
 }
 
 bool DarwinWebViewPrivate::initNativeView()
@@ -309,6 +321,22 @@ bool DarwinWebViewPrivate::initNativeView()
 #ifdef QT_DEBUG
     [config.preferences setValue:@YES forKey:@"developerExtrasEnabled"];
 #endif
+
+    if (m_offTheRecord) {
+        config.websiteDataStore = [WKWebsiteDataStore nonPersistentDataStore];
+    } else if (m_storageName.isEmpty()) {
+        config.websiteDataStore = [WKWebsiteDataStore defaultDataStore];
+    } else {
+        const QUuid profileId = storageProfileIdentifier(m_storageName);
+        const QString uuidStr = profileId.toString(QUuid::WithoutBraces);
+        NSUUID *storeUuid = [[NSUUID alloc] initWithUUIDString:uuidStr.toNSString()];
+        if (storeUuid) {
+            config.websiteDataStore = [WKWebsiteDataStore dataStoreForIdentifier:storeUuid];
+        } else {
+            config.websiteDataStore = [WKWebsiteDataStore defaultDataStore];
+        }
+        [storeUuid release];
+    }
 
     m_webView = [[WKWebView alloc] initWithFrame:CGRectZero configuration:config];
 
@@ -348,6 +376,9 @@ bool DarwinWebViewPrivate::initNativeView()
 #endif
 
     [m_webView setHidden:YES];
+
+    m_viewStoreOffTheRecord = m_offTheRecord;
+    m_viewStoreName = m_storageName;
 
     return true;
 }
@@ -565,9 +596,16 @@ void DarwinWebViewPrivate::updateNativeGeometry(const QRectF &rect)
     CGFloat w = itemWidth;
     CGFloat h = itemHeight;
 
+    const QRect geometry(qRound(x), qRound(y), qRound(w), qRound(h));
+    if (m_lastGeometry == geometry) {
+        return;
+    }
+
     runOnMainThread(^{
         webView.frame = CGRectMake(x, y, w, h);
     });
+
+    m_lastGeometry = geometry;
 #else
     NSView *hostView = reinterpret_cast<NSView *>(m_hostView);
     if (!hostView) {
@@ -586,9 +624,16 @@ void DarwinWebViewPrivate::updateNativeGeometry(const QRectF &rect)
         y = hostHeight - scenePos.y() - itemHeight;
     }
 
+    const QRect geometry(qRound(x), qRound(y), qRound(w), qRound(h));
+    if (m_lastGeometry == geometry) {
+        return;
+    }
+
     runOnMainThread(^{
         webView.frame = NSMakeRect(x, y, w, h);
     });
+
+    m_lastGeometry = geometry;
 #endif
 }
 
@@ -603,6 +648,22 @@ void DarwinWebViewPrivate::updateNativeVisibility(bool visible)
 
     runOnMainThread(^{
         [webView setHidden:!shouldBeVisible];
+    });
+}
+
+void DarwinWebViewPrivate::detachNativeViewFromSceneImpl()
+{
+    m_lastGeometry.reset();
+    m_hostView = nullptr;
+
+    if (!m_webView) {
+        return;
+    }
+
+    WKWebView *webView = m_webView;
+    runOnMainThread(^{
+        [webView setHidden:YES];
+        [webView removeFromSuperview];
     });
 }
 
@@ -746,7 +807,18 @@ void DarwinWebViewPrivate::updateInteractionEnabled(bool enabled)
         }
 #else
         if (!enabled) {
-            [webView.window makeFirstResponder:nil];
+            // Hand first responder to the Qt content view (not nil) so that key
+            // events reach the focused QML item (e.g. an address field) on the
+            // first interaction instead of being swallowed until a second click.
+            NSWindow *window = webView.window;
+            if (window) {
+                NSView *contentView = window.contentView;
+                if (contentView && [contentView acceptsFirstResponder]) {
+                    [window makeFirstResponder:contentView];
+                } else {
+                    [window makeFirstResponder:nil];
+                }
+            }
         }
 #endif
     });
@@ -754,7 +826,9 @@ void DarwinWebViewPrivate::updateInteractionEnabled(bool enabled)
 
 void DarwinWebViewPrivate::setupNativeViewImpl()
 {
-    if (!m_webView) {
+    const bool createdNow = !m_webView;
+    if (!m_webView && !initNativeView()) {
+        qWarning() << "DarwinWebViewPrivate::setupNativeViewImpl: initNativeView failed";
         return;
     }
 
@@ -813,7 +887,16 @@ void DarwinWebViewPrivate::setupNativeViewImpl()
     const bool currentVisible = q_ptr->isVisible();
     const bool showNativeWeb = shouldShowNativeWebView(currentVisible);
 
+    DarwinWebViewPrivate *self = this;
+    QPointer<MobileWebViewBackend> guard(backend);
     dispatch_async(dispatch_get_main_queue(), ^{
+        if (!guard || !self || webView != self->m_webView) {
+            if (webView) {
+                [webView setHidden:YES];
+                [webView removeFromSuperview];
+            }
+            return;
+        }
         if (wasSetup) {
             [webView removeFromSuperview];
         }
@@ -830,6 +913,15 @@ void DarwinWebViewPrivate::setupNativeViewImpl()
         // ItemVisibleHasChanged handler will call updateNativeVisibility later.
         [webView setHidden:!showNativeWeb];
     });
+
+    if (createdNow) {
+        ensureBridgeInstalled();
+        if (m_hasLastHtml) {
+            loadHtmlImpl(m_lastHtml, m_lastHtmlBaseUrl);
+        } else if (m_url.isValid() && !m_url.isEmpty()) {
+            loadUrlImpl(m_url);
+        }
+    }
 }
 
 void DarwinWebViewPrivate::captureSnapshotImpl(quint64 requestId)

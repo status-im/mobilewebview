@@ -2,6 +2,7 @@
 #include "../common/mobilewebviewbackend_p.h"
 #include "../common/origin_utils.h"
 #include "../common/userscript_utils.h"
+#include "../common/android_js_result.h"
 
 #ifdef Q_OS_ANDROID
 
@@ -18,6 +19,7 @@
 #include <QImage>
 #include <QByteArray>
 #include <QPointer>
+#include <optional>
 
 // =============================================================================
 // AndroidWebViewPrivate - Android-specific implementation
@@ -31,6 +33,7 @@ public:
     
     // Platform-specific implementations
     bool initNativeView() override;
+    void destroyNativeView() override;
     void loadUrlImpl(const QUrl &url) override;
     void loadHtmlImpl(const QString &html, const QUrl &baseUrl) override;
     void goBackImpl() override;
@@ -56,6 +59,7 @@ public:
     void showFindPanelImpl() override;
     void hideFindPanelImpl() override;
     void captureSnapshotImpl(quint64 requestId) override;
+    void detachNativeViewFromSceneImpl() override;
 
     // JNI helper methods
     void cleanupJni();
@@ -105,17 +109,25 @@ private:
 
     bool m_jniInitialized = false;
     QMutex m_jniMutex;  // Protect JNI calls
+
+    std::optional<QRect> m_lastGeometry;
 };
 
 AndroidWebViewPrivate::AndroidWebViewPrivate(MobileWebViewBackend *q)
     : MobileWebViewBackendPrivate(q)
 {
-    initNativeView();
 }
 
 AndroidWebViewPrivate::~AndroidWebViewPrivate()
 {
     cleanupJni();
+}
+
+void AndroidWebViewPrivate::destroyNativeView()
+{
+    if (m_webViewObject) {
+        destroyWebView();
+    }
 }
 
 bool AndroidWebViewPrivate::initNativeView()
@@ -124,6 +136,15 @@ bool AndroidWebViewPrivate::initNativeView()
     if (!env.isValid()) {
         qWarning() << "AndroidWebViewPrivate: Invalid JNI environment";
         return false;
+    }
+
+    if (m_jniInitialized && m_webViewClass) {
+        m_webViewObject = createWebView();
+        if (!m_webViewObject) {
+            qWarning() << "AndroidWebViewPrivate: Failed to recreate WebView object";
+            return false;
+        }
+        return true;
     }
 
     // Load MobileWebView class
@@ -171,6 +192,10 @@ bool AndroidWebViewPrivate::initNativeView()
     m_captureSnapshotForFreezeMethod = env->GetMethodID(m_webViewClass, "captureSnapshotForFreeze", "(J)V");
 
     m_jniInitialized = true;
+
+    m_viewStoreOffTheRecord = m_offTheRecord;
+    m_viewStoreName = m_storageName;
+
     return true;
 }
 
@@ -222,7 +247,7 @@ jobject AndroidWebViewPrivate::createWebView()
 
     // Create MobileWebView instance
     jmethodID constructor = env->GetMethodID(m_webViewClass, "<init>",
-        "(Landroid/content/Context;JLandroid/view/View;)V");
+        "(Landroid/content/Context;JLandroid/view/View;Ljava/lang/String;Z)V");
     
     if (!constructor) {
         qWarning() << "AndroidWebViewPrivate: Failed to find constructor";
@@ -231,10 +256,17 @@ jobject AndroidWebViewPrivate::createWebView()
         return nullptr;
     }
 
+    const jstring jStorageName = env->NewStringUTF(m_storageName.toUtf8().constData());
+    const jboolean jOffTheRecord = m_offTheRecord ? JNI_TRUE : JNI_FALSE;
+
     jobject localObj = env->NewObject(m_webViewClass, constructor, 
                                       activity.object(), 
                                       reinterpret_cast<jlong>(this),
-                                      rootView);
+                                      rootView,
+                                      jStorageName,
+                                      jOffTheRecord);
+    
+    env->DeleteLocalRef(jStorageName);
     
     if (!localObj) {
         qWarning() << "AndroidWebViewPrivate: Failed to create MobileWebView instance";
@@ -268,6 +300,7 @@ void AndroidWebViewPrivate::destroyWebView()
 
     env->DeleteGlobalRef(m_webViewObject);
     m_webViewObject = nullptr;
+    m_lastGeometry.reset();
 
     clearJniExceptionIfAny(env);
 }
@@ -473,7 +506,14 @@ void AndroidWebViewPrivate::updateNativeGeometry(const QRectF &rect)
     const jint wPx = static_cast<jint>(qRound(itemWidth * dpr));
     const jint hPx = static_cast<jint>(qRound(itemHeight * dpr));
 
+    const QRect geometry(xPx, yPx, wPx, hPx);
+    if (m_lastGeometry == geometry) {
+        return;
+    }
+
     env->CallVoidMethod(m_webViewObject, m_setGeometryMethod, xPx, yPx, wPx, hPx);
+
+    m_lastGeometry = geometry;
 
     clearJniExceptionIfAny(env);
 }
@@ -495,6 +535,11 @@ void AndroidWebViewPrivate::updateNativeVisibility(bool visible)
     env->CallVoidMethod(m_webViewObject, m_setVisibleMethod, shouldBeVisible ? JNI_TRUE : JNI_FALSE);
 
     clearJniExceptionIfAny(env);
+}
+
+void AndroidWebViewPrivate::detachNativeViewFromSceneImpl()
+{
+    m_lastGeometry.reset();
 }
 
 bool AndroidWebViewPrivate::installBridgeImpl(const QString &ns, const QStringList &origins, 
@@ -631,7 +676,9 @@ void AndroidWebViewPrivate::postMessageToJavaScript(const QString &json)
 
 void AndroidWebViewPrivate::setupNativeViewImpl()
 {
-    if (!m_jniInitialized) {
+    const bool createdNow = !m_jniInitialized;
+    if (!m_jniInitialized && !initNativeView()) {
+        qWarning() << "AndroidWebViewPrivate::setupNativeViewImpl: initNativeView failed";
         return;
     }
 
@@ -641,10 +688,18 @@ void AndroidWebViewPrivate::setupNativeViewImpl()
         return;
     }
 
-    // WebView is already created in initNativeView, just mark as setup
     m_nativeViewSetup = true;
     updateNativeVisibility(q_ptr->isVisible());
     updateNativeGeometry(QRectF(0, 0, q_ptr->width(), q_ptr->height()));
+
+    if (createdNow) {
+        ensureBridgeInstalled();
+        if (m_hasLastHtml) {
+            loadHtmlImpl(m_lastHtml, m_lastHtmlBaseUrl);
+        } else if (m_url.isValid() && !m_url.isEmpty()) {
+            loadUrlImpl(m_url);
+        }
+    }
 }
 
 void AndroidWebViewPrivate::updateAllowedOriginsImpl(const QStringList &origins)
@@ -842,8 +897,10 @@ void AndroidWebViewPrivate::onNewWindowRequested(const QString &url, bool userIn
 void AndroidWebViewPrivate::onJavaScriptResult(const QString &result, const QString &error)
 {
     QVariant qResult;
-    if (error.isEmpty() && !result.isEmpty()) {
-        qResult = result;
+    if (error.isEmpty()) {
+        // Android's evaluateJavascript JSON-encodes every result; decode it so the
+        // javaScriptResult signal carries the same value types as the Apple backend.
+        qResult = decodeAndroidEvaluateJsResult(result);
     }
     emit q_ptr->javaScriptResult(qResult, error);
 }
