@@ -221,8 +221,13 @@ public:
     void goForwardImpl() override;
     void goBackOrForwardImpl(int offset) override;
     void reloadImpl() override;
+    void reloadAndBypassCacheImpl() override;
     void stopImpl() override;
     void clearHistoryImpl() override;
+    void clearHttpCacheImpl() override;
+    void deleteAllCookiesImpl() override;
+    void clearDomStorageImpl() override;
+    void clearDomStorageImpl(const QString &origin) override;
     void evaluateJavaScript(const QString &script) override;
     void updateNativeGeometry(const QRectF &rect) override;
     void updateNativeVisibility(bool visible) override;
@@ -487,6 +492,116 @@ void DarwinWebViewPrivate::reloadImpl()
     WKWebView *webView = m_webView;
     runOnMainThread(^{
         [webView reload];
+    });
+}
+
+void DarwinWebViewPrivate::reloadAndBypassCacheImpl()
+{
+    if (!m_webView) {
+        return;
+    }
+
+    WKWebView *webView = m_webView;
+    runOnMainThread(^{
+        [webView reloadFromOrigin];
+    });
+}
+
+void DarwinWebViewPrivate::clearHttpCacheImpl()
+{
+    if (!m_webView) {
+        return;
+    }
+
+    WKWebView *webView = m_webView;
+    runOnMainThread(^{
+        NSSet *types = [NSSet setWithObjects:
+            WKWebsiteDataTypeDiskCache,
+            WKWebsiteDataTypeMemoryCache,
+            WKWebsiteDataTypeOfflineWebApplicationCache,
+            nil];
+        [webView.configuration.websiteDataStore removeDataOfTypes:types
+                                                    modifiedSince:[NSDate distantPast]
+                                                completionHandler:^{}];
+    });
+}
+
+void DarwinWebViewPrivate::deleteAllCookiesImpl()
+{
+    if (!m_webView) {
+        return;
+    }
+
+    WKWebView *webView = m_webView;
+    runOnMainThread(^{
+        NSSet *types = [NSSet setWithObjects:WKWebsiteDataTypeCookies, nil];
+        [webView.configuration.websiteDataStore removeDataOfTypes:types
+                                                    modifiedSince:[NSDate distantPast]
+                                                completionHandler:^{}];
+    });
+}
+
+void DarwinWebViewPrivate::clearDomStorageImpl()
+{
+    if (!m_webView) {
+        return;
+    }
+
+    WKWebView *webView = m_webView;
+    runOnMainThread(^{
+        NSSet *types = [NSSet setWithObjects:
+            WKWebsiteDataTypeLocalStorage,
+            WKWebsiteDataTypeSessionStorage,
+            WKWebsiteDataTypeIndexedDBDatabases,
+            WKWebsiteDataTypeWebSQLDatabases,
+            WKWebsiteDataTypeServiceWorkerRegistrations,
+            WKWebsiteDataTypeOfflineWebApplicationCache,
+            nil];
+        [webView.configuration.websiteDataStore removeDataOfTypes:types
+                                                    modifiedSince:[NSDate distantPast]
+                                                completionHandler:^{}];
+    });
+}
+
+void DarwinWebViewPrivate::clearDomStorageImpl(const QString &origin)
+{
+    if (!m_webView) {
+        return;
+    }
+
+    const QUrl url(origin);
+    const QString host = url.host();
+    if (host.isEmpty()) {
+        qWarning() << "DarwinWebViewPrivate::clearDomStorageImpl: invalid origin, ignoring:" << origin;
+        return;
+    }
+
+    // Per-site clearing is host-granular: WKWebsiteDataRecord.displayName is the
+    // host/eTLD+1 and does not include the port (see ADR 0004).
+    WKWebView *webView = m_webView;
+    runOnMainThread(^{
+        NSSet *types = [NSSet setWithObjects:
+            WKWebsiteDataTypeLocalStorage,
+            WKWebsiteDataTypeSessionStorage,
+            WKWebsiteDataTypeIndexedDBDatabases,
+            WKWebsiteDataTypeWebSQLDatabases,
+            WKWebsiteDataTypeServiceWorkerRegistrations,
+            WKWebsiteDataTypeOfflineWebApplicationCache,
+            nil];
+        WKWebsiteDataStore *store = webView.configuration.websiteDataStore;
+        NSString *hostName = host.toNSString();
+        [store fetchDataRecordsOfTypes:types completionHandler:^(NSArray<WKWebsiteDataRecord *> *records) {
+            NSMutableArray<WKWebsiteDataRecord *> *toRemove = [NSMutableArray array];
+            for (WKWebsiteDataRecord *record in records) {
+                if (record.displayName != nil
+                    && [record.displayName rangeOfString:hostName].location != NSNotFound) {
+                    [toRemove addObject:record];
+                }
+            }
+            if (toRemove.count > 0) {
+                [store removeDataOfTypes:types forDataRecords:toRemove completionHandler:^{}];
+            }
+        }];
     });
 }
 

@@ -99,8 +99,14 @@ public slots:
     void goForward();
     void goBackOrForward(int offset);
     void reload();
+    void reloadAndBypassCache();
     void stop();
     void clearHistory();
+    void clearHttpCache();
+    void deleteAllCookies();
+    void clearDomStorage();
+    void clearDomStorage(const QString &origin);
+    void clearProfileData();
 
     // Install WebChannel bridge; must be called BEFORE loadUrl/loadHtml
     bool installMessageBridge(const QString &ns,

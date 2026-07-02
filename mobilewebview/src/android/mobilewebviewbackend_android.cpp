@@ -40,8 +40,13 @@ public:
     void goForwardImpl() override;
     void goBackOrForwardImpl(int offset) override;
     void reloadImpl() override;
+    void reloadAndBypassCacheImpl() override;
     void stopImpl() override;
     void clearHistoryImpl() override;
+    void clearHttpCacheImpl() override;
+    void deleteAllCookiesImpl() override;
+    void clearDomStorageImpl() override;
+    void clearDomStorageImpl(const QString &origin) override;
     void evaluateJavaScript(const QString &script) override;
     void updateNativeGeometry(const QRectF &rect) override;
     void updateNativeVisibility(bool visible) override;
@@ -102,6 +107,11 @@ private:
     jmethodID m_updateAllowedOriginsMethod = nullptr;
     jmethodID m_setInteractionEnabledMethod = nullptr;
     jmethodID m_clearHistoryMethod = nullptr;
+    jmethodID m_clearHttpCacheMethod = nullptr;
+    jmethodID m_deleteAllCookiesMethod = nullptr;
+    jmethodID m_clearDomStorageMethod = nullptr;
+    jmethodID m_clearDomStorageOriginMethod = nullptr;
+    jmethodID m_reloadAndBypassCacheMethod = nullptr;
     jmethodID m_setZoomFactorMethod = nullptr;
     jmethodID m_findTextMethod = nullptr;
     jmethodID m_stopFindMethod = nullptr;
@@ -186,6 +196,11 @@ bool AndroidWebViewPrivate::initNativeView()
     m_updateAllowedOriginsMethod = env->GetMethodID(m_webViewClass, "updateAllowedOrigins", "([Ljava/lang/String;)V");
     m_setInteractionEnabledMethod = env->GetMethodID(m_webViewClass, "setInteractionEnabled", "(Z)V");
     m_clearHistoryMethod = env->GetMethodID(m_webViewClass, "clearHistory", "()V");
+    m_clearHttpCacheMethod = env->GetMethodID(m_webViewClass, "clearHttpCache", "()V");
+    m_deleteAllCookiesMethod = env->GetMethodID(m_webViewClass, "deleteAllCookies", "()V");
+    m_clearDomStorageMethod = env->GetMethodID(m_webViewClass, "clearDomStorage", "()V");
+    m_clearDomStorageOriginMethod = env->GetMethodID(m_webViewClass, "clearDomStorage", "(Ljava/lang/String;)V");
+    m_reloadAndBypassCacheMethod = env->GetMethodID(m_webViewClass, "reloadAndBypassCache", "()V");
     m_setZoomFactorMethod = env->GetMethodID(m_webViewClass, "setZoomFactor", "(F)V");
     m_findTextMethod = env->GetMethodID(m_webViewClass, "findText", "(Ljava/lang/String;I)V");
     m_stopFindMethod = env->GetMethodID(m_webViewClass, "stopFind", "()V");
@@ -442,6 +457,11 @@ void AndroidWebViewPrivate::reloadImpl()
     callSimpleVoidMethod(m_reloadMethod);
 }
 
+void AndroidWebViewPrivate::reloadAndBypassCacheImpl()
+{
+    callSimpleVoidMethod(m_reloadAndBypassCacheMethod);
+}
+
 void AndroidWebViewPrivate::stopImpl()
 {
     callSimpleVoidMethod(m_stopMethod);
@@ -450,6 +470,42 @@ void AndroidWebViewPrivate::stopImpl()
 void AndroidWebViewPrivate::clearHistoryImpl()
 {
     callSimpleVoidMethod(m_clearHistoryMethod);
+}
+
+void AndroidWebViewPrivate::clearHttpCacheImpl()
+{
+    callSimpleVoidMethod(m_clearHttpCacheMethod);
+}
+
+void AndroidWebViewPrivate::deleteAllCookiesImpl()
+{
+    callSimpleVoidMethod(m_deleteAllCookiesMethod);
+}
+
+void AndroidWebViewPrivate::clearDomStorageImpl()
+{
+    callSimpleVoidMethod(m_clearDomStorageMethod);
+}
+
+void AndroidWebViewPrivate::clearDomStorageImpl(const QString &origin)
+{
+    QMutexLocker locker(&m_jniMutex);
+
+    if (!m_jniInitialized) {
+        qWarning() << "AndroidWebViewPrivate: JNI not initialized";
+        return;
+    }
+
+    QJniEnvironment env;
+    if (!env.isValid() || !m_webViewObject || !m_clearDomStorageOriginMethod) {
+        return;
+    }
+
+    jstring jOrigin = env->NewStringUTF(origin.toUtf8().constData());
+    env->CallVoidMethod(m_webViewObject, m_clearDomStorageOriginMethod, jOrigin);
+    env->DeleteLocalRef(jOrigin);
+
+    clearJniExceptionIfAny(env);
 }
 
 void AndroidWebViewPrivate::evaluateJavaScript(const QString &script)

@@ -16,11 +16,14 @@ SOURCES=(
   "$JVM_SHADOW/android/webkit/ValueCallback.java"
   "$JVM_SHADOW/android/webkit/WebView.java"
   "$JVM_SHADOW/android/webkit/CookieManager.java"
+  "$JVM_SHADOW/android/webkit/WebSettings.java"
+  "$JVM_SHADOW/android/webkit/WebStorage.java"
   "$JVM_SHADOW/androidx/webkit/WebViewFeature.java"
   "$JVM_SHADOW/androidx/webkit/WebViewCompat.java"
   "$JVM_SHADOW/androidx/webkit/Profile.java"
   "$JVM_SHADOW/androidx/webkit/ProfileStore.java"
   "$ANDROID_SRC/WebViewProfileManager.java"
+  "$ANDROID_SRC/DataClearManager.java"
   "$ANDROID_SRC/OriginUtils.java"
   "$ANDROID_SRC/BridgeScriptBuilder.java"
   "$ANDROID_SRC/PendingActionQueue.java"
@@ -37,6 +40,7 @@ SOURCES=(
   "$ANDROID_TEST/FakeBridgeInjectorHost.java"
   "$ANDROID_TEST/BridgeScriptInjectorTest.java"
   "$ANDROID_TEST/WebViewProfileManagerTest.java"
+  "$ANDROID_TEST/DataClearManagerTest.java"
 )
 
 echo "Compiling Java tests..."
@@ -49,6 +53,7 @@ TESTS=(
   org.mobilewebview.WebViewUrlPolicyTest
   org.mobilewebview.BridgeScriptInjectorTest
   org.mobilewebview.WebViewProfileManagerTest
+  org.mobilewebview.DataClearManagerTest
 )
 
 for test in "${TESTS[@]}"; do
