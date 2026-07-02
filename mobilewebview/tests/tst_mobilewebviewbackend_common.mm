@@ -57,8 +57,17 @@ public:
         lastGoBackOrForwardOffset = offset;
     }
     void reloadImpl() override { ++reloadCalls; }
+    void reloadAndBypassCacheImpl() override { ++reloadAndBypassCacheCalls; }
     void stopImpl() override { ++stopCalls; }
     void clearHistoryImpl() override { ++clearHistoryCalls; }
+    void clearHttpCacheImpl() override { ++clearHttpCacheCalls; }
+    void deleteAllCookiesImpl() override { ++deleteAllCookiesCalls; }
+    void clearDomStorageImpl() override { ++clearDomStorageCalls; }
+    void clearDomStorageImpl(const QString &origin) override
+    {
+        ++clearDomStoragePerSiteCalls;
+        lastDomStorageOrigin = origin;
+    }
 
     void evaluateJavaScript(const QString &script) override
     {
@@ -128,8 +137,13 @@ public:
     int goForwardCalls = 0;
     int goBackOrForwardCalls = 0;
     int reloadCalls = 0;
+    int reloadAndBypassCacheCalls = 0;
     int stopCalls = 0;
     int clearHistoryCalls = 0;
+    int clearHttpCacheCalls = 0;
+    int deleteAllCookiesCalls = 0;
+    int clearDomStorageCalls = 0;
+    int clearDomStoragePerSiteCalls = 0;
     int evaluateCalls = 0;
     int updateGeometryCalls = 0;
     int updateVisibilityCalls = 0;
@@ -147,6 +161,7 @@ public:
     int lastGoBackOrForwardOffset = 0;
     QString lastHtml;
     QString lastScript;
+    QString lastDomStorageOrigin;
     QString lastBridgeNs;
     QString lastBridgeInvokeKey;
     QString lastBridgeScriptPath;
@@ -245,6 +260,20 @@ void MobileWebViewBackendCommonTest::forwardsCallsAndStateChanges()
     QCOMPARE(d->reloadCalls, 1);
     QCOMPARE(d->stopCalls, 1);
     QCOMPARE(d->clearHistoryCalls, 1);
+
+    d->m_nativeViewSetup = true;
+    backend.clearHttpCache();
+    backend.deleteAllCookies();
+    backend.clearDomStorage();
+    backend.clearDomStorage(QStringLiteral("https://example.com"));
+    backend.clearProfileData();
+    backend.reloadAndBypassCache();
+    QCOMPARE(d->clearHttpCacheCalls, 2); // once + clearProfileData
+    QCOMPARE(d->deleteAllCookiesCalls, 2); // once + clearProfileData
+    QCOMPARE(d->clearDomStorageCalls, 2); // once + clearProfileData
+    QCOMPARE(d->clearDomStoragePerSiteCalls, 1);
+    QCOMPARE(d->lastDomStorageOrigin, QStringLiteral("https://example.com"));
+    QCOMPARE(d->reloadAndBypassCacheCalls, 1);
 
     QVariantList historyItems{
         QVariantMap{

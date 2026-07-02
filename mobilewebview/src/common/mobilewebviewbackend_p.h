@@ -37,8 +37,13 @@ public:
     virtual void goForwardImpl() = 0;
     virtual void goBackOrForwardImpl(int offset) = 0;
     virtual void reloadImpl() = 0;
+    virtual void reloadAndBypassCacheImpl() = 0;
     virtual void stopImpl() = 0;
     virtual void clearHistoryImpl() = 0;
+    virtual void clearHttpCacheImpl() = 0;
+    virtual void deleteAllCookiesImpl() = 0;
+    virtual void clearDomStorageImpl() = 0;
+    virtual void clearDomStorageImpl(const QString &origin) = 0;
     virtual void evaluateJavaScript(const QString &script) = 0;
     virtual void updateNativeGeometry(const QRectF &rect) = 0;
     virtual void updateNativeVisibility(bool visible) = 0;

@@ -870,6 +870,68 @@ void MobileWebViewBackend::clearHistory()
     d->clearHistoryImpl();
 }
 
+void MobileWebViewBackend::clearHttpCache()
+{
+    Q_D(MobileWebViewBackend);
+    if (!d->m_nativeViewSetup) {
+        qWarning() << "MobileWebViewBackend::clearHttpCache: no native view set up; ignoring";
+        return;
+    }
+    d->clearHttpCacheImpl();
+}
+
+void MobileWebViewBackend::deleteAllCookies()
+{
+    Q_D(MobileWebViewBackend);
+    if (!d->m_nativeViewSetup) {
+        qWarning() << "MobileWebViewBackend::deleteAllCookies: no native view set up; ignoring";
+        return;
+    }
+    d->deleteAllCookiesImpl();
+}
+
+void MobileWebViewBackend::clearDomStorage()
+{
+    Q_D(MobileWebViewBackend);
+    if (!d->m_nativeViewSetup) {
+        qWarning() << "MobileWebViewBackend::clearDomStorage: no native view set up; ignoring";
+        return;
+    }
+    d->clearDomStorageImpl();
+}
+
+void MobileWebViewBackend::clearDomStorage(const QString &origin)
+{
+    Q_D(MobileWebViewBackend);
+    if (!d->m_nativeViewSetup) {
+        qWarning() << "MobileWebViewBackend::clearDomStorage(origin): no native view set up; ignoring";
+        return;
+    }
+    d->clearDomStorageImpl(origin);
+}
+
+void MobileWebViewBackend::clearProfileData()
+{
+    Q_D(MobileWebViewBackend);
+    if (!d->m_nativeViewSetup) {
+        qWarning() << "MobileWebViewBackend::clearProfileData: no native view set up; ignoring";
+        return;
+    }
+    d->clearHttpCacheImpl();
+    d->deleteAllCookiesImpl();
+    d->clearDomStorageImpl();
+}
+
+void MobileWebViewBackend::reloadAndBypassCache()
+{
+    Q_D(MobileWebViewBackend);
+    if (!d->m_nativeViewSetup) {
+        qWarning() << "MobileWebViewBackend::reloadAndBypassCache: no native view set up; ignoring";
+        return;
+    }
+    d->reloadAndBypassCacheImpl();
+}
+
 bool MobileWebViewBackend::installMessageBridge(const QString &ns,
                                                  const QStringList &allowedOrigins,
                                                  const QString &invokeKey,

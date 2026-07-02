@@ -125,6 +125,28 @@ if(APPLE)
     )
     add_test(NAME tst_storage_profiles COMMAND tst_storage_profiles)
 
+    add_executable(tst_data_clearing
+        tst_data_clearing.mm
+    )
+    target_include_directories(tst_data_clearing PRIVATE
+        ../include
+        ../src/common
+        ../src/darwin
+    )
+    target_link_libraries(tst_data_clearing PRIVATE
+        MobileWebView
+        Qt::Core
+        Qt::Gui
+        Qt::Qml
+        Qt::Quick
+        Qt::WebChannel
+        Qt::Test
+        Qt::Network
+        "-framework Foundation"
+        "-framework WebKit"
+    )
+    add_test(NAME tst_data_clearing COMMAND tst_data_clearing)
+
     add_executable(tst_world_isolation
         tst_world_isolation.mm
     )

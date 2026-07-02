@@ -15,6 +15,7 @@ Cross-platform native WebView component for Qt/QML applications with WebChannel 
 - User scripts injection
 - Origin-based security for message passing
 - Seamless integration with Qt Quick
+- Profile data clearing (`clearHttpCache`, `deleteAllCookies`, `clearDomStorage`, `clearProfileData`) and force reload (`reloadAndBypassCache`); per-site DOM storage via `clearDomStorage(origin)` is host-granular (see ADR 0004)
 
 ## Usage
 

@@ -66,6 +66,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     }
 
     private final WebViewProfileManager mProfileManager = new WebViewProfileManager();
+    private final DataClearManager mDataClearManager = new DataClearManager();
     private String mStorageName = "";
     private boolean mOffTheRecord = false;
     private String mActiveProfileName = null;
@@ -325,6 +326,35 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
             if (mWebView != null) {
                 mWebView.clearHistory();
                 notifyHistoryState(mWebView);
+            }
+        });
+    }
+
+    public void clearHttpCache() {
+        runOnMainThread(() -> {
+            if (mWebView != null) {
+                mDataClearManager.clearHttpCache(mWebView);
+            }
+        });
+    }
+
+    public void deleteAllCookies() {
+        runOnMainThread(() -> mDataClearManager.deleteAllCookies());
+    }
+
+    public void clearDomStorage() {
+        runOnMainThread(() -> mDataClearManager.clearDomStorage());
+    }
+
+    public void clearDomStorage(String origin) {
+        runOnMainThread(() -> mDataClearManager.clearDomStorage(origin));
+    }
+
+    public void reloadAndBypassCache() {
+        runOnMainThread(() -> {
+            if (mWebView != null) {
+                mBridgeInjector.markForceReinject();
+                mDataClearManager.reloadAndBypassCache(mWebView);
             }
         });
     }
@@ -631,6 +661,9 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
 
     @Override
     public void onNavigationFinished(String url) {
+        if (mWebView != null) {
+            mDataClearManager.onPageFinished(mWebView);
+        }
         mProfileManager.flushCookiesIfPersistent(mOffTheRecord);
         withNativePtr(ptr -> nativeOnNavigationFinished(ptr, url));
     }
