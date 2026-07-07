@@ -77,9 +77,13 @@ Semantics:
   **best-effort at host level** (sibling schemes / subdomains may clear together).
 - **Visited links dropped** as a desktop-only capability with no mobile public API.
   Navigation history is unaffected and remains covered by `clearHistory()`.
-- **Fire-and-forget, `void`, no completion signal** — matching WebEngine's
-  `clearHttpCache()`. (The natives are async; we do not surface correlation. Can be
-  added later if a real need appears.)
+- **Completion signals + busy property.** Each clear method is still `void` and
+  fire-and-forget from the caller's perspective, but the backend exposes parameterless
+  completion signals (`clearHttpCacheCompleted`, `deleteAllCookiesCompleted`,
+  `clearDomStorageCompleted`, `clearProfileDataCompleted`) and a read-only `clearing`
+  property so hosts can block UI and reload when a clear finishes (desktop 2.36 parity).
+  Apple invokes completions from native `completionHandler:` callbacks; Android invokes
+  them immediately after the synchronous JNI calls (best-effort).
 - **Profile-shared side effect.** Data lives in the Storage Profile (`storageName`,
   ADR 0001); clearing via one backend affects **every** view sharing that profile, and
   in incognito operates on the ephemeral store. This matches WebEngine (clear is a

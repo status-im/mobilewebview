@@ -60,13 +60,34 @@ public:
     void reloadAndBypassCacheImpl() override { ++reloadAndBypassCacheCalls; }
     void stopImpl() override { ++stopCalls; }
     void clearHistoryImpl() override { ++clearHistoryCalls; }
-    void clearHttpCacheImpl() override { ++clearHttpCacheCalls; }
-    void deleteAllCookiesImpl() override { ++deleteAllCookiesCalls; }
-    void clearDomStorageImpl() override { ++clearDomStorageCalls; }
-    void clearDomStorageImpl(const QString &origin) override
+    void clearHttpCacheImpl(std::function<void()> completion) override
+    {
+        ++clearHttpCacheCalls;
+        if (completion) {
+            completion();
+        }
+    }
+    void deleteAllCookiesImpl(std::function<void()> completion) override
+    {
+        ++deleteAllCookiesCalls;
+        if (completion) {
+            completion();
+        }
+    }
+    void clearDomStorageImpl(std::function<void()> completion) override
+    {
+        ++clearDomStorageCalls;
+        if (completion) {
+            completion();
+        }
+    }
+    void clearDomStorageImpl(const QString &origin, std::function<void()> completion) override
     {
         ++clearDomStoragePerSiteCalls;
         lastDomStorageOrigin = origin;
+        if (completion) {
+            completion();
+        }
     }
 
     void evaluateJavaScript(const QString &script) override
@@ -262,11 +283,32 @@ void MobileWebViewBackendCommonTest::forwardsCallsAndStateChanges()
     QCOMPARE(d->clearHistoryCalls, 1);
 
     d->m_nativeViewSetup = true;
+    QSignalSpy clearingSpy(&backend, &MobileWebViewBackend::clearingChanged);
+    QSignalSpy clearHttpCacheCompletedSpy(&backend, &MobileWebViewBackend::clearHttpCacheCompleted);
+    QSignalSpy deleteAllCookiesCompletedSpy(&backend, &MobileWebViewBackend::deleteAllCookiesCompleted);
+    QSignalSpy clearDomStorageCompletedSpy(&backend, &MobileWebViewBackend::clearDomStorageCompleted);
+    QSignalSpy clearProfileDataCompletedSpy(&backend, &MobileWebViewBackend::clearProfileDataCompleted);
+
     backend.clearHttpCache();
+    QCOMPARE(clearHttpCacheCompletedSpy.count(), 1);
+    QCOMPARE(backend.clearing(), false);
+
     backend.deleteAllCookies();
+    QCOMPARE(deleteAllCookiesCompletedSpy.count(), 1);
+    QCOMPARE(backend.clearing(), false);
+
     backend.clearDomStorage();
+    QCOMPARE(clearDomStorageCompletedSpy.count(), 1);
+    QCOMPARE(backend.clearing(), false);
+
     backend.clearDomStorage(QStringLiteral("https://example.com"));
+    QCOMPARE(clearDomStorageCompletedSpy.count(), 2);
+    QCOMPARE(backend.clearing(), false);
+
     backend.clearProfileData();
+    QCOMPARE(clearProfileDataCompletedSpy.count(), 1);
+    QCOMPARE(backend.clearing(), false);
+
     backend.reloadAndBypassCache();
     QCOMPARE(d->clearHttpCacheCalls, 2); // once + clearProfileData
     QCOMPARE(d->deleteAllCookiesCalls, 2); // once + clearProfileData

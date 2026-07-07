@@ -18,6 +18,7 @@
 #include <QtMath>
 #include <QQuickView>
 #include <QQuickWindow>
+#include <memory>
 #include <mutex>
 
 namespace {
@@ -425,6 +426,20 @@ void MobileWebViewBackendPrivate::recreateNativeViewForStore()
     }
 }
 
+void MobileWebViewBackendPrivate::beginClear()
+{
+    if (m_pendingClears++ == 0) {
+        emit q_ptr->clearingChanged();
+    }
+}
+
+void MobileWebViewBackendPrivate::endClear()
+{
+    if (m_pendingClears > 0 && --m_pendingClears == 0) {
+        emit q_ptr->clearingChanged();
+    }
+}
+
 // =============================================================================
 // MobileWebViewBackend - Public API implementation
 // =============================================================================
@@ -736,6 +751,12 @@ void MobileWebViewBackend::setStorageName(const QString &storageName)
     }
 }
 
+bool MobileWebViewBackend::clearing() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_pendingClears > 0;
+}
+
 void MobileWebViewBackend::setFreeze(bool freeze)
 {
     Q_D(MobileWebViewBackend);
@@ -875,9 +896,20 @@ void MobileWebViewBackend::clearHttpCache()
     Q_D(MobileWebViewBackend);
     if (!d->m_nativeViewSetup) {
         qWarning() << "MobileWebViewBackend::clearHttpCache: no native view set up; ignoring";
+        QMetaObject::invokeMethod(this, [this]() { emit clearHttpCacheCompleted(); },
+                                Qt::QueuedConnection);
         return;
     }
-    d->clearHttpCacheImpl();
+
+    QPointer<MobileWebViewBackend> guard(this);
+    d->beginClear();
+    d->clearHttpCacheImpl([guard, d]() {
+        if (!guard) {
+            return;
+        }
+        emit guard->clearHttpCacheCompleted();
+        d->endClear();
+    });
 }
 
 void MobileWebViewBackend::deleteAllCookies()
@@ -885,9 +917,20 @@ void MobileWebViewBackend::deleteAllCookies()
     Q_D(MobileWebViewBackend);
     if (!d->m_nativeViewSetup) {
         qWarning() << "MobileWebViewBackend::deleteAllCookies: no native view set up; ignoring";
+        QMetaObject::invokeMethod(this, [this]() { emit deleteAllCookiesCompleted(); },
+                                Qt::QueuedConnection);
         return;
     }
-    d->deleteAllCookiesImpl();
+
+    QPointer<MobileWebViewBackend> guard(this);
+    d->beginClear();
+    d->deleteAllCookiesImpl([guard, d]() {
+        if (!guard) {
+            return;
+        }
+        emit guard->deleteAllCookiesCompleted();
+        d->endClear();
+    });
 }
 
 void MobileWebViewBackend::clearDomStorage()
@@ -895,9 +938,20 @@ void MobileWebViewBackend::clearDomStorage()
     Q_D(MobileWebViewBackend);
     if (!d->m_nativeViewSetup) {
         qWarning() << "MobileWebViewBackend::clearDomStorage: no native view set up; ignoring";
+        QMetaObject::invokeMethod(this, [this]() { emit clearDomStorageCompleted(); },
+                                Qt::QueuedConnection);
         return;
     }
-    d->clearDomStorageImpl();
+
+    QPointer<MobileWebViewBackend> guard(this);
+    d->beginClear();
+    d->clearDomStorageImpl([guard, d]() {
+        if (!guard) {
+            return;
+        }
+        emit guard->clearDomStorageCompleted();
+        d->endClear();
+    });
 }
 
 void MobileWebViewBackend::clearDomStorage(const QString &origin)
@@ -905,9 +959,20 @@ void MobileWebViewBackend::clearDomStorage(const QString &origin)
     Q_D(MobileWebViewBackend);
     if (!d->m_nativeViewSetup) {
         qWarning() << "MobileWebViewBackend::clearDomStorage(origin): no native view set up; ignoring";
+        QMetaObject::invokeMethod(this, [this]() { emit clearDomStorageCompleted(); },
+                                Qt::QueuedConnection);
         return;
     }
-    d->clearDomStorageImpl(origin);
+
+    QPointer<MobileWebViewBackend> guard(this);
+    d->beginClear();
+    d->clearDomStorageImpl(origin, [guard, d]() {
+        if (!guard) {
+            return;
+        }
+        emit guard->clearDomStorageCompleted();
+        d->endClear();
+    });
 }
 
 void MobileWebViewBackend::clearProfileData()
@@ -915,11 +980,30 @@ void MobileWebViewBackend::clearProfileData()
     Q_D(MobileWebViewBackend);
     if (!d->m_nativeViewSetup) {
         qWarning() << "MobileWebViewBackend::clearProfileData: no native view set up; ignoring";
+        QMetaObject::invokeMethod(this, [this]() { emit clearProfileDataCompleted(); },
+                                Qt::QueuedConnection);
         return;
     }
-    d->clearHttpCacheImpl();
-    d->deleteAllCookiesImpl();
-    d->clearDomStorageImpl();
+
+    QPointer<MobileWebViewBackend> guard(this);
+    auto remaining = std::make_shared<int>(3);
+
+    const auto subCompletion = [guard, d, remaining]() {
+        if (!guard) {
+            return;
+        }
+        d->endClear();
+        if (--(*remaining) == 0) {
+            emit guard->clearProfileDataCompleted();
+        }
+    };
+
+    d->beginClear();
+    d->beginClear();
+    d->beginClear();
+    d->clearHttpCacheImpl(subCompletion);
+    d->deleteAllCookiesImpl(subCompletion);
+    d->clearDomStorageImpl(subCompletion);
 }
 
 void MobileWebViewBackend::reloadAndBypassCache()

@@ -24,9 +24,24 @@
 #include <QFile>
 #include <QVariantMap>
 #include <optional>
+#include <functional>
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
 
 namespace {
+
+void invokeClearCompletion(MobileWebViewBackend *backend, std::function<void()> completion)
+{
+    if (!completion) {
+        return;
+    }
+
+    QPointer<MobileWebViewBackend> guard(backend);
+    QMetaObject::invokeMethod(backend, [guard, completion = std::move(completion)]() mutable {
+        if (guard) {
+            completion();
+        }
+    }, Qt::QueuedConnection);
+}
 
 static QImage qImageFromCGImage(CGImageRef cg)
 {
@@ -224,10 +239,10 @@ public:
     void reloadAndBypassCacheImpl() override;
     void stopImpl() override;
     void clearHistoryImpl() override;
-    void clearHttpCacheImpl() override;
-    void deleteAllCookiesImpl() override;
-    void clearDomStorageImpl() override;
-    void clearDomStorageImpl(const QString &origin) override;
+    void clearHttpCacheImpl(std::function<void()> completion) override;
+    void deleteAllCookiesImpl(std::function<void()> completion) override;
+    void clearDomStorageImpl(std::function<void()> completion) override;
+    void clearDomStorageImpl(const QString &origin, std::function<void()> completion) override;
     void evaluateJavaScript(const QString &script) override;
     void updateNativeGeometry(const QRectF &rect) override;
     void updateNativeVisibility(bool visible) override;
@@ -507,13 +522,15 @@ void DarwinWebViewPrivate::reloadAndBypassCacheImpl()
     });
 }
 
-void DarwinWebViewPrivate::clearHttpCacheImpl()
+void DarwinWebViewPrivate::clearHttpCacheImpl(std::function<void()> completion)
 {
     if (!m_webView) {
+        invokeClearCompletion(q_ptr, std::move(completion));
         return;
     }
 
     WKWebView *webView = m_webView;
+    MobileWebViewBackend *backend = q_ptr;
     runOnMainThread(^{
         NSSet *types = [NSSet setWithObjects:
             WKWebsiteDataTypeDiskCache,
@@ -522,32 +539,40 @@ void DarwinWebViewPrivate::clearHttpCacheImpl()
             nil];
         [webView.configuration.websiteDataStore removeDataOfTypes:types
                                                     modifiedSince:[NSDate distantPast]
-                                                completionHandler:^{}];
+                                                completionHandler:^{
+            invokeClearCompletion(backend, std::move(completion));
+        }];
     });
 }
 
-void DarwinWebViewPrivate::deleteAllCookiesImpl()
+void DarwinWebViewPrivate::deleteAllCookiesImpl(std::function<void()> completion)
 {
     if (!m_webView) {
+        invokeClearCompletion(q_ptr, std::move(completion));
         return;
     }
 
     WKWebView *webView = m_webView;
+    MobileWebViewBackend *backend = q_ptr;
     runOnMainThread(^{
         NSSet *types = [NSSet setWithObjects:WKWebsiteDataTypeCookies, nil];
         [webView.configuration.websiteDataStore removeDataOfTypes:types
                                                     modifiedSince:[NSDate distantPast]
-                                                completionHandler:^{}];
+                                                completionHandler:^{
+            invokeClearCompletion(backend, std::move(completion));
+        }];
     });
 }
 
-void DarwinWebViewPrivate::clearDomStorageImpl()
+void DarwinWebViewPrivate::clearDomStorageImpl(std::function<void()> completion)
 {
     if (!m_webView) {
+        invokeClearCompletion(q_ptr, std::move(completion));
         return;
     }
 
     WKWebView *webView = m_webView;
+    MobileWebViewBackend *backend = q_ptr;
     runOnMainThread(^{
         NSSet *types = [NSSet setWithObjects:
             WKWebsiteDataTypeLocalStorage,
@@ -559,13 +584,16 @@ void DarwinWebViewPrivate::clearDomStorageImpl()
             nil];
         [webView.configuration.websiteDataStore removeDataOfTypes:types
                                                     modifiedSince:[NSDate distantPast]
-                                                completionHandler:^{}];
+                                                completionHandler:^{
+            invokeClearCompletion(backend, std::move(completion));
+        }];
     });
 }
 
-void DarwinWebViewPrivate::clearDomStorageImpl(const QString &origin)
+void DarwinWebViewPrivate::clearDomStorageImpl(const QString &origin, std::function<void()> completion)
 {
     if (!m_webView) {
+        invokeClearCompletion(q_ptr, std::move(completion));
         return;
     }
 
@@ -573,12 +601,14 @@ void DarwinWebViewPrivate::clearDomStorageImpl(const QString &origin)
     const QString host = url.host();
     if (host.isEmpty()) {
         qWarning() << "DarwinWebViewPrivate::clearDomStorageImpl: invalid origin, ignoring:" << origin;
+        invokeClearCompletion(q_ptr, std::move(completion));
         return;
     }
 
     // Per-site clearing is host-granular: WKWebsiteDataRecord.displayName is the
     // host/eTLD+1 and does not include the port (see ADR 0004).
     WKWebView *webView = m_webView;
+    MobileWebViewBackend *backend = q_ptr;
     runOnMainThread(^{
         NSSet *types = [NSSet setWithObjects:
             WKWebsiteDataTypeLocalStorage,
@@ -599,7 +629,11 @@ void DarwinWebViewPrivate::clearDomStorageImpl(const QString &origin)
                 }
             }
             if (toRemove.count > 0) {
-                [store removeDataOfTypes:types forDataRecords:toRemove completionHandler:^{}];
+                [store removeDataOfTypes:types forDataRecords:toRemove completionHandler:^{
+                    invokeClearCompletion(backend, std::move(completion));
+                }];
+            } else {
+                invokeClearCompletion(backend, std::move(completion));
             }
         }];
     });

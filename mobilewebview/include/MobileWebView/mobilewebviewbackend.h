@@ -37,6 +37,7 @@ class MobileWebViewBackend : public QQuickItem
     Q_PROPERTY(bool freeze READ freeze WRITE setFreeze NOTIFY freezeChanged)
     Q_PROPERTY(bool offTheRecord READ offTheRecord WRITE setOffTheRecord NOTIFY offTheRecordChanged)
     Q_PROPERTY(QString storageName READ storageName WRITE setStorageName NOTIFY storageNameChanged)
+    Q_PROPERTY(bool clearing READ clearing NOTIFY clearingChanged)
 
 public:
     explicit MobileWebViewBackend(QQuickItem *parent = nullptr);
@@ -72,6 +73,7 @@ public:
     void setOffTheRecord(bool offTheRecord);
     QString storageName() const;
     void setStorageName(const QString &storageName);
+    bool clearing() const;
 
     /// Async native snapshot. On success, snapshotReady carries a stable
     /// image://mobilewebview-snapshot/<key> URL for this backend instance (Image.source).
@@ -149,6 +151,12 @@ signals:
     void freezeChanged();
     void offTheRecordChanged();
     void storageNameChanged();
+    void clearingChanged();
+
+    void clearHttpCacheCompleted();
+    void deleteAllCookiesCompleted();
+    void clearDomStorageCompleted();
+    void clearProfileDataCompleted();
 
     // Emitted when a message is received from JavaScript
     void webMessageReceived(const QString &message, const QString &origin, bool isMainFrame);

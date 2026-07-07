@@ -43,10 +43,10 @@ public:
     void reloadAndBypassCacheImpl() override;
     void stopImpl() override;
     void clearHistoryImpl() override;
-    void clearHttpCacheImpl() override;
-    void deleteAllCookiesImpl() override;
-    void clearDomStorageImpl() override;
-    void clearDomStorageImpl(const QString &origin) override;
+    void clearHttpCacheImpl(std::function<void()> completion) override;
+    void deleteAllCookiesImpl(std::function<void()> completion) override;
+    void clearDomStorageImpl(std::function<void()> completion) override;
+    void clearDomStorageImpl(const QString &origin, std::function<void()> completion) override;
     void evaluateJavaScript(const QString &script) override;
     void updateNativeGeometry(const QRectF &rect) override;
     void updateNativeVisibility(bool visible) override;
@@ -472,32 +472,47 @@ void AndroidWebViewPrivate::clearHistoryImpl()
     callSimpleVoidMethod(m_clearHistoryMethod);
 }
 
-void AndroidWebViewPrivate::clearHttpCacheImpl()
+void AndroidWebViewPrivate::clearHttpCacheImpl(std::function<void()> completion)
 {
     callSimpleVoidMethod(m_clearHttpCacheMethod);
+    if (completion) {
+        completion();
+    }
 }
 
-void AndroidWebViewPrivate::deleteAllCookiesImpl()
+void AndroidWebViewPrivate::deleteAllCookiesImpl(std::function<void()> completion)
 {
     callSimpleVoidMethod(m_deleteAllCookiesMethod);
+    if (completion) {
+        completion();
+    }
 }
 
-void AndroidWebViewPrivate::clearDomStorageImpl()
+void AndroidWebViewPrivate::clearDomStorageImpl(std::function<void()> completion)
 {
     callSimpleVoidMethod(m_clearDomStorageMethod);
+    if (completion) {
+        completion();
+    }
 }
 
-void AndroidWebViewPrivate::clearDomStorageImpl(const QString &origin)
+void AndroidWebViewPrivate::clearDomStorageImpl(const QString &origin, std::function<void()> completion)
 {
     QMutexLocker locker(&m_jniMutex);
 
     if (!m_jniInitialized) {
         qWarning() << "AndroidWebViewPrivate: JNI not initialized";
+        if (completion) {
+            completion();
+        }
         return;
     }
 
     QJniEnvironment env;
     if (!env.isValid() || !m_webViewObject || !m_clearDomStorageOriginMethod) {
+        if (completion) {
+            completion();
+        }
         return;
     }
 
@@ -506,6 +521,9 @@ void AndroidWebViewPrivate::clearDomStorageImpl(const QString &origin)
     env->DeleteLocalRef(jOrigin);
 
     clearJniExceptionIfAny(env);
+    if (completion) {
+        completion();
+    }
 }
 
 void AndroidWebViewPrivate::evaluateJavaScript(const QString &script)

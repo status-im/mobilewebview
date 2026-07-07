@@ -40,10 +40,10 @@ public:
     virtual void reloadAndBypassCacheImpl() = 0;
     virtual void stopImpl() = 0;
     virtual void clearHistoryImpl() = 0;
-    virtual void clearHttpCacheImpl() = 0;
-    virtual void deleteAllCookiesImpl() = 0;
-    virtual void clearDomStorageImpl() = 0;
-    virtual void clearDomStorageImpl(const QString &origin) = 0;
+    virtual void clearHttpCacheImpl(std::function<void()> completion) = 0;
+    virtual void deleteAllCookiesImpl(std::function<void()> completion) = 0;
+    virtual void clearDomStorageImpl(std::function<void()> completion) = 0;
+    virtual void clearDomStorageImpl(const QString &origin, std::function<void()> completion) = 0;
     virtual void evaluateJavaScript(const QString &script) = 0;
     virtual void updateNativeGeometry(const QRectF &rect) = 0;
     virtual void updateNativeVisibility(bool visible) = 0;
@@ -93,6 +93,7 @@ public:
     bool m_loaded = false;
     bool m_nativeViewSetup = false;
     bool m_bridgeInstalled = false;
+    int m_pendingClears = 0;
     bool m_interactionEnabled = true;
     bool m_offTheRecord = false;
     QString m_storageName;
@@ -149,6 +150,8 @@ public:
     void ensureBridgeInstalled();
     void setupTransport();
     void recreateNativeViewForStore();
+    void beginClear();
+    void endClear();
 
     /// Re-sync native overlay position from mapToScene (e.g. after StackView slide).
     void syncNativeGeometryFromScene();

@@ -82,6 +82,21 @@ static bool waitForLoaded(MobileWebViewBackend &backend, int timeoutMs = 10000)
     return backend.loaded();
 }
 
+static bool waitForClearCompleted(MobileWebViewBackend &backend, QSignalSpy &completedSpy,
+                                  int timeoutMs = 10000)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < timeoutMs) {
+        QCoreApplication::processEvents();
+        if (completedSpy.count() >= 1 && !backend.clearing()) {
+            return true;
+        }
+        completedSpy.wait(qMin(timeoutMs - int(timer.elapsed()), 500));
+    }
+    return completedSpy.count() >= 1 && !backend.clearing();
+}
+
 static QString runJsAndWaitResult(MobileWebViewBackend &backend, const QString &script,
                                   int timeoutMs = 10000)
 {
@@ -345,6 +360,10 @@ private slots:
 void DataClearingTest::noViewClearMethodsNoOp()
 {
     MobileWebViewBackend backend;
+    QSignalSpy clearHttpCacheCompletedSpy(&backend, &MobileWebViewBackend::clearHttpCacheCompleted);
+    QSignalSpy deleteAllCookiesCompletedSpy(&backend, &MobileWebViewBackend::deleteAllCookiesCompleted);
+    QSignalSpy clearDomStorageCompletedSpy(&backend, &MobileWebViewBackend::clearDomStorageCompleted);
+    QSignalSpy clearProfileDataCompletedSpy(&backend, &MobileWebViewBackend::clearProfileDataCompleted);
 
     QTest::ignoreMessage(QtWarningMsg,
                          "MobileWebViewBackend::clearHttpCache: no native view set up; ignoring");
@@ -366,7 +385,12 @@ void DataClearingTest::noViewClearMethodsNoOp()
     backend.clearProfileData();
     backend.reloadAndBypassCache();
 
-    QVERIFY(true); // no crash
+    QCoreApplication::processEvents();
+    QCOMPARE(clearHttpCacheCompletedSpy.count(), 1);
+    QCOMPARE(deleteAllCookiesCompletedSpy.count(), 1);
+    QCOMPARE(clearDomStorageCompletedSpy.count(), 2);
+    QCOMPARE(clearProfileDataCompletedSpy.count(), 1);
+    QVERIFY(!backend.clearing());
 }
 
 void DataClearingTest::clearHttpCacheRemovesCacheRecords()
@@ -397,7 +421,9 @@ void DataClearingTest::clearHttpCacheRemovesCacheRecords()
     WKWebsiteDataStore *store = dataStoreForBackend(backend);
     QVERIFY(waitForRecordsNonEmpty(store, cacheDataTypes()));
 
+    QSignalSpy clearHttpCacheCompletedSpy(&backend, &MobileWebViewBackend::clearHttpCacheCompleted);
     backend.clearHttpCache();
+    QVERIFY(waitForClearCompleted(backend, clearHttpCacheCompletedSpy));
     QVERIFY(waitForRecordsEmpty(store, cacheDataTypes()));
 }
 
@@ -417,7 +443,9 @@ void DataClearingTest::deleteAllCookiesRemovesCookies()
     WKWebsiteDataStore *store = dataStoreForBackend(backend);
     QVERIFY(waitForCookiesNonEmpty(store));
 
+    QSignalSpy deleteAllCookiesCompletedSpy(&backend, &MobileWebViewBackend::deleteAllCookiesCompleted);
     backend.deleteAllCookies();
+    QVERIFY(waitForClearCompleted(backend, deleteAllCookiesCompletedSpy));
     QVERIFY(waitForCookiesEmpty(store));
 }
 
@@ -459,7 +487,9 @@ void DataClearingTest::clearDomStorageRemovesAllDomStorage()
     QCOMPARE(runJsAndWaitResult(backend, QStringLiteral("localStorage.getItem('mwv_key')")),
              QStringLiteral("value"));
 
+    QSignalSpy clearDomStorageCompletedSpy(&backend, &MobileWebViewBackend::clearDomStorageCompleted);
     backend.clearDomStorage();
+    QVERIFY(waitForClearCompleted(backend, clearDomStorageCompletedSpy));
 
     // Recreate again so the next page reads localStorage from the cleared store.
     backend.setOffTheRecord(true);
@@ -513,7 +543,9 @@ void DataClearingTest::clearProfileDataRemovesCacheCookiesAndDomStorage()
     QCOMPARE(runJsAndWaitResult(backend, QStringLiteral("localStorage.getItem('mwv_profile')")),
              QStringLiteral("2"));
 
+    QSignalSpy clearProfileDataCompletedSpy(&backend, &MobileWebViewBackend::clearProfileDataCompleted);
     backend.clearProfileData();
+    QVERIFY(waitForClearCompleted(backend, clearProfileDataCompletedSpy));
 
     WKWebsiteDataStore *store = dataStoreForBackend(backend);
     QVERIFY(waitForRecordsEmpty(store, cacheDataTypes()));
@@ -571,7 +603,9 @@ void DataClearingTest::clearDomStoragePerSiteOnlyAffectsGivenOrigin()
     QVERIFY(waitForRecordWithDisplayNamePresent(store, domStorageDataTypes(), hostA));
     QVERIFY(waitForRecordWithDisplayNamePresent(store, domStorageDataTypes(), hostB));
 
+    QSignalSpy clearDomStorageCompletedSpy(&backend, &MobileWebViewBackend::clearDomStorageCompleted);
     backend.clearDomStorage(baseA);
+    QVERIFY(waitForClearCompleted(backend, clearDomStorageCompletedSpy));
     QVERIFY(waitForRecordWithDisplayNameGone(store, domStorageDataTypes(), hostA));
     QVERIFY(waitForRecordWithDisplayNamePresent(store, domStorageDataTypes(), hostB));
 
