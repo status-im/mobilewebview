@@ -20,6 +20,7 @@ SOURCES=(
   "$JVM_SHADOW/android/webkit/WebStorage.java"
   "$JVM_SHADOW/androidx/webkit/WebViewFeature.java"
   "$JVM_SHADOW/androidx/webkit/WebViewCompat.java"
+  "$JVM_SHADOW/androidx/webkit/WebStorageCompat.java"
   "$JVM_SHADOW/androidx/webkit/Profile.java"
   "$JVM_SHADOW/androidx/webkit/ProfileStore.java"
   "$ANDROID_SRC/WebViewProfileManager.java"

@@ -703,6 +703,12 @@ bool MobileWebViewBackend::hasNativeFindPanel() const
     return d->hasNativeFindPanelImpl();
 }
 
+bool MobileWebViewBackend::clearSiteDataSupported() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->clearSiteDataSupportedImpl();
+}
+
 bool MobileWebViewBackend::freeze() const
 {
     Q_D(const MobileWebViewBackend);
@@ -954,24 +960,41 @@ void MobileWebViewBackend::clearDomStorage()
     });
 }
 
-void MobileWebViewBackend::clearDomStorage(const QString &origin)
+void MobileWebViewBackend::clearSiteData()
 {
     Q_D(MobileWebViewBackend);
     if (!d->m_nativeViewSetup) {
-        qWarning() << "MobileWebViewBackend::clearDomStorage(origin): no native view set up; ignoring";
-        QMetaObject::invokeMethod(this, [this]() { emit clearDomStorageCompleted(); },
+        qWarning() << "MobileWebViewBackend::clearSiteData: no native view set up; ignoring";
+        QMetaObject::invokeMethod(this, [this]() { emit clearSiteDataCompleted(); },
+                                Qt::QueuedConnection);
+        return;
+    }
+
+    if (!d->clearSiteDataSupportedImpl()) {
+        qWarning() << "MobileWebViewBackend::clearSiteData: not supported on this platform; ignoring";
+        QMetaObject::invokeMethod(this, [this]() { emit clearSiteDataCompleted(); },
+                                Qt::QueuedConnection);
+        return;
+    }
+
+    const QString origin = extractOrigin(d->m_url);
+    if (origin.isEmpty() || QUrl(origin).host().isEmpty()) {
+        qWarning() << "MobileWebViewBackend::clearSiteData: current url has no clearable host; ignoring"
+                    << d->m_url;
+        QMetaObject::invokeMethod(this, [this]() { emit clearSiteDataCompleted(); },
                                 Qt::QueuedConnection);
         return;
     }
 
     QPointer<MobileWebViewBackend> guard(this);
     d->beginClear();
-    d->clearDomStorageImpl(origin, [guard, d]() {
+    d->clearSiteDataImpl(origin, [guard, d]() {
         if (!guard) {
             return;
         }
-        emit guard->clearDomStorageCompleted();
+        emit guard->clearSiteDataCompleted();
         d->endClear();
+        guard->reloadAndBypassCache();
     });
 }
 

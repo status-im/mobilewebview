@@ -34,6 +34,7 @@ class MobileWebViewBackend : public QQuickItem
     Q_PROPERTY(qreal zoomFactor READ zoomFactor WRITE setZoomFactor NOTIFY zoomFactorChanged)
     Q_PROPERTY(bool findSupported READ findSupported CONSTANT)
     Q_PROPERTY(bool hasNativeFindPanel READ hasNativeFindPanel CONSTANT)
+    Q_PROPERTY(bool clearSiteDataSupported READ clearSiteDataSupported CONSTANT)
     Q_PROPERTY(bool freeze READ freeze WRITE setFreeze NOTIFY freezeChanged)
     Q_PROPERTY(bool offTheRecord READ offTheRecord WRITE setOffTheRecord NOTIFY offTheRecordChanged)
     Q_PROPERTY(QString storageName READ storageName WRITE setStorageName NOTIFY storageNameChanged)
@@ -67,6 +68,7 @@ public:
     void setZoomFactor(qreal factor);
     bool findSupported() const;
     bool hasNativeFindPanel() const;
+    bool clearSiteDataSupported() const;
     bool freeze() const;
     void setFreeze(bool freeze);
     bool offTheRecord() const;
@@ -107,7 +109,7 @@ public slots:
     void clearHttpCache();
     void deleteAllCookies();
     void clearDomStorage();
-    void clearDomStorage(const QString &origin);
+    void clearSiteData();
     void clearProfileData();
 
     // Install WebChannel bridge; must be called BEFORE loadUrl/loadHtml
@@ -156,6 +158,7 @@ signals:
     void clearHttpCacheCompleted();
     void deleteAllCookiesCompleted();
     void clearDomStorageCompleted();
+    void clearSiteDataCompleted();
     void clearProfileDataCompleted();
 
     // Emitted when a message is received from JavaScript

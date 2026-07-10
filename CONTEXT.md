@@ -26,19 +26,20 @@ The identity of a persistent Storage Profile. Two WebViews sharing a partition s
 cookies/cache/storage; different partitions are isolated. Mirrors the desktop
 `WebEngineProfile.storageName`. Ignored for Incognito (which is never persisted).
 
-### Profile-wide clear
-Erasing web data across an entire Storage Profile — every origin at once (all
-cookies, the whole HTTP cache, all DOM storage). The coarse "clear browsing data"
-action.
+### Clear browsing data
+Erasing a caller-selected subset of web-data **categories** (cookies, HTTP cache,
+DOM storage) across an entire **Storage Profile**, covering every site at once.
+The only clear that exposes category choice.
+_Avoid_: Clear site data, profile-wide clear.
 
-### Per-site clear
-Erasing **DOM storage** for a single site, leaving every other site in the same
-Storage Profile untouched. The "forget this site" action. Cookies and HTTP cache
-are **not** cleared per-site (no honest native primitive exists for them at that
-granularity), mirroring desktop, where the only per-origin clear is DOM storage.
-Granularity is **best-effort at host level**, not strict scheme+host+port: the
-platforms group stored data by host/eTLD+1, so sibling schemes or subdomains may be
-cleared together.
+### Clear current site data
+Erasing **all** web data (cookies, cache, DOM storage, service workers) belonging
+to the site of the WebView's current URL, while preserving data belonging to other
+sites in the **Storage Profile**. Always all-or-nothing for that one site — never
+a category subset and never an arbitrary off-screen origin. Site identity is
+**best-effort at host/eTLD+1 level**, not strict scheme+host+port. Completes with
+a **cache bypass** reload of the current view.
+_Avoid_: Clear browsing data, per-site clear, forget this site.
 
 ### Cache eviction vs. cache bypass
 Two distinct operations on the HTTP cache. **Eviction** (`clearHttpCache`) deletes

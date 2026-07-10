@@ -1,45 +1,48 @@
-# 4. Data clearing (cache, cookies, DOM storage) and force reload
+# 4. Data clearing (browsing data, current-site data) and force reload
 
-Date: 2026-07-01
+Date: 2026-07-01 (revised 2026-07-10)
 
 ## Status
 
-Accepted
+Accepted (revised — supersedes the original per-site DOM-storage-only decision)
 
 ## Context
 
-Desktop (WebEngine) offers two data-clearing actions per profile:
+Popular browsers (Chrome, Brave, Firefox — desktop and mobile) converge on **two
+distinct user actions**, not one:
 
-- **Clear cache** — a single `QWebEngineProfile::clearHttpCache()`.
-- **Clear site data** — a composite: `clearHttpCache()` + `cookieStore()->deleteAllCookies()`
-  + `clearAllVisitedLinks()` (all via the WebEngine API), **plus** `localStorage.clear()`,
-  `sessionStorage.clear()`, IndexedDB deletion, `caches.delete()`, and service-worker
-  `unregister()` executed **as JavaScript injected into the current page** via
-  `runJavaScript`.
+- **Clear browsing data** — profile-wide, with a **category** choice (cookies, cache,
+  DOM storage), covering every site at once.
+- **Clear (current) site data** — an **all-or-nothing** wipe of one site's data
+  (cookies, cache, DOM storage, service workers), leaving other sites intact.
 
-Desktop injects JS for web storage only because `QWebEngineProfile` has **no per-origin
-access** to localStorage / IndexedDB / Cache API. That JS runs inside one page, so it
-can only ever clear the **current origin's** web storage, while cookies and cache are
-cleared globally. Desktop's "clear site data" is therefore a hybrid: global
-cookies/cache, current-origin web storage.
+Status Desktop (WebEngine) historically exposed a single "clear site data" that was a
+dishonest **hybrid**: `clearHttpCache()` + `deleteAllCookies()` cleared **globally**,
+while `localStorage`/`sessionStorage`/IndexedDB/Cache API/service-workers were cleared
+**only for the current origin** via JavaScript injected with `runJavaScript`
+(`site_utils.js`, status-desktop `1260e3dc`). The JS route exists because
+`QWebEngineProfile` has **no per-origin access** to web storage — the injected script
+only ever sees the page it runs in. This means desktop's action matches neither of the
+two canonical browser actions.
 
-`MobileWebViewBackend` has no data-clearing surface at all. Two platform facts reshape
-the desktop design on mobile:
+Mobile engines are more capable than WebEngine here:
 
-- **The JS workaround is unnecessary.** Apple `WKWebsiteDataStore.removeData(ofTypes:modifiedSince:)`
-  clears cache, cookies, localStorage, IndexedDB, service workers, and Cache API
-  **natively**, at profile scope and (via `records(ofTypes:)` → `removeData(ofTypes:for:)`)
-  per-record. Android `androidx.webkit` exposes `CookieManager`, `WebStorage`
-  (incl. `deleteOrigin`), cache clearing, and `ServiceWorkerController` natively.
-- **Origin granularity is uneven.** DOM storage can be cleared per-site on both
-  platforms (best-effort, host/eTLD+1 grouped). Per-origin **cookie** deletion has no
-  honest native primitive: Apple removes cookies only per host-grouped record, and
-  Android `CookieManager` has no delete-by-domain API (only an expire-by-rewrite hack
-  that misses `HttpOnly`). Per-origin **cache** eviction does not exist on Android and
-  is clunky on Apple. **Visited links** have no public clear API on either platform
-  (`WKWebsiteDataType` has no such member; Android `WebView` exposes none) — this is
-  distinct from navigation (back/forward) history, which the library already clears via
-  `clearHistory()`.
+- **Apple `WKWebsiteDataStore`** removes data by type at profile scope
+  (`removeData(ofTypes:modifiedSince:)`) **and per data record**
+  (`fetchDataRecords` → `removeData(ofTypes:for:)`), where a record is grouped by
+  host/eTLD+1. A per-site record removal covers cache, cookies, and all web storage.
+- **Android `androidx.webkit` `WebStorageCompat.deleteBrowsingDataForSite()`**
+  (feature `DELETE_BROWSING_DATA`, androidx.webkit ≥ 1.13; we pin 1.16) deletes
+  **network cache, cookies, and all JavaScript-readable storage + service workers**
+  for a site, honestly. This is the only honest per-site primitive on Android:
+  `WebStorage.deleteOrigin()` reliably covers only WebSQL, `CookieManager` has no
+  delete-by-domain (the expire-by-rewrite hack misses `HttpOnly`), and
+  `WebView.clearCache()` is whole-profile.
+
+So a full, honest **per-site** clear is achievable natively on both mobile platforms —
+something desktop's WebEngine cannot do. **Visited links** still have no public clear
+API on either platform and remain out of scope (distinct from back/forward history,
+which `clearHistory()` covers).
 
 Separately, Chrome's force reload (Cmd+Shift+R) is a **cache bypass** — refetch every
 resource from the network for one navigation without evicting the stored cache — which
@@ -47,91 +50,111 @@ the library's soft `reload()` does not offer.
 
 ## Decision
 
-**Clear web data natively on mobile; do not port desktop's JS-injection workaround.**
-The workaround exists to route around a WebEngine limitation that the mobile engines do
-not have. Reproducing it would carry desktop's scar tissue onto platforms that can clear
-web storage natively at any scope, and would leave profile-wide web-storage clearing
-impossible (JS only sees the current origin).
-
-Expose WebEngine-shaped, granular, honest methods on `MobileWebViewBackend`:
+Model the two canonical browser actions as **two honest, separate capabilities**, and
+clear web data **natively** on mobile — never porting desktop's JS-injection hybrid.
 
 ```cpp
-// profile-wide granular (maps 1:1 to WebEngine verbs for easy migration)
-Q_INVOKABLE void clearHttpCache();                        // whole-profile HTTP cache
-Q_INVOKABLE void deleteAllCookies();                      // all cookies, all origins
-Q_INVOKABLE void clearDomStorage();                       // localStorage/IndexedDB/SW/Cache API, all origins
+// Clear browsing data (profile-wide, category-selectable) — WebEngine-shaped verbs
+Q_INVOKABLE void clearHttpCache();     // whole-profile HTTP cache
+Q_INVOKABLE void deleteAllCookies();   // all cookies, all origins
+Q_INVOKABLE void clearDomStorage();    // localStorage/IndexedDB/SW/Cache API, all origins
+Q_INVOKABLE void clearProfileData();   // = all three (the "all categories" shortcut)
 
-// per-site (DOM storage only — honestly named; no per-site cookies/cache)
-Q_INVOKABLE void clearDomStorage(const QString &origin);  // best-effort, host-granular
+// Clear current site data (all-or-nothing, current URL's site)
+Q_INVOKABLE void clearSiteData();      // full native per-site wipe, then cache-bypass reload
+Q_PROPERTY(bool clearSiteDataSupported READ clearSiteDataSupported CONSTANT)
 
-// profile-wide aggregate (the "clear browsing data" button)
-Q_INVOKABLE void clearProfileData();                      // = clearHttpCache + deleteAllCookies + clearDomStorage
+// Force reload
+void reloadAndBypassCache();           // ↔ QWebEnginePage::ReloadAndBypassCache
 ```
 
 Semantics:
 
-- **Scope, honestly.** Two explicit scopes — **profile-wide** and **per-site** — never
-  a hybrid. Per-site clears **DOM storage only**; cookies and cache are profile-wide
-  only, because no honest per-origin native primitive exists for them. This mirrors
-  desktop, where the only per-origin clear is DOM storage. Per-site granularity is
-  **best-effort at host level** (sibling schemes / subdomains may clear together).
-- **Visited links dropped** as a desktop-only capability with no mobile public API.
-  Navigation history is unaffected and remains covered by `clearHistory()`.
-- **Completion signals + busy property.** Each clear method is still `void` and
-  fire-and-forget from the caller's perspective, but the backend exposes parameterless
-  completion signals (`clearHttpCacheCompleted`, `deleteAllCookiesCompleted`,
-  `clearDomStorageCompleted`, `clearProfileDataCompleted`) and a read-only `clearing`
-  property so hosts can block UI and reload when a clear finishes (desktop 2.36 parity).
-  Apple invokes completions from native `completionHandler:` callbacks; Android invokes
-  them immediately after the synchronous JNI calls (best-effort).
+- **Two commands, two scopes — never a hybrid.**
+  - **Clear browsing data** is the only clear that exposes **category** choice. The
+    host composes its own checkbox UI and calls the granular verbs (or
+    `clearProfileData()` for all). No flags enum — named WebEngine-shaped verbs keep
+    migration from WebEngine hosts friction-free.
+  - **Clear current site data** (`clearSiteData()`) is **all-or-nothing** for exactly
+    one site: cookies, cache, DOM storage, and service workers. It takes **no origin
+    argument** — the site is derived from the WebView's current `url`. Clearing an
+    arbitrary off-screen origin is deliberately not offered (it would not be "current
+    site" and its reload would be meaningless).
+- **Auto cache-bypass reload.** `clearSiteData()` completes with
+  `reloadAndBypassCache()` on the current view, so the user immediately sees a fresh
+  site without evicting other sites' cache.
+- **Per-site is host/eTLD+1 granular**, best-effort — sibling schemes / subdomains may
+  clear together (Apple records and Android `deleteBrowsingDataForSite` both key on the
+  registrable domain).
+- **Capability reporting.** `clearSiteDataSupported` mirrors the existing
+  `findSupported` pattern. Apple: always `true`. Android: reflects
+  `WebViewFeature.isFeatureSupported(DELETE_BROWSING_DATA)`. Hosts bind their
+  "Clear current site data" control's visibility to it
+  (`visible: webView.clearSiteDataSupported`).
+- **Unsupported / empty target ⇒ no-op + warn + completion.** If `clearSiteData()` is
+  called when the feature is unavailable (Android without `DELETE_BROWSING_DATA`), or
+  when the current `url` has no clearable host (`about:blank`, `data:`, empty), it does
+  nothing, logs, and still emits `clearSiteDataCompleted`. There is **no partial JS
+  fallback** — a silently weaker clear (storage-only, missing `HttpOnly` cookies and
+  network cache) would be more dangerous than an honest no-op.
+- **Completion signals + busy property.** Every clear method is `void` and
+  fire-and-forget, but the backend emits parameterless completion signals
+  (`clearHttpCacheCompleted`, `deleteAllCookiesCompleted`, `clearDomStorageCompleted`,
+  `clearProfileDataCompleted`, `clearSiteDataCompleted`) and exposes a read-only
+  `clearing` property so hosts can block UI and reload when a clear finishes.
 - **Profile-shared side effect.** Data lives in the Storage Profile (`storageName`,
-  ADR 0001); clearing via one backend affects **every** view sharing that profile, and
-  in incognito operates on the ephemeral store. This matches WebEngine (clear is a
-  profile operation) and is documented, not prevented.
-- **No live native view ⇒ no-op + warn.** If a method is called before first init,
-  mid profile-switch (ADR 0001 `destroyNativeView`→`initNativeView`), or while there is
-  otherwise no native handle, it does nothing and logs. A silently-deferred
-  fire-and-forget clear would be more surprising than a no-op.
+  ADR 0001); clearing affects **every** view sharing that profile, and in incognito
+  operates on the ephemeral store. Documented, not prevented.
+- **No live native view ⇒ no-op + warn**, as with all clears (called before first
+  init, mid profile-switch, or with no native handle).
 
-**Add force reload:**
-
-```cpp
-public slots:
-    void reloadAndBypassCache();   // ↔ QWebEnginePage::ReloadAndBypassCache
-```
-
-- Per-view **cache bypass** for one navigation — does not evict the cache, does not
-  touch cookies/storage (see CONTEXT: *cache eviction vs. cache bypass*).
-- Apple: `WKWebView.reloadFromOrigin()`. Android: `settings.setCacheMode(LOAD_NO_CACHE)`
-  → `reload()` → restore `LOAD_DEFAULT` on the next `onPageFinished`, so only this load
-  is affected. Requires a live native view; a no-op otherwise, like `reload()`.
+**Force reload** is a per-view **cache bypass** for one navigation — it does not evict
+the cache and does not touch cookies/storage (see CONTEXT: *cache eviction vs. cache
+bypass*). Apple: `WKWebView.reloadFromOrigin()`. Android:
+`settings.setCacheMode(LOAD_NO_CACHE)` → `reload()` → restore `LOAD_DEFAULT` on the next
+`onPageFinished`. Requires a live native view; a no-op otherwise, like `reload()`.
 
 ## Considered alternatives
 
-- **Keep desktop's shared JS for web storage on mobile.** Rejected: it makes
-  profile-wide web-storage clearing impossible (JS is current-origin only) and
-  reintroduces the dishonest global-cookies/current-origin-storage hybrid. Native
-  clears at any scope with no page loaded.
+- **Single "clear site data" action (desktop's model).** Rejected: it matches neither
+  canonical browser action and, on desktop, is a dishonest global-cookies/cache +
+  current-origin-storage hybrid. Two honest commands map to real user intent.
+- **Per-site DOM-storage-only clear (`clearDomStorage(origin)`), the original 0004
+  decision.** Rejected/removed: it silently omitted cookies and cache, so "forget this
+  site" left the user logged in. Android's `deleteBrowsingDataForSite` and Apple's
+  per-record removal make a full, honest per-site clear possible, so the crippled
+  variant is dropped.
+- **Partial JS fallback for `clearSiteData()` on old Android WebView.** Rejected:
+  `site_utils.js` clears DOM storage only and cannot touch `HttpOnly` cookies or the
+  network cache; presenting that as "clear site data" would be dishonest. Gate on
+  `clearSiteDataSupported` instead.
+- **`clearSiteData(origin)` for arbitrary origins.** Rejected: not "current site", and
+  a following cache-bypass reload would be meaningless. A settings-screen site list is
+  a separate future feature if needed.
 - **A composable flags enum** (`clear(DataTypes, origin)`). Rejected in favor of named
-  WebEngine-shaped methods to minimize migration friction from WebEngine hosts.
-- **Best-effort per-site cookies** (`deleteCookies(origin)`). Rejected: Android has no
-  honest primitive (expire-by-rewrite misses `HttpOnly`) and it would exceed desktop,
-  which never offered per-origin cookie deletion.
-- **Completion signal / correlated ids.** Deferred: clears are rare and user-initiated;
-  WebEngine parity is fire-and-forget.
+  WebEngine-shaped verbs.
 
 ## Consequences
 
-- New cross-platform surface on `MobileWebViewBackend`: four clear methods (one
-  overloaded for per-site) plus `clearProfileData()`, and a `reloadAndBypassCache()`
-  slot. Platform impls call `WKWebsiteDataStore.removeData` / `reloadFromOrigin` on
-  Apple and `CookieManager`/`WebStorage`/cache/cache-mode on Android.
-- Mobile does **not** reuse desktop's storage-clearing JS snippet; the two platforms
-  clear web storage by different mechanisms (native vs injected JS). Accepted.
-- Per-site clearing is DOM-storage-only and host-granular; hosts wanting a full
-  "forget this site" including cookies cannot get it honestly and must fall back to
-  `deleteAllCookies()` (profile-wide).
-- Visited-link clearing is unavailable on mobile.
-- Clearing works even on the Android pre-113 default profile (no MULTI_PROFILE), so no
-  OS-floor gating is needed for these methods, unlike storage-profile isolation
-  (ADR 0003) or downloads (ADR 0005).
+- New cross-platform surface on `MobileWebViewBackend`: the profile-wide verbs
+  (`clearHttpCache`, `deleteAllCookies`, `clearDomStorage`, `clearProfileData`),
+  `clearSiteData()` + `clearSiteDataSupported`, and `reloadAndBypassCache()`. The prior
+  `clearDomStorage(const QString &origin)` overload is **removed**.
+- Platform impls: Apple uses `WKWebsiteDataStore.removeData` (per-type profile-wide;
+  per-record for `clearSiteData`) and `reloadFromOrigin`; Android uses
+  `CookieManager`/`WebStorage`/cache/cache-mode for profile-wide verbs and
+  `WebStorageCompat.deleteBrowsingDataForSite` for `clearSiteData`.
+- **`clearSiteData()` now requires an OS/WebView floor on Android**
+  (`DELETE_BROWSING_DATA`), reported via `clearSiteDataSupported` — reversing the
+  original 0004 note that clearing needed no capability gating. The profile-wide verbs
+  still need no floor and work on the pre-113 default profile.
+- **Platform divergence from Status Desktop, accepted and deliberate.** On mobile,
+  "Clear current site data" is a full, honest native wipe (cookies + cache + storage +
+  SW). On desktop (WebEngine), the same user action can only clear current-origin web
+  storage via injected JS — cookies and cache stay profile-wide — because WebEngine
+  exposes no honest per-site primitive. The two platforms therefore give this action
+  **different guarantees**; the mobile library defines the honest contract and does not
+  emulate desktop's hybrid. (Desktop lives in a separate repository; only the library
+  contract is governed here.)
+- Mobile does **not** reuse desktop's storage-clearing JS snippet.
+- Visited-link clearing remains unavailable on mobile.

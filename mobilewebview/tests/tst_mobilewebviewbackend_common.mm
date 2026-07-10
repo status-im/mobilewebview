@@ -81,14 +81,17 @@ public:
             completion();
         }
     }
-    void clearDomStorageImpl(const QString &origin, std::function<void()> completion) override
+
+    void clearSiteDataImpl(const QString &origin, std::function<void()> completion) override
     {
-        ++clearDomStoragePerSiteCalls;
-        lastDomStorageOrigin = origin;
+        ++clearSiteDataCalls;
+        lastClearSiteDataOrigin = origin;
         if (completion) {
             completion();
         }
     }
+
+    bool clearSiteDataSupportedImpl() const override { return clearSiteDataSupportedValue; }
 
     void evaluateJavaScript(const QString &script) override
     {
@@ -164,7 +167,9 @@ public:
     int clearHttpCacheCalls = 0;
     int deleteAllCookiesCalls = 0;
     int clearDomStorageCalls = 0;
-    int clearDomStoragePerSiteCalls = 0;
+    int clearSiteDataCalls = 0;
+    bool clearSiteDataSupportedValue = true;
+    QString lastClearSiteDataOrigin;
     int evaluateCalls = 0;
     int updateGeometryCalls = 0;
     int updateVisibilityCalls = 0;
@@ -182,7 +187,6 @@ public:
     int lastGoBackOrForwardOffset = 0;
     QString lastHtml;
     QString lastScript;
-    QString lastDomStorageOrigin;
     QString lastBridgeNs;
     QString lastBridgeInvokeKey;
     QString lastBridgeScriptPath;
@@ -287,6 +291,7 @@ void MobileWebViewBackendCommonTest::forwardsCallsAndStateChanges()
     QSignalSpy clearHttpCacheCompletedSpy(&backend, &MobileWebViewBackend::clearHttpCacheCompleted);
     QSignalSpy deleteAllCookiesCompletedSpy(&backend, &MobileWebViewBackend::deleteAllCookiesCompleted);
     QSignalSpy clearDomStorageCompletedSpy(&backend, &MobileWebViewBackend::clearDomStorageCompleted);
+    QSignalSpy clearSiteDataCompletedSpy(&backend, &MobileWebViewBackend::clearSiteDataCompleted);
     QSignalSpy clearProfileDataCompletedSpy(&backend, &MobileWebViewBackend::clearProfileDataCompleted);
 
     backend.clearHttpCache();
@@ -301,8 +306,8 @@ void MobileWebViewBackendCommonTest::forwardsCallsAndStateChanges()
     QCOMPARE(clearDomStorageCompletedSpy.count(), 1);
     QCOMPARE(backend.clearing(), false);
 
-    backend.clearDomStorage(QStringLiteral("https://example.com"));
-    QCOMPARE(clearDomStorageCompletedSpy.count(), 2);
+    backend.clearSiteData();
+    QCOMPARE(clearSiteDataCompletedSpy.count(), 1);
     QCOMPARE(backend.clearing(), false);
 
     backend.clearProfileData();
@@ -313,9 +318,10 @@ void MobileWebViewBackendCommonTest::forwardsCallsAndStateChanges()
     QCOMPARE(d->clearHttpCacheCalls, 2); // once + clearProfileData
     QCOMPARE(d->deleteAllCookiesCalls, 2); // once + clearProfileData
     QCOMPARE(d->clearDomStorageCalls, 2); // once + clearProfileData
-    QCOMPARE(d->clearDomStoragePerSiteCalls, 1);
-    QCOMPARE(d->lastDomStorageOrigin, QStringLiteral("https://example.com"));
-    QCOMPARE(d->reloadAndBypassCacheCalls, 1);
+    QCOMPARE(d->clearSiteDataCalls, 1);
+    QCOMPARE(d->lastClearSiteDataOrigin, QStringLiteral("https://example.com"));
+    // clearSiteData auto-reloads, plus the explicit reloadAndBypassCache call
+    QCOMPARE(d->reloadAndBypassCacheCalls, 2);
 
     QVariantList historyItems{
         QVariantMap{

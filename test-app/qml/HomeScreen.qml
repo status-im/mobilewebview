@@ -40,6 +40,11 @@ Item {
             screen: Qt.resolvedUrl("screens/ProfileIsolationScreen.qml")
         },
         {
+            title: "Data clearing",
+            subtitle: "Clear browsing data + clear current site data",
+            screen: Qt.resolvedUrl("screens/DataClearingScreen.qml")
+        },
+        {
             title: "Origin",
             subtitle: "Same partition, different origins",
             screen: Qt.resolvedUrl("screens/OriginScreen.qml")

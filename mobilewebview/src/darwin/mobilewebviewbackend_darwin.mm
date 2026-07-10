@@ -242,7 +242,8 @@ public:
     void clearHttpCacheImpl(std::function<void()> completion) override;
     void deleteAllCookiesImpl(std::function<void()> completion) override;
     void clearDomStorageImpl(std::function<void()> completion) override;
-    void clearDomStorageImpl(const QString &origin, std::function<void()> completion) override;
+    void clearSiteDataImpl(const QString &origin, std::function<void()> completion) override;
+    bool clearSiteDataSupportedImpl() const override;
     void evaluateJavaScript(const QString &script) override;
     void updateNativeGeometry(const QRectF &rect) override;
     void updateNativeVisibility(bool visible) override;
@@ -590,7 +591,7 @@ void DarwinWebViewPrivate::clearDomStorageImpl(std::function<void()> completion)
     });
 }
 
-void DarwinWebViewPrivate::clearDomStorageImpl(const QString &origin, std::function<void()> completion)
+void DarwinWebViewPrivate::clearSiteDataImpl(const QString &origin, std::function<void()> completion)
 {
     if (!m_webView) {
         invokeClearCompletion(q_ptr, std::move(completion));
@@ -600,7 +601,7 @@ void DarwinWebViewPrivate::clearDomStorageImpl(const QString &origin, std::funct
     const QUrl url(origin);
     const QString host = url.host();
     if (host.isEmpty()) {
-        qWarning() << "DarwinWebViewPrivate::clearDomStorageImpl: invalid origin, ignoring:" << origin;
+        qWarning() << "DarwinWebViewPrivate::clearSiteDataImpl: invalid origin, ignoring:" << origin;
         invokeClearCompletion(q_ptr, std::move(completion));
         return;
     }
@@ -610,14 +611,7 @@ void DarwinWebViewPrivate::clearDomStorageImpl(const QString &origin, std::funct
     WKWebView *webView = m_webView;
     MobileWebViewBackend *backend = q_ptr;
     runOnMainThread(^{
-        NSSet *types = [NSSet setWithObjects:
-            WKWebsiteDataTypeLocalStorage,
-            WKWebsiteDataTypeSessionStorage,
-            WKWebsiteDataTypeIndexedDBDatabases,
-            WKWebsiteDataTypeWebSQLDatabases,
-            WKWebsiteDataTypeServiceWorkerRegistrations,
-            WKWebsiteDataTypeOfflineWebApplicationCache,
-            nil];
+        NSSet *types = [WKWebsiteDataStore allWebsiteDataTypes];
         WKWebsiteDataStore *store = webView.configuration.websiteDataStore;
         NSString *hostName = host.toNSString();
         [store fetchDataRecordsOfTypes:types completionHandler:^(NSArray<WKWebsiteDataRecord *> *records) {
@@ -637,6 +631,11 @@ void DarwinWebViewPrivate::clearDomStorageImpl(const QString &origin, std::funct
             }
         }];
     });
+}
+
+bool DarwinWebViewPrivate::clearSiteDataSupportedImpl() const
+{
+    return true;
 }
 
 void DarwinWebViewPrivate::stopImpl()

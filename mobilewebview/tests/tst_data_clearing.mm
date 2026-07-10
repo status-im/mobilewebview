@@ -4,6 +4,7 @@
 #include <QElapsedTimer>
 #include <QHostAddress>
 #include <QQuickWindow>
+#include <QRegularExpression>
 #include <QSignalSpy>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -223,13 +224,23 @@ static bool waitForRecordsNonEmpty(WKWebsiteDataStore *store, NSSet *dataTypes,
     return false;
 }
 
-static QList<NSHTTPCookie *> fetchCookiesSync(WKWebsiteDataStore *store)
+struct CookieSnapshot {
+    QString name;
+    QString domain;
+};
+
+static QList<CookieSnapshot> fetchCookieSnapshotsSync(WKWebsiteDataStore *store)
 {
-    __block QList<NSHTTPCookie *> cookies;
+    __block QList<CookieSnapshot> cookies;
     __block bool done = false;
     [store.httpCookieStore getAllCookies:^(NSArray<NSHTTPCookie *> *array) {
+        // Copy into Qt strings inside the callback — under ARC, NSHTTPCookie*
+        // pointers must not outlive this autorelease pool / processEvents.
         for (NSHTTPCookie *cookie in array) {
-            cookies.append(cookie);
+            CookieSnapshot snap;
+            snap.name = QString::fromNSString(cookie.name);
+            snap.domain = QString::fromNSString(cookie.domain);
+            cookies.append(snap);
         }
         done = true;
     }];
@@ -247,12 +258,12 @@ static bool waitForCookiesEmpty(WKWebsiteDataStore *store, int timeoutMs = 10000
     QElapsedTimer timer;
     timer.start();
     while (timer.elapsed() < timeoutMs) {
-        if (fetchCookiesSync(store).isEmpty()) {
+        if (fetchCookieSnapshotsSync(store).isEmpty()) {
             return true;
         }
         QCoreApplication::processEvents();
     }
-    return fetchCookiesSync(store).isEmpty();
+    return fetchCookieSnapshotsSync(store).isEmpty();
 }
 
 static bool waitForCookiesNonEmpty(WKWebsiteDataStore *store, int timeoutMs = 10000)
@@ -260,7 +271,7 @@ static bool waitForCookiesNonEmpty(WKWebsiteDataStore *store, int timeoutMs = 10
     QElapsedTimer timer;
     timer.start();
     while (timer.elapsed() < timeoutMs) {
-        if (!fetchCookiesSync(store).isEmpty()) {
+        if (!fetchCookieSnapshotsSync(store).isEmpty()) {
             return true;
         }
         QCoreApplication::processEvents();
@@ -348,14 +359,23 @@ class DataClearingTest : public QObject
     Q_OBJECT
 
 private slots:
+    void clearSiteDataSupportedIsTrueOnApple();
     void noViewClearMethodsNoOp();
     void clearHttpCacheRemovesCacheRecords();
     void deleteAllCookiesRemovesCookies();
     void clearDomStorageRemovesAllDomStorage();
     void clearProfileDataRemovesCacheCookiesAndDomStorage();
-    void clearDomStoragePerSiteOnlyAffectsGivenOrigin();
+    void clearSiteDataRemovesCurrentSiteCookiesCacheAndStorage();
+    void clearSiteDataReloadsCurrentPage();
+    void clearSiteDataOnBlankUrlIsNoOp();
     void reloadAndBypassCacheReloadsCurrentPage();
 };
+
+void DataClearingTest::clearSiteDataSupportedIsTrueOnApple()
+{
+    MobileWebViewBackend backend;
+    QVERIFY(backend.clearSiteDataSupported());
+}
 
 void DataClearingTest::noViewClearMethodsNoOp()
 {
@@ -363,6 +383,7 @@ void DataClearingTest::noViewClearMethodsNoOp()
     QSignalSpy clearHttpCacheCompletedSpy(&backend, &MobileWebViewBackend::clearHttpCacheCompleted);
     QSignalSpy deleteAllCookiesCompletedSpy(&backend, &MobileWebViewBackend::deleteAllCookiesCompleted);
     QSignalSpy clearDomStorageCompletedSpy(&backend, &MobileWebViewBackend::clearDomStorageCompleted);
+    QSignalSpy clearSiteDataCompletedSpy(&backend, &MobileWebViewBackend::clearSiteDataCompleted);
     QSignalSpy clearProfileDataCompletedSpy(&backend, &MobileWebViewBackend::clearProfileDataCompleted);
 
     QTest::ignoreMessage(QtWarningMsg,
@@ -372,7 +393,7 @@ void DataClearingTest::noViewClearMethodsNoOp()
     QTest::ignoreMessage(QtWarningMsg,
                          "MobileWebViewBackend::clearDomStorage: no native view set up; ignoring");
     QTest::ignoreMessage(QtWarningMsg,
-                         "MobileWebViewBackend::clearDomStorage(origin): no native view set up; ignoring");
+                         "MobileWebViewBackend::clearSiteData: no native view set up; ignoring");
     QTest::ignoreMessage(QtWarningMsg,
                          "MobileWebViewBackend::clearProfileData: no native view set up; ignoring");
     QTest::ignoreMessage(QtWarningMsg,
@@ -381,14 +402,15 @@ void DataClearingTest::noViewClearMethodsNoOp()
     backend.clearHttpCache();
     backend.deleteAllCookies();
     backend.clearDomStorage();
-    backend.clearDomStorage(QStringLiteral("https://example.com"));
+    backend.clearSiteData();
     backend.clearProfileData();
     backend.reloadAndBypassCache();
 
     QCoreApplication::processEvents();
     QCOMPARE(clearHttpCacheCompletedSpy.count(), 1);
     QCOMPARE(deleteAllCookiesCompletedSpy.count(), 1);
-    QCOMPARE(clearDomStorageCompletedSpy.count(), 2);
+    QCOMPARE(clearDomStorageCompletedSpy.count(), 1);
+    QCOMPARE(clearSiteDataCompletedSpy.count(), 1);
     QCOMPARE(clearProfileDataCompletedSpy.count(), 1);
     QVERIFY(!backend.clearing());
 }
@@ -560,24 +582,25 @@ void DataClearingTest::clearProfileDataRemovesCacheCookiesAndDomStorage()
     QVERIFY(value.isEmpty() || value == QStringLiteral("null"));
 }
 
-void DataClearingTest::clearDomStoragePerSiteOnlyAffectsGivenOrigin()
+void DataClearingTest::clearSiteDataRemovesCurrentSiteCookiesCacheAndStorage()
 {
     QQuickWindow window;
 
-    // Distinct hostnames so WKWebsiteDataRecord.displayName can distinguish origins.
+    // Distinct hostnames so WKWebsiteDataRecord.displayName can distinguish sites.
     const QString hostA = QStringLiteral("siteaaa.invalid");
     const QString hostB = QStringLiteral("sitebbb.invalid");
     const QString baseA = QStringLiteral("http://") + hostA + QStringLiteral("/page.html");
     const QString baseB = QStringLiteral("http://") + hostB + QStringLiteral("/page.html");
 
-    // Write origin A's localStorage and flush it to the shared profile store.
+    // Write site B first and flush it to the shared profile store.
     {
         MobileWebViewBackend backend;
-        backend.setStorageName(QStringLiteral("DataClearingTest_per_site"));
+        backend.setStorageName(QStringLiteral("DataClearingTest_clear_site"));
         attachToWindow(backend, window);
-        loadPageAt(backend, baseA);
+        loadPageAt(backend, baseB);
         QCOMPARE(runJsAndWaitResult(backend,
-                                    QStringLiteral("localStorage.setItem('mwv_key','a'); 'ok'")),
+                                    QStringLiteral("document.cookie = 'mwv_b=1; Max-Age=3600'; "
+                                                   "localStorage.setItem('mwv_key','b'); 'ok'")),
                  QStringLiteral("ok"));
         backend.setOffTheRecord(true);
         backend.setOffTheRecord(false);
@@ -586,15 +609,17 @@ void DataClearingTest::clearDomStoragePerSiteOnlyAffectsGivenOrigin()
     }
 
     MobileWebViewBackend backend;
-    backend.setStorageName(QStringLiteral("DataClearingTest_per_site"));
+    backend.setStorageName(QStringLiteral("DataClearingTest_clear_site"));
     attachToWindow(backend, window);
 
-    loadPageAt(backend, baseB);
+    // Prefer loadHtml for host A so cookie/storage records use siteaaa.invalid.
+    loadPageAt(backend, baseA);
     QCOMPARE(runJsAndWaitResult(backend,
-                                QStringLiteral("localStorage.setItem('mwv_key','b'); 'ok'")),
+                                QStringLiteral("document.cookie = 'mwv_a=1; Max-Age=3600'; "
+                                               "localStorage.setItem('mwv_key','a'); 'ok'")),
              QStringLiteral("ok"));
 
-    // Flush origin B; both origins should now have DOM-storage records.
+    // Flush site A to the store.
     backend.setOffTheRecord(true);
     backend.setOffTheRecord(false);
     QVERIFY(waitForLoaded(backend));
@@ -602,15 +627,100 @@ void DataClearingTest::clearDomStoragePerSiteOnlyAffectsGivenOrigin()
     WKWebsiteDataStore *store = dataStoreForBackend(backend);
     QVERIFY(waitForRecordWithDisplayNamePresent(store, domStorageDataTypes(), hostA));
     QVERIFY(waitForRecordWithDisplayNamePresent(store, domStorageDataTypes(), hostB));
+    QVERIFY(waitForCookiesNonEmpty(store));
 
-    QSignalSpy clearDomStorageCompletedSpy(&backend, &MobileWebViewBackend::clearDomStorageCompleted);
-    backend.clearDomStorage(baseA);
-    QVERIFY(waitForClearCompleted(backend, clearDomStorageCompletedSpy));
+    QSignalSpy clearSiteDataCompletedSpy(&backend, &MobileWebViewBackend::clearSiteDataCompleted);
+    backend.clearSiteData();
+    QVERIFY(waitForClearCompleted(backend, clearSiteDataCompletedSpy));
+
     QVERIFY(waitForRecordWithDisplayNameGone(store, domStorageDataTypes(), hostA));
     QVERIFY(waitForRecordWithDisplayNamePresent(store, domStorageDataTypes(), hostB));
 
+    // Site A's cookie should be gone; site B's cookie should remain.
+    const QList<CookieSnapshot> cookies = fetchCookieSnapshotsSync(store);
+    bool foundA = false;
+    bool foundB = false;
+    for (const CookieSnapshot &cookie : cookies) {
+        if (cookie.name == QStringLiteral("mwv_a")) {
+            foundA = true;
+        }
+        if (cookie.name == QStringLiteral("mwv_b")) {
+            foundB = true;
+        }
+    }
+    QVERIFY(!foundA);
+    QVERIFY(foundB);
+
     // Drain in-flight fetch/remove completion handlers before teardown.
     QTest::qWait(500);
+}
+
+void DataClearingTest::clearSiteDataReloadsCurrentPage()
+{
+    QQuickWindow window;
+    MobileWebViewBackend backend;
+    backend.setStorageName(QStringLiteral("DataClearingTest_clear_site_reload"));
+    attachToWindow(backend, window);
+
+    HttpServer server;
+    const int port = findFreePort();
+    QVERIFY(port > 0);
+    QVERIFY(server.listen(QHostAddress::LocalHost, port));
+
+    const QByteArray page =
+        "<!doctype html><html><body>clear site reload</body></html>";
+    const QByteArray response =
+        QByteArray("HTTP/1.0 200 OK\r\n"
+                   "Content-Type: text/html\r\n"
+                   "Cache-Control: public, max-age=3600\r\n"
+                   "Connection: close\r\n"
+                   "Content-Length: ") + QByteArray::number(page.size()) + "\r\n"
+        "\r\n" + page;
+    server.setResponse(response);
+
+    const QUrl pageUrl(QStringLiteral("http://127.0.0.1:") + QString::number(port)
+                       + QStringLiteral("/page.html"));
+    loadUrl(backend, pageUrl);
+    const QUrl loadedUrl = backend.url();
+    QCOMPARE(loadedUrl, pageUrl);
+    const int requestsBefore = server.requestCount();
+    QVERIFY(requestsBefore >= 1);
+
+    QSignalSpy clearSiteDataCompletedSpy(&backend, &MobileWebViewBackend::clearSiteDataCompleted);
+    backend.clearSiteData();
+    QVERIFY(waitForClearCompleted(backend, clearSiteDataCompletedSpy));
+
+    // clearSiteData finishes with reloadAndBypassCache — prove a fresh network fetch.
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < 10000 && server.requestCount() <= requestsBefore) {
+        QCoreApplication::processEvents();
+        QTest::qWait(10);
+    }
+    QVERIFY2(server.requestCount() > requestsBefore,
+             "clearSiteData did not trigger a cache-bypass network reload");
+    QVERIFY(waitForLoaded(backend));
+    QCOMPARE(backend.url(), loadedUrl);
+}
+
+void DataClearingTest::clearSiteDataOnBlankUrlIsNoOp()
+{
+    QQuickWindow window;
+    MobileWebViewBackend backend;
+    attachToWindow(backend, window);
+
+    // Force a blank URL with no clearable host after the native view is up.
+    backend.loadUrl(QUrl(QStringLiteral("about:blank")));
+    QVERIFY(waitForLoaded(backend));
+
+    QSignalSpy clearSiteDataCompletedSpy(&backend, &MobileWebViewBackend::clearSiteDataCompleted);
+    QTest::ignoreMessage(QtWarningMsg,
+                         QRegularExpression(QStringLiteral(
+                             "MobileWebViewBackend::clearSiteData: current url has no clearable host")));
+    backend.clearSiteData();
+    QCoreApplication::processEvents();
+    QCOMPARE(clearSiteDataCompletedSpy.count(), 1);
+    QVERIFY(!backend.clearing());
 }
 
 void DataClearingTest::reloadAndBypassCacheReloadsCurrentPage()
