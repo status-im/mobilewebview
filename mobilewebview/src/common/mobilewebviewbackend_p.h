@@ -43,7 +43,8 @@ public:
     virtual void clearHttpCacheImpl(std::function<void()> completion) = 0;
     virtual void deleteAllCookiesImpl(std::function<void()> completion) = 0;
     virtual void clearDomStorageImpl(std::function<void()> completion) = 0;
-    virtual void clearDomStorageImpl(const QString &origin, std::function<void()> completion) = 0;
+    virtual void clearSiteDataImpl(const QString &origin, std::function<void()> completion) = 0;
+    virtual bool clearSiteDataSupportedImpl() const = 0;
     virtual void evaluateJavaScript(const QString &script) = 0;
     virtual void updateNativeGeometry(const QRectF &rect) = 0;
     virtual void updateNativeVisibility(bool visible) = 0;

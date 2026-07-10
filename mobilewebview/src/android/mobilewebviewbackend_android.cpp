@@ -46,7 +46,8 @@ public:
     void clearHttpCacheImpl(std::function<void()> completion) override;
     void deleteAllCookiesImpl(std::function<void()> completion) override;
     void clearDomStorageImpl(std::function<void()> completion) override;
-    void clearDomStorageImpl(const QString &origin, std::function<void()> completion) override;
+    void clearSiteDataImpl(const QString &origin, std::function<void()> completion) override;
+    bool clearSiteDataSupportedImpl() const override;
     void evaluateJavaScript(const QString &script) override;
     void updateNativeGeometry(const QRectF &rect) override;
     void updateNativeVisibility(bool visible) override;
@@ -110,7 +111,7 @@ private:
     jmethodID m_clearHttpCacheMethod = nullptr;
     jmethodID m_deleteAllCookiesMethod = nullptr;
     jmethodID m_clearDomStorageMethod = nullptr;
-    jmethodID m_clearDomStorageOriginMethod = nullptr;
+    jmethodID m_clearSiteDataMethod = nullptr;
     jmethodID m_reloadAndBypassCacheMethod = nullptr;
     jmethodID m_setZoomFactorMethod = nullptr;
     jmethodID m_findTextMethod = nullptr;
@@ -199,7 +200,7 @@ bool AndroidWebViewPrivate::initNativeView()
     m_clearHttpCacheMethod = env->GetMethodID(m_webViewClass, "clearHttpCache", "()V");
     m_deleteAllCookiesMethod = env->GetMethodID(m_webViewClass, "deleteAllCookies", "()V");
     m_clearDomStorageMethod = env->GetMethodID(m_webViewClass, "clearDomStorage", "()V");
-    m_clearDomStorageOriginMethod = env->GetMethodID(m_webViewClass, "clearDomStorage", "(Ljava/lang/String;)V");
+    m_clearSiteDataMethod = env->GetMethodID(m_webViewClass, "clearSiteData", "(Ljava/lang/String;)V");
     m_reloadAndBypassCacheMethod = env->GetMethodID(m_webViewClass, "reloadAndBypassCache", "()V");
     m_setZoomFactorMethod = env->GetMethodID(m_webViewClass, "setZoomFactor", "(F)V");
     m_findTextMethod = env->GetMethodID(m_webViewClass, "findText", "(Ljava/lang/String;I)V");
@@ -496,7 +497,7 @@ void AndroidWebViewPrivate::clearDomStorageImpl(std::function<void()> completion
     }
 }
 
-void AndroidWebViewPrivate::clearDomStorageImpl(const QString &origin, std::function<void()> completion)
+void AndroidWebViewPrivate::clearSiteDataImpl(const QString &origin, std::function<void()> completion)
 {
     QMutexLocker locker(&m_jniMutex);
 
@@ -509,7 +510,7 @@ void AndroidWebViewPrivate::clearDomStorageImpl(const QString &origin, std::func
     }
 
     QJniEnvironment env;
-    if (!env.isValid() || !m_webViewObject || !m_clearDomStorageOriginMethod) {
+    if (!env.isValid() || !m_webViewObject || !m_clearSiteDataMethod) {
         if (completion) {
             completion();
         }
@@ -517,13 +518,43 @@ void AndroidWebViewPrivate::clearDomStorageImpl(const QString &origin, std::func
     }
 
     jstring jOrigin = env->NewStringUTF(origin.toUtf8().constData());
-    env->CallVoidMethod(m_webViewObject, m_clearDomStorageOriginMethod, jOrigin);
+    env->CallVoidMethod(m_webViewObject, m_clearSiteDataMethod, jOrigin);
     env->DeleteLocalRef(jOrigin);
 
     clearJniExceptionIfAny(env);
     if (completion) {
         completion();
     }
+}
+
+bool AndroidWebViewPrivate::clearSiteDataSupportedImpl() const
+{
+    QJniEnvironment env;
+    if (!env.isValid()) {
+        return false;
+    }
+    jclass managerClass = env->FindClass("org/mobilewebview/DataClearManager");
+    if (!managerClass) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
+        return false;
+    }
+    jmethodID method = env->GetStaticMethodID(managerClass, "isClearSiteDataSupported", "()Z");
+    if (!method) {
+        env->DeleteLocalRef(managerClass);
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
+        return false;
+    }
+    const jboolean supported = env->CallStaticBooleanMethod(managerClass, method);
+    env->DeleteLocalRef(managerClass);
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        return false;
+    }
+    return supported == JNI_TRUE;
 }
 
 void AndroidWebViewPrivate::evaluateJavaScript(const QString &script)

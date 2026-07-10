@@ -346,8 +346,16 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         runOnMainThread(() -> mDataClearManager.clearDomStorage());
     }
 
-    public void clearDomStorage(String origin) {
-        runOnMainThread(() -> mDataClearManager.clearDomStorage(origin));
+    public boolean isClearSiteDataSupported() {
+        return DataClearManager.isClearSiteDataSupported();
+    }
+
+    public void clearSiteData(String site) {
+        runOnMainThread(() -> mDataClearManager.clearSiteData(site, () -> {
+            // Completion is synchronous on the Java side for the current WebView
+            // feature; the C++ layer treats the JNI call as fire-and-forget and
+            // invokes its own completion after the call returns.
+        }));
     }
 
     public void reloadAndBypassCache() {
