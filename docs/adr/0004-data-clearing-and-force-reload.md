@@ -1,6 +1,6 @@
 # 4. Data clearing (browsing data, current-site data) and force reload
 
-Date: 2026-07-01 (revised 2026-07-10)
+Date: 2026-07-01 (revised 2026-07-13)
 
 ## Status
 
@@ -97,11 +97,21 @@ Semantics:
   nothing, logs, and still emits `clearSiteDataCompleted`. There is **no partial JS
   fallback** — a silently weaker clear (storage-only, missing `HttpOnly` cookies and
   network cache) would be more dangerous than an honest no-op.
-- **Completion signals + busy property.** Every clear method is `void` and
+- **Completion signals + Clearing.** Every clear method is `void` and
   fire-and-forget, but the backend emits parameterless completion signals
   (`clearHttpCacheCompleted`, `deleteAllCookiesCompleted`, `clearDomStorageCompleted`,
   `clearProfileDataCompleted`, `clearSiteDataCompleted`) and exposes a read-only
-  `clearing` property so hosts can block UI and reload when a clear finishes.
+  `clearing` property (see CONTEXT: **Clearing**) so hosts can block UI and reload
+  when a clear finishes.
+- **Overlapping clears are allowed.** A second call to the same clear verb while the
+  first is in flight is valid. Each call owns its own completion: both must emit their
+  `*Completed` signal and both count toward **Clearing**. Completion signal **order is
+  not guaranteed**. Overlapping `clearSiteData()` may each trigger their own
+  cache-bypass reload. Platform impls must not share a single pending-completion slot
+  (Android correlates Java→C++ callbacks with a per-call `requestId`, mirroring how
+  Darwin captures each completion in its own `completionHandler` block). Sync Android
+  clears (`clearHttpCache`, `clearDomStorage`) still report completion after the work
+  runs on the UI thread — there is no OS store callback, unlike cookies / site data.
 - **Profile-shared side effect.** Data lives in the Storage Profile (`storageName`,
   ADR 0001); clearing affects **every** view sharing that profile, and in incognito
   operates on the ephemeral store. Documented, not prevented.

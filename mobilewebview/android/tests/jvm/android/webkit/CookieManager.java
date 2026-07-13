@@ -1,11 +1,13 @@
 package android.webkit;
 
+import java.util.ArrayDeque;
+
 public final class CookieManager {
     private static final CookieManager sInstance = new CookieManager();
     private static int sFlushCount = 0;
     private static int sRemoveAllCookiesCount = 0;
     private static boolean sDeferCallbacks = false;
-    private static ValueCallback<Boolean> sPendingCallback = null;
+    private static final ArrayDeque<ValueCallback<Boolean>> sPendingCallbacks = new ArrayDeque<>();
 
     private int mRemoveAllCookiesCount = 0;
 
@@ -25,7 +27,7 @@ public final class CookieManager {
             ++sRemoveAllCookiesCount;
         }
         if (sDeferCallbacks) {
-            sPendingCallback = callback;
+            sPendingCallbacks.addLast(callback);
             return;
         }
         if (callback != null) {
@@ -50,12 +52,15 @@ public final class CookieManager {
     }
 
     public static ValueCallback<Boolean> pendingCallback() {
-        return sPendingCallback;
+        return sPendingCallbacks.peekFirst();
+    }
+
+    public static int pendingCallbackCount() {
+        return sPendingCallbacks.size();
     }
 
     public static void runPendingCallback() {
-        ValueCallback<Boolean> callback = sPendingCallback;
-        sPendingCallback = null;
+        ValueCallback<Boolean> callback = sPendingCallbacks.pollFirst();
         if (callback != null) {
             callback.onReceiveValue(Boolean.TRUE);
         }
@@ -69,6 +74,6 @@ public final class CookieManager {
         sRemoveAllCookiesCount = 0;
         sInstance.mRemoveAllCookiesCount = 0;
         sDeferCallbacks = false;
-        sPendingCallback = null;
+        sPendingCallbacks.clear();
     }
 }

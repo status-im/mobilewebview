@@ -22,8 +22,19 @@ public final class DataClearManager {
     private boolean mRestoreDefaultCacheModeOnNextPageFinish;
 
     public void clearHttpCache(WebView webView) {
+        clearHttpCache(webView, null);
+    }
+
+    /**
+     * Evicts the HTTP cache. {@code done} runs after {@link WebView#clearCache} returns
+     * (sync API — no OS completion callback).
+     */
+    public void clearHttpCache(WebView webView, Runnable done) {
         if (webView != null) {
             webView.clearCache(true);
+        }
+        if (done != null) {
+            done.run();
         }
     }
 
@@ -55,18 +66,26 @@ public final class DataClearManager {
     }
 
     public void clearDomStorage() {
-        clearDomStorage(null);
+        clearDomStorage(null, null);
+    }
+
+    public void clearDomStorage(Profile profile) {
+        clearDomStorage(profile, null);
     }
 
     /**
      * Clears DOM storage for {@code profile} when non-null; otherwise the
-     * process-wide {@link WebStorage}.
+     * process-wide {@link WebStorage}. {@code done} runs after
+     * {@link WebStorage#deleteAllData} returns (sync API).
      */
-    public void clearDomStorage(Profile profile) {
+    public void clearDomStorage(Profile profile, Runnable done) {
         WebStorage webStorage = profile != null
                 ? profile.getWebStorage()
                 : WebStorage.getInstance();
         webStorage.deleteAllData();
+        if (done != null) {
+            done.run();
+        }
     }
 
     /**

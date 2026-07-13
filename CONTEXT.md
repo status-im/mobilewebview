@@ -48,6 +48,14 @@ cache populated but refetches every resource from the network for a single
 navigation, ignoring what's stored. Eviction is profile-wide and persistent; bypass
 is per-view and one-shot.
 
+### Clearing
+The busy state of a WebView while one or more **Clear browsing data** or **Clear
+current site data** operations on that view have been started and not yet completed.
+Overlapping clears are allowed; Clearing remains active until every in-flight clear
+has completed. Completion order across overlapping clears is not part of the
+contract.
+_Avoid_: busy, in-flight clear, clear in progress.
+
 ### Download
 A file transfer originating from page content that the WebView will not render
 inline (a response marked as an attachment, an unrenderable MIME type, or an

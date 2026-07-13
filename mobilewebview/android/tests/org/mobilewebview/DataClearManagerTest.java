@@ -23,6 +23,10 @@ public final class DataClearManagerTest {
         profileScopedClearsUseProfileManagersNotSingletons();
         deleteAllCookiesDoneFiresOnlyAfterAsyncCallback();
         clearSiteDataDoneFiresOnlyAfterDeferredCallback();
+        clearHttpCacheInvokesDoneAfterClear();
+        clearDomStorageInvokesDoneAfterDelete();
+        overlappingDeleteAllCookiesBothDonesFire();
+        overlappingClearSiteDataBothDonesFire();
 
         System.out.println("DataClearManagerTest passed");
     }
@@ -187,6 +191,78 @@ public final class DataClearManagerTest {
         WebStorageCompat.runPendingCallback();
 
         TestAssert.assertTrue("done must run after WebStorageCompat callback", doneRan[0]);
+    }
+
+    /** Darwin-like: sync cache clear still reports done after the work. */
+    private static void clearHttpCacheInvokesDoneAfterClear() {
+        resetState();
+        DataClearManager manager = new DataClearManager();
+        WebView webView = new WebView(null);
+        final boolean[] doneRan = {false};
+
+        manager.clearHttpCache(webView, () -> doneRan[0] = true);
+
+        TestAssert.assertEquals(1, WebView.clearCacheCount());
+        TestAssert.assertTrue("done must run after clearCache", doneRan[0]);
+    }
+
+    /** Darwin-like: sync DOM storage clear still reports done after the work. */
+    private static void clearDomStorageInvokesDoneAfterDelete() {
+        resetState();
+        DataClearManager manager = new DataClearManager();
+        final boolean[] doneRan = {false};
+
+        manager.clearDomStorage(null, () -> doneRan[0] = true);
+
+        TestAssert.assertEquals(1, WebStorage.deleteAllDataCount());
+        TestAssert.assertTrue("done must run after deleteAllData", doneRan[0]);
+    }
+
+    /** Overlapping deleteAllCookies must each get their own done (no single-slot clobber). */
+    private static void overlappingDeleteAllCookiesBothDonesFire() {
+        resetState();
+        CookieManager.setDeferCallbacks(true);
+        DataClearManager manager = new DataClearManager();
+        final boolean[] doneA = {false};
+        final boolean[] doneB = {false};
+
+        manager.deleteAllCookies(() -> doneA[0] = true);
+        manager.deleteAllCookies(() -> doneB[0] = true);
+
+        TestAssert.assertEquals(2, CookieManager.pendingCallbackCount());
+        TestAssert.assertTrue("first done must wait", !doneA[0]);
+        TestAssert.assertTrue("second done must wait", !doneB[0]);
+
+        CookieManager.runPendingCallback();
+        TestAssert.assertTrue("first done after first callback", doneA[0]);
+        TestAssert.assertTrue("second done still pending", !doneB[0]);
+
+        CookieManager.runPendingCallback();
+        TestAssert.assertTrue("second done after second callback", doneB[0]);
+    }
+
+    /** Overlapping clearSiteData must each get their own done (no single-slot clobber). */
+    private static void overlappingClearSiteDataBothDonesFire() {
+        resetState();
+        WebViewFeature.setDeleteBrowsingDataSupported(true);
+        WebStorageCompat.setDeferCallbacks(true);
+        DataClearManager manager = new DataClearManager();
+        final boolean[] doneA = {false};
+        final boolean[] doneB = {false};
+
+        manager.clearSiteData("https://a.example", () -> doneA[0] = true);
+        manager.clearSiteData("https://b.example", () -> doneB[0] = true);
+
+        TestAssert.assertEquals(2, WebStorageCompat.pendingCallbackCount());
+        TestAssert.assertTrue("first done must wait", !doneA[0]);
+        TestAssert.assertTrue("second done must wait", !doneB[0]);
+
+        WebStorageCompat.runPendingCallback();
+        TestAssert.assertTrue("first done after first callback", doneA[0]);
+        TestAssert.assertTrue("second done still pending", !doneB[0]);
+
+        WebStorageCompat.runPendingCallback();
+        TestAssert.assertTrue("second done after second callback", doneB[0]);
     }
 
     private static void resetState() {
