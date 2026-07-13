@@ -330,33 +330,39 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         });
     }
 
-    public void clearHttpCache() {
+    public void clearHttpCache(long requestId) {
         runOnMainThread(() -> {
             if (mWebView != null) {
-                mDataClearManager.clearHttpCache(mWebView);
+                mDataClearManager.clearHttpCache(mWebView, () ->
+                        withNativePtr(ptr -> nativeOnClearHttpCacheCompleted(ptr, requestId)));
+            } else {
+                withNativePtr(ptr -> nativeOnClearHttpCacheCompleted(ptr, requestId));
             }
         });
     }
 
-    public void deleteAllCookies() {
+    public void deleteAllCookies(long requestId) {
         runOnMainThread(() -> {
             mDataClearManager.deleteAllCookies(resolveActiveProfile(), () ->
-                    withNativePtr(this::nativeOnDeleteAllCookiesCompleted));
+                    withNativePtr(ptr -> nativeOnDeleteAllCookiesCompleted(ptr, requestId)));
         });
     }
 
-    public void clearDomStorage() {
-        runOnMainThread(() -> mDataClearManager.clearDomStorage(resolveActiveProfile()));
+    public void clearDomStorage(long requestId) {
+        runOnMainThread(() -> {
+            mDataClearManager.clearDomStorage(resolveActiveProfile(), () ->
+                    withNativePtr(ptr -> nativeOnClearDomStorageCompleted(ptr, requestId)));
+        });
     }
 
     public boolean isClearSiteDataSupported() {
         return DataClearManager.isClearSiteDataSupported();
     }
 
-    public void clearSiteData(String site) {
+    public void clearSiteData(String site, long requestId) {
         runOnMainThread(() -> {
             mDataClearManager.clearSiteData(resolveActiveProfile(), site, () ->
-                    withNativePtr(this::nativeOnClearSiteDataCompleted));
+                    withNativePtr(ptr -> nativeOnClearSiteDataCompleted(ptr, requestId)));
         });
     }
 
@@ -858,6 +864,8 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     private native void nativeOnFindResultChanged(long nativePtr, int activeMatchIndex, int matchCount);
     private native void nativeOnFreezeSnapshotReady(long nativePtr, long requestId, int width, int height,
                                                     byte[] pixels);
-    private native void nativeOnDeleteAllCookiesCompleted(long nativePtr);
-    private native void nativeOnClearSiteDataCompleted(long nativePtr);
+    private native void nativeOnClearHttpCacheCompleted(long nativePtr, long requestId);
+    private native void nativeOnDeleteAllCookiesCompleted(long nativePtr, long requestId);
+    private native void nativeOnClearDomStorageCompleted(long nativePtr, long requestId);
+    private native void nativeOnClearSiteDataCompleted(long nativePtr, long requestId);
 }

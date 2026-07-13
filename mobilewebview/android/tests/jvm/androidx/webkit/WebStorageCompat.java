@@ -1,6 +1,7 @@
 package androidx.webkit;
 
 import android.webkit.WebStorage;
+import java.util.ArrayDeque;
 import java.util.concurrent.Executor;
 
 /** Fake WebStorageCompat for JVM unit tests; not used on device. */
@@ -10,7 +11,7 @@ public final class WebStorageCompat {
     private static WebStorage sLastWebStorage = null;
     private static boolean sLastCallbackRan = false;
     private static boolean sDeferCallbacks = false;
-    private static Runnable sPendingCallback = null;
+    private static final ArrayDeque<Runnable> sPendingCallbacks = new ArrayDeque<>();
 
     private WebStorageCompat() {}
 
@@ -21,7 +22,7 @@ public final class WebStorageCompat {
         sLastWebStorage = instance;
         sLastCallbackRan = false;
         if (sDeferCallbacks) {
-            sPendingCallback = doneCallback;
+            sPendingCallbacks.addLast(doneCallback);
             return site;
         }
         if (doneCallback != null) {
@@ -58,12 +59,15 @@ public final class WebStorageCompat {
     }
 
     public static Runnable pendingCallback() {
-        return sPendingCallback;
+        return sPendingCallbacks.peekFirst();
+    }
+
+    public static int pendingCallbackCount() {
+        return sPendingCallbacks.size();
     }
 
     public static void runPendingCallback() {
-        Runnable callback = sPendingCallback;
-        sPendingCallback = null;
+        Runnable callback = sPendingCallbacks.pollFirst();
         if (callback != null) {
             callback.run();
             sLastCallbackRan = true;
@@ -76,6 +80,6 @@ public final class WebStorageCompat {
         sLastWebStorage = null;
         sLastCallbackRan = false;
         sDeferCallbacks = false;
-        sPendingCallback = null;
+        sPendingCallbacks.clear();
     }
 }
