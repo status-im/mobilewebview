@@ -5,6 +5,8 @@ import android.webkit.WebSettings;
 import android.webkit.WebStorage;
 import android.webkit.WebView;
 
+import androidx.webkit.Profile;
+import androidx.webkit.ProfileStore;
 import androidx.webkit.WebStorageCompat;
 import androidx.webkit.WebViewFeature;
 
@@ -16,6 +18,12 @@ public final class DataClearManagerTest {
         clearSiteDataCallsDeleteBrowsingDataForSite();
         clearSiteDataSupportedReflectsFeature();
         reloadAndBypassCacheSetsNoCacheThenRestoresOnPageFinished();
+
+        // Bugbot RED repros — expected to fail until GREEN fixes land.
+        profileScopedClearsUseProfileManagersNotSingletons();
+        deleteAllCookiesDoneFiresOnlyAfterAsyncCallback();
+        clearSiteDataDoneFiresOnlyAfterDeferredCallback();
+
         System.out.println("DataClearManagerTest passed");
     }
 
@@ -93,11 +101,101 @@ public final class DataClearManagerTest {
         TestAssert.assertEquals(WebSettings.LOAD_DEFAULT, webView.getSettings().getCacheMode());
     }
 
+    /**
+     * Bugbot #2: clears must hit the active Profile's CookieManager / WebStorage,
+     * not the process-wide singletons.
+     */
+    private static void profileScopedClearsUseProfileManagersNotSingletons() {
+        resetState();
+        WebViewFeature.setDeleteBrowsingDataSupported(true);
+        Profile profile = ProfileStore.getInstance().getOrCreateProfile("Profile_A");
+        DataClearManager manager = new DataClearManager();
+
+        final int globalCookiesBefore = CookieManager.removeAllCookiesCount();
+        final int globalStorageBefore = WebStorage.deleteAllDataCount();
+
+        manager.deleteAllCookies(profile, null);
+        manager.clearDomStorage(profile);
+        manager.clearSiteData(profile, "https://example.com", null);
+
+        TestAssert.assertEquals(
+                "profile CookieManager must receive deleteAllCookies",
+                1, profile.getCookieManager().instanceRemoveAllCookiesCount());
+        TestAssert.assertEquals(
+                "global CookieManager must not be used for profile-scoped clear",
+                globalCookiesBefore, CookieManager.removeAllCookiesCount());
+
+        TestAssert.assertEquals(
+                "profile WebStorage must receive clearDomStorage",
+                1, profile.getWebStorage().instanceDeleteAllDataCount());
+        TestAssert.assertEquals(
+                "global WebStorage must not be used for profile-scoped clearDomStorage",
+                globalStorageBefore, WebStorage.deleteAllDataCount());
+
+        TestAssert.assertTrue(
+                "clearSiteData must pass the profile WebStorage to WebStorageCompat",
+                profile.getWebStorage() == WebStorageCompat.lastWebStorage());
+        TestAssert.assertTrue(
+                "clearSiteData must not pass the process-wide WebStorage singleton",
+                WebStorage.getInstance() != WebStorageCompat.lastWebStorage());
+    }
+
+    /**
+     * Bugbot #3: deleteAllCookies(done) must not run done until removeAllCookies'
+     * ValueCallback fires.
+     */
+    private static void deleteAllCookiesDoneFiresOnlyAfterAsyncCallback() {
+        resetState();
+        CookieManager.setDeferCallbacks(true);
+        DataClearManager manager = new DataClearManager();
+        final boolean[] doneRan = {false};
+
+        manager.deleteAllCookies(() -> doneRan[0] = true);
+
+        TestAssert.assertTrue(
+                "done must not run before CookieManager callback",
+                !doneRan[0]);
+        TestAssert.assertTrue(
+                "removeAllCookies must receive a non-null ValueCallback",
+                CookieManager.pendingCallback() != null);
+
+        CookieManager.runPendingCallback();
+
+        TestAssert.assertTrue("done must run after CookieManager callback", doneRan[0]);
+    }
+
+    /**
+     * Bugbot #1: clearSiteData(done) must not run done until
+     * WebStorageCompat.deleteBrowsingDataForSite's doneCallback fires.
+     */
+    private static void clearSiteDataDoneFiresOnlyAfterDeferredCallback() {
+        resetState();
+        WebViewFeature.setDeleteBrowsingDataSupported(true);
+        WebStorageCompat.setDeferCallbacks(true);
+        DataClearManager manager = new DataClearManager();
+        final boolean[] doneRan = {false};
+
+        manager.clearSiteData("https://example.com", () -> doneRan[0] = true);
+
+        TestAssert.assertTrue(
+                "done must not run before WebStorageCompat callback",
+                !doneRan[0]);
+        TestAssert.assertTrue(
+                "deleteBrowsingDataForSite must capture the done callback",
+                WebStorageCompat.pendingCallback() != null);
+
+        WebStorageCompat.runPendingCallback();
+
+        TestAssert.assertTrue("done must run after WebStorageCompat callback", doneRan[0]);
+    }
+
     private static void resetState() {
         WebView.resetDataClearCounters();
         CookieManager.resetRemoveAllCookiesCount();
+        CookieManager.resetFlushCount();
         WebStorage.reset();
         WebStorageCompat.reset();
+        ProfileStore.reset();
         WebViewFeature.setDeleteBrowsingDataSupported(true);
     }
 }
