@@ -9,6 +9,12 @@ final class TestAssert {
         }
     }
 
+    static void assertTrue(String message, boolean value) {
+        if (!value) {
+            throw new AssertionError(message);
+        }
+    }
+
     static void assertFalse(boolean value) {
         if (value) {
             throw new AssertionError("Expected false");
@@ -24,6 +30,12 @@ final class TestAssert {
     static void assertEquals(int expected, int actual) {
         if (expected != actual) {
             throw new AssertionError("Expected [" + expected + "], got [" + actual + "]");
+        }
+    }
+
+    static void assertEquals(String message, int expected, int actual) {
+        if (expected != actual) {
+            throw new AssertionError(message + " — expected [" + expected + "], got [" + actual + "]");
         }
     }
 

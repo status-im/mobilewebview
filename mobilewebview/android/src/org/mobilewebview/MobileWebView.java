@@ -339,11 +339,14 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     }
 
     public void deleteAllCookies() {
-        runOnMainThread(() -> mDataClearManager.deleteAllCookies());
+        runOnMainThread(() -> {
+            mDataClearManager.deleteAllCookies(resolveActiveProfile(), () ->
+                    withNativePtr(this::nativeOnDeleteAllCookiesCompleted));
+        });
     }
 
     public void clearDomStorage() {
-        runOnMainThread(() -> mDataClearManager.clearDomStorage());
+        runOnMainThread(() -> mDataClearManager.clearDomStorage(resolveActiveProfile()));
     }
 
     public boolean isClearSiteDataSupported() {
@@ -351,11 +354,10 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     }
 
     public void clearSiteData(String site) {
-        runOnMainThread(() -> mDataClearManager.clearSiteData(site, () -> {
-            // Completion is synchronous on the Java side for the current WebView
-            // feature; the C++ layer treats the JNI call as fire-and-forget and
-            // invokes its own completion after the call returns.
-        }));
+        runOnMainThread(() -> {
+            mDataClearManager.clearSiteData(resolveActiveProfile(), site, () ->
+                    withNativePtr(this::nativeOnClearSiteDataCompleted));
+        });
     }
 
     public void reloadAndBypassCache() {
@@ -365,6 +367,31 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
                 mDataClearManager.reloadAndBypassCache(mWebView);
             }
         });
+    }
+
+    private androidx.webkit.Profile resolveActiveProfile() {
+        if (mWebView == null) {
+            return null;
+        }
+        try {
+            Class<?> featureClass = Class.forName("androidx.webkit.WebViewFeature");
+            java.lang.reflect.Method isSupported =
+                    featureClass.getMethod("isFeatureSupported", String.class);
+            Object supported = isSupported.invoke(null, "MULTI_PROFILE");
+            if (!(supported instanceof Boolean) || !((Boolean) supported)) {
+                return null;
+            }
+            Class<?> compatClass = Class.forName("androidx.webkit.WebViewCompat");
+            java.lang.reflect.Method getProfile =
+                    compatClass.getMethod("getProfile", WebView.class);
+            Object profile = getProfile.invoke(null, mWebView);
+            if (profile instanceof androidx.webkit.Profile) {
+                return (androidx.webkit.Profile) profile;
+            }
+        } catch (ReflectiveOperationException e) {
+            Log.w(TAG, "resolveActiveProfile failed", e);
+        }
+        return null;
     }
 
     public void setZoomFactor(float factor) {
@@ -831,4 +858,6 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     private native void nativeOnFindResultChanged(long nativePtr, int activeMatchIndex, int matchCount);
     private native void nativeOnFreezeSnapshotReady(long nativePtr, long requestId, int width, int height,
                                                     byte[] pixels);
+    private native void nativeOnDeleteAllCookiesCompleted(long nativePtr);
+    private native void nativeOnClearSiteDataCompleted(long nativePtr);
 }

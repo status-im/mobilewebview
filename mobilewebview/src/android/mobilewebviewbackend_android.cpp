@@ -20,6 +20,7 @@
 #include <QByteArray>
 #include <QPointer>
 #include <optional>
+#include <functional>
 
 // =============================================================================
 // AndroidWebViewPrivate - Android-specific implementation
@@ -88,6 +89,8 @@ public:
     void onLoadProgressChanged(int progress);
     void onFaviconReceived(const QString &faviconUrl);
     void onFindResultChanged(int activeMatchIndex, int matchCount);
+    void onDeleteAllCookiesCompleted();
+    void onClearSiteDataCompleted();
     
 private:
     jobject m_webViewObject = nullptr;  // Global reference to Java MobileWebView
@@ -122,6 +125,8 @@ private:
     QMutex m_jniMutex;  // Protect JNI calls
 
     std::optional<QRect> m_lastGeometry;
+    std::function<void()> m_pendingDeleteAllCookiesCompletion;
+    std::function<void()> m_pendingClearSiteDataCompletion;
 };
 
 AndroidWebViewPrivate::AndroidWebViewPrivate(MobileWebViewBackend *q)
@@ -483,10 +488,8 @@ void AndroidWebViewPrivate::clearHttpCacheImpl(std::function<void()> completion)
 
 void AndroidWebViewPrivate::deleteAllCookiesImpl(std::function<void()> completion)
 {
+    m_pendingDeleteAllCookiesCompletion = std::move(completion);
     callSimpleVoidMethod(m_deleteAllCookiesMethod);
-    if (completion) {
-        completion();
-    }
 }
 
 void AndroidWebViewPrivate::clearDomStorageImpl(std::function<void()> completion)
@@ -517,14 +520,13 @@ void AndroidWebViewPrivate::clearSiteDataImpl(const QString &origin, std::functi
         return;
     }
 
+    m_pendingClearSiteDataCompletion = std::move(completion);
+
     jstring jOrigin = env->NewStringUTF(origin.toUtf8().constData());
     env->CallVoidMethod(m_webViewObject, m_clearSiteDataMethod, jOrigin);
     env->DeleteLocalRef(jOrigin);
 
     clearJniExceptionIfAny(env);
-    if (completion) {
-        completion();
-    }
 }
 
 bool AndroidWebViewPrivate::clearSiteDataSupportedImpl() const
@@ -946,6 +948,24 @@ void AndroidWebViewPrivate::onFindResultChanged(int activeMatchIndex, int matchC
     emit q_ptr->findTextResult(activeMatchIndex, matchCount);
 }
 
+void AndroidWebViewPrivate::onDeleteAllCookiesCompleted()
+{
+    std::function<void()> completion = std::move(m_pendingDeleteAllCookiesCompletion);
+    m_pendingDeleteAllCookiesCompletion = nullptr;
+    if (completion) {
+        completion();
+    }
+}
+
+void AndroidWebViewPrivate::onClearSiteDataCompleted()
+{
+    std::function<void()> completion = std::move(m_pendingClearSiteDataCompletion);
+    m_pendingClearSiteDataCompletion = nullptr;
+    if (completion) {
+        completion();
+    }
+}
+
 // Callback handlers
 void AndroidWebViewPrivate::onWebMessageReceived(const QString &message, const QString &origin, bool isMainFrame)
 {
@@ -1322,6 +1342,32 @@ Java_org_mobilewebview_MobileWebView_nativeOnFreezeSnapshotReady(JNIEnv *env, jo
                       .copy();
         }
         backend->notifySnapshotReady(rid, img);
+    }, Qt::QueuedConnection);
+}
+
+JNIEXPORT void JNICALL
+Java_org_mobilewebview_MobileWebView_nativeOnDeleteAllCookiesCompleted(JNIEnv *, jobject,
+                                                                        jlong nativePtr)
+{
+    if (nativePtr == 0) {
+        return;
+    }
+    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate *>(nativePtr);
+    QMetaObject::invokeMethod(backend->q_ptr, [backend]() {
+        backend->onDeleteAllCookiesCompleted();
+    }, Qt::QueuedConnection);
+}
+
+JNIEXPORT void JNICALL
+Java_org_mobilewebview_MobileWebView_nativeOnClearSiteDataCompleted(JNIEnv *, jobject,
+                                                                    jlong nativePtr)
+{
+    if (nativePtr == 0) {
+        return;
+    }
+    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate *>(nativePtr);
+    QMetaObject::invokeMethod(backend->q_ptr, [backend]() {
+        backend->onClearSiteDataCompleted();
     }, Qt::QueuedConnection);
 }
 

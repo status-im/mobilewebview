@@ -290,6 +290,17 @@ static bool recordListContainsHost(const QList<WKWebsiteDataRecord *> &records, 
     return false;
 }
 
+// Exact displayName match — required to detect substring false-positives in clearSiteData.
+static bool recordListContainsExactHost(const QList<WKWebsiteDataRecord *> &records, NSString *hostName)
+{
+    for (WKWebsiteDataRecord *record : records) {
+        if (record.displayName != nil && [record.displayName isEqualToString:hostName]) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool waitForRecordWithDisplayNameGone(WKWebsiteDataStore *store, NSSet *dataTypes,
                                              const QString &host, int timeoutMs = 10000)
 {
@@ -319,6 +330,42 @@ static bool waitForRecordWithDisplayNamePresent(WKWebsiteDataStore *store, NSSet
         const bool found = recordListContainsHost(records, hostName);
         releaseFetchedRecords(records);
         if (found) {
+            return true;
+        }
+        QCoreApplication::processEvents();
+    }
+    return false;
+}
+
+static bool waitForExactRecordPresent(WKWebsiteDataStore *store, NSSet *dataTypes,
+                                      const QString &host, int timeoutMs = 10000)
+{
+    QElapsedTimer timer;
+    timer.start();
+    NSString *hostName = host.toNSString();
+    while (timer.elapsed() < timeoutMs) {
+        QList<WKWebsiteDataRecord *> records = fetchRecordsSync(store, dataTypes);
+        const bool found = recordListContainsExactHost(records, hostName);
+        releaseFetchedRecords(records);
+        if (found) {
+            return true;
+        }
+        QCoreApplication::processEvents();
+    }
+    return false;
+}
+
+static bool waitForExactRecordGone(WKWebsiteDataStore *store, NSSet *dataTypes,
+                                   const QString &host, int timeoutMs = 10000)
+{
+    QElapsedTimer timer;
+    timer.start();
+    NSString *hostName = host.toNSString();
+    while (timer.elapsed() < timeoutMs) {
+        QList<WKWebsiteDataRecord *> records = fetchRecordsSync(store, dataTypes);
+        const bool found = recordListContainsExactHost(records, hostName);
+        releaseFetchedRecords(records);
+        if (!found) {
             return true;
         }
         QCoreApplication::processEvents();
@@ -366,6 +413,7 @@ private slots:
     void clearDomStorageRemovesAllDomStorage();
     void clearProfileDataRemovesCacheCookiesAndDomStorage();
     void clearSiteDataRemovesCurrentSiteCookiesCacheAndStorage();
+    void clearSiteDataDoesNotClearSubstringRelatedHosts();
     void clearSiteDataReloadsCurrentPage();
     void clearSiteDataOnBlankUrlIsNoOp();
     void reloadAndBypassCacheReloadsCurrentPage();
@@ -652,6 +700,60 @@ void DataClearingTest::clearSiteDataRemovesCurrentSiteCookiesCacheAndStorage()
     QVERIFY(foundB);
 
     // Drain in-flight fetch/remove completion handlers before teardown.
+    QTest::qWait(500);
+}
+
+void DataClearingTest::clearSiteDataDoesNotClearSubstringRelatedHosts()
+{
+    // Bugbot finding: clearSiteDataImpl matches displayName with rangeOfString:,
+    // so clearing host "aaa.invalid" also removes "siteaaa.invalid".
+    QQuickWindow window;
+
+    const QString hostShort = QStringLiteral("aaa.invalid");
+    const QString hostLong = QStringLiteral("siteaaa.invalid");
+    const QString baseShort = QStringLiteral("http://") + hostShort + QStringLiteral("/page.html");
+    const QString baseLong = QStringLiteral("http://") + hostLong + QStringLiteral("/page.html");
+    const QString storageName = QStringLiteral("DataClearingTest_clear_site_substring");
+
+    {
+        MobileWebViewBackend backend;
+        backend.setStorageName(storageName);
+        attachToWindow(backend, window);
+        loadPageAt(backend, baseLong);
+        QCOMPARE(runJsAndWaitResult(backend,
+                                    QStringLiteral("localStorage.setItem('mwv_key','long'); 'ok'")),
+                 QStringLiteral("ok"));
+        backend.setOffTheRecord(true);
+        backend.setOffTheRecord(false);
+        QVERIFY(waitForLoaded(backend));
+        backend.setParentItem(nullptr);
+    }
+
+    MobileWebViewBackend backend;
+    backend.setStorageName(storageName);
+    attachToWindow(backend, window);
+    loadPageAt(backend, baseShort);
+    QCOMPARE(runJsAndWaitResult(backend,
+                                QStringLiteral("localStorage.setItem('mwv_key','short'); 'ok'")),
+             QStringLiteral("ok"));
+    backend.setOffTheRecord(true);
+    backend.setOffTheRecord(false);
+    QVERIFY(waitForLoaded(backend));
+
+    WKWebsiteDataStore *store = dataStoreForBackend(backend);
+    QVERIFY(waitForExactRecordPresent(store, domStorageDataTypes(), hostShort));
+    QVERIFY(waitForExactRecordPresent(store, domStorageDataTypes(), hostLong));
+
+    QSignalSpy clearSiteDataCompletedSpy(&backend, &MobileWebViewBackend::clearSiteDataCompleted);
+    backend.clearSiteData();
+    QVERIFY(waitForClearCompleted(backend, clearSiteDataCompletedSpy));
+
+    QVERIFY(waitForExactRecordGone(store, domStorageDataTypes(), hostShort));
+    // Must survive: hostLong merely contains hostShort as a substring.
+    QVERIFY2(waitForExactRecordPresent(store, domStorageDataTypes(), hostLong),
+             "clearSiteData must not remove records whose displayName only contains "
+             "the current host as a substring");
+
     QTest::qWait(500);
 }
 

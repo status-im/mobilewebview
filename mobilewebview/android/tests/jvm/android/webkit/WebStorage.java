@@ -7,19 +7,28 @@ public final class WebStorage {
     private static int sDeleteOriginCount = 0;
     private static String sLastDeleteOrigin = null;
 
-    private WebStorage() {}
+    private int mDeleteAllDataCount = 0;
+
+    public WebStorage() {}
 
     public static WebStorage getInstance() {
         return sInstance;
     }
 
     public void deleteAllData() {
-        ++sDeleteAllDataCount;
+        ++mDeleteAllDataCount;
+        if (this == sInstance) {
+            ++sDeleteAllDataCount;
+        }
     }
 
     public void deleteOrigin(String origin) {
         ++sDeleteOriginCount;
         sLastDeleteOrigin = origin;
+    }
+
+    public int instanceDeleteAllDataCount() {
+        return mDeleteAllDataCount;
     }
 
     public static int deleteAllDataCount() {
@@ -38,5 +47,6 @@ public final class WebStorage {
         sDeleteAllDataCount = 0;
         sDeleteOriginCount = 0;
         sLastDeleteOrigin = null;
+        sInstance.mDeleteAllDataCount = 0;
     }
 }

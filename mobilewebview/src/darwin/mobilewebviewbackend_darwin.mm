@@ -617,8 +617,10 @@ void DarwinWebViewPrivate::clearSiteDataImpl(const QString &origin, std::functio
         [store fetchDataRecordsOfTypes:types completionHandler:^(NSArray<WKWebsiteDataRecord *> *records) {
             NSMutableArray<WKWebsiteDataRecord *> *toRemove = [NSMutableArray array];
             for (WKWebsiteDataRecord *record in records) {
+                // Exact host/eTLD+1 match only — substring would clear unrelated
+                // sites (e.g. "aaa.invalid" matching "siteaaa.invalid").
                 if (record.displayName != nil
-                    && [record.displayName rangeOfString:hostName].location != NSNotFound) {
+                    && [record.displayName isEqualToString:hostName]) {
                     [toRemove addObject:record];
                 }
             }

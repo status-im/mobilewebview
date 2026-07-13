@@ -2,9 +2,12 @@ package org.mobilewebview;
 
 import android.util.Log;
 import android.webkit.CookieManager;
+import android.webkit.ValueCallback;
 import android.webkit.WebSettings;
 import android.webkit.WebStorage;
 import android.webkit.WebView;
+
+import androidx.webkit.Profile;
 
 import java.lang.reflect.Method;
 
@@ -25,11 +28,45 @@ public final class DataClearManager {
     }
 
     public void deleteAllCookies() {
-        CookieManager.getInstance().removeAllCookies(null);
+        deleteAllCookies((Profile) null, null);
+    }
+
+    public void deleteAllCookies(Runnable done) {
+        deleteAllCookies(null, done);
+    }
+
+    /**
+     * Clears cookies for {@code profile} when non-null; otherwise the process-wide
+     * {@link CookieManager}. {@code done} runs only after {@code removeAllCookies}
+     * completes.
+     */
+    public void deleteAllCookies(Profile profile, Runnable done) {
+        CookieManager cookieManager = profile != null
+                ? profile.getCookieManager()
+                : CookieManager.getInstance();
+        cookieManager.removeAllCookies(new ValueCallback<Boolean>() {
+            @Override
+            public void onReceiveValue(Boolean value) {
+                if (done != null) {
+                    done.run();
+                }
+            }
+        });
     }
 
     public void clearDomStorage() {
-        WebStorage.getInstance().deleteAllData();
+        clearDomStorage(null);
+    }
+
+    /**
+     * Clears DOM storage for {@code profile} when non-null; otherwise the
+     * process-wide {@link WebStorage}.
+     */
+    public void clearDomStorage(Profile profile) {
+        WebStorage webStorage = profile != null
+                ? profile.getWebStorage()
+                : WebStorage.getInstance();
+        webStorage.deleteAllData();
     }
 
     /**
@@ -38,6 +75,14 @@ public final class DataClearManager {
      * (or immediately on failure / unsupported).
      */
     public void clearSiteData(String site, Runnable done) {
+        clearSiteData(null, site, done);
+    }
+
+    /**
+     * Per-site wipe using {@code profile}'s {@link WebStorage} when non-null.
+     * {@code done} runs only from WebStorageCompat's completion callback.
+     */
+    public void clearSiteData(Profile profile, String site, Runnable done) {
         if (site == null || site.isEmpty()) {
             if (done != null) {
                 done.run();
@@ -58,7 +103,10 @@ public final class DataClearManager {
                     WebStorage.class,
                     String.class,
                     Runnable.class);
-            method.invoke(null, WebStorage.getInstance(), site, done);
+            WebStorage webStorage = profile != null
+                    ? profile.getWebStorage()
+                    : WebStorage.getInstance();
+            method.invoke(null, webStorage, site, done);
         } catch (ReflectiveOperationException e) {
             Log.w(TAG, "clearSiteData failed", e);
             if (done != null) {
