@@ -607,7 +607,11 @@ void DarwinWebViewPrivate::clearSiteDataImpl(const QString &origin, std::functio
     }
 
     // Per-site clearing is host-granular: WKWebsiteDataRecord.displayName is the
-    // host/eTLD+1 and does not include the port (see ADR 0004).
+    // eTLD+1 (registrable domain), not the full host, and does not include the
+    // port (see ADR 0004). A page at "sub.example.com" is stored under a record
+    // named "example.com", so match when the record name equals the host or is
+    // a dot-boundary suffix of it. Plain suffix/substring matching would clear
+    // unrelated sites (e.g. "aaa.invalid" matching "siteaaa.invalid").
     WKWebView *webView = m_webView;
     MobileWebViewBackend *backend = q_ptr;
     runOnMainThread(^{
@@ -617,10 +621,13 @@ void DarwinWebViewPrivate::clearSiteDataImpl(const QString &origin, std::functio
         [store fetchDataRecordsOfTypes:types completionHandler:^(NSArray<WKWebsiteDataRecord *> *records) {
             NSMutableArray<WKWebsiteDataRecord *> *toRemove = [NSMutableArray array];
             for (WKWebsiteDataRecord *record in records) {
-                // Exact host/eTLD+1 match only — substring would clear unrelated
-                // sites (e.g. "aaa.invalid" matching "siteaaa.invalid").
-                if (record.displayName != nil
-                    && [record.displayName isEqualToString:hostName]) {
+                if (record.displayName == nil) {
+                    continue;
+                }
+                const BOOL exactMatch = [record.displayName isEqualToString:hostName];
+                const BOOL registrableDomainOfHost =
+                    [hostName hasSuffix:[@"." stringByAppendingString:record.displayName]];
+                if (exactMatch || registrableDomainOfHost) {
                     [toRemove addObject:record];
                 }
             }
