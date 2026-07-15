@@ -414,6 +414,7 @@ void MobileWebViewBackendPrivate::recreateNativeViewForStore()
     m_viewStoreName = m_storageName;
 
     setupNativeViewImpl();
+    setHttpUserAgentImpl(m_httpUserAgent);
     ensureBridgeInstalled();
 
     setLoading(true);
@@ -755,6 +756,24 @@ void MobileWebViewBackend::setStorageName(const QString &storageName)
     if (d->m_nativeViewSetup && !d->m_offTheRecord) {
         d->recreateNativeViewForStore();
     }
+}
+
+QString MobileWebViewBackend::httpUserAgent() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_httpUserAgent;
+}
+
+void MobileWebViewBackend::setHttpUserAgent(const QString &httpUserAgent)
+{
+    Q_D(MobileWebViewBackend);
+    if (d->m_httpUserAgent == httpUserAgent) {
+        return;
+    }
+
+    d->m_httpUserAgent = httpUserAgent;
+    emit httpUserAgentChanged();
+    d->setHttpUserAgentImpl(httpUserAgent);
 }
 
 bool MobileWebViewBackend::clearing() const
@@ -1138,6 +1157,7 @@ void MobileWebViewBackend::itemChange(ItemChange change, const ItemChangeData &v
 
             QMetaObject::invokeMethod(this, [this, d]() {
                 d->setupNativeViewImpl();
+                d->setHttpUserAgentImpl(d->m_httpUserAgent);
                 // Trigger geometry sync now that m_nativeViewSetup is true.
                 polish();
             }, Qt::QueuedConnection);

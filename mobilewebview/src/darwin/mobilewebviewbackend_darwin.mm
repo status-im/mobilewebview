@@ -254,6 +254,7 @@ public:
     void updateAllowedOriginsImpl(const QStringList &origins) override;
     void updateInteractionEnabled(bool enabled) override;
     void setZoomFactorImpl(qreal factor) override;
+    void setHttpUserAgentImpl(const QString &userAgent) override;
     void findTextImpl(const QString &text, int flags) override;
     void stopFindImpl() override;
     bool findSupportedImpl() const override;
@@ -400,6 +401,9 @@ bool DarwinWebViewPrivate::initNativeView()
 
     m_viewStoreOffTheRecord = m_offTheRecord;
     m_viewStoreName = m_storageName;
+
+    // Apply before any load that setupNativeViewImpl may kick off on first create.
+    setHttpUserAgentImpl(m_httpUserAgent);
 
     return true;
 }
@@ -867,6 +871,19 @@ void DarwinWebViewPrivate::setZoomFactorImpl(qreal factor)
             @"document.documentElement.style.zoom = '%f'",
             static_cast<double>(factor)];
         [webView evaluateJavaScript:js completionHandler:nil];
+    });
+}
+
+void DarwinWebViewPrivate::setHttpUserAgentImpl(const QString &userAgent)
+{
+    if (!m_webView) {
+        return;
+    }
+
+    WKWebView *webView = m_webView;
+    NSString *ua = userAgent.isEmpty() ? nil : userAgent.toNSString();
+    runOnMainThread(^{
+        webView.customUserAgent = ua;
     });
 }
 

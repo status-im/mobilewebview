@@ -8,7 +8,14 @@ only — no implementation details.
 ### Storage Profile
 The set of persisted web data bound to a WebView: cookies, HTTP cache, and DOM
 storage (localStorage, IndexedDB, service workers). A WebView always reads and writes
-through exactly one Storage Profile for its lifetime.
+through exactly one Storage Profile for its lifetime. Does not include the WebView's
+HTTP User Agent.
+
+### HTTP User Agent
+The string a WebView presents on HTTP requests to identify itself. Owned by the
+WebView, independent of its Storage Profile. An empty value means the platform
+default agent string.
+_Avoid_: browser identity, profile user agent.
 
 ### Standard mode
 A WebView backed by a **persistent** Storage Profile. Data survives across app

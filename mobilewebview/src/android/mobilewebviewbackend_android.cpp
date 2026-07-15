@@ -60,6 +60,7 @@ public:
     void updateAllowedOriginsImpl(const QStringList &origins) override;
     void updateInteractionEnabled(bool enabled) override;
     void setZoomFactorImpl(qreal factor) override;
+    void setHttpUserAgentImpl(const QString &userAgent) override;
     void findTextImpl(const QString &text, int flags) override;
     void stopFindImpl() override;
     bool findSupportedImpl() const override;
@@ -121,6 +122,7 @@ private:
     jmethodID m_clearSiteDataMethod = nullptr;
     jmethodID m_reloadAndBypassCacheMethod = nullptr;
     jmethodID m_setZoomFactorMethod = nullptr;
+    jmethodID m_setHttpUserAgentMethod = nullptr;
     jmethodID m_findTextMethod = nullptr;
     jmethodID m_stopFindMethod = nullptr;
     jmethodID m_captureSnapshotForFreezeMethod = nullptr;
@@ -213,6 +215,7 @@ bool AndroidWebViewPrivate::initNativeView()
     m_clearSiteDataMethod = env->GetMethodID(m_webViewClass, "clearSiteData", "(Ljava/lang/String;J)V");
     m_reloadAndBypassCacheMethod = env->GetMethodID(m_webViewClass, "reloadAndBypassCache", "()V");
     m_setZoomFactorMethod = env->GetMethodID(m_webViewClass, "setZoomFactor", "(F)V");
+    m_setHttpUserAgentMethod = env->GetMethodID(m_webViewClass, "setHttpUserAgent", "(Ljava/lang/String;)V");
     m_findTextMethod = env->GetMethodID(m_webViewClass, "findText", "(Ljava/lang/String;I)V");
     m_stopFindMethod = env->GetMethodID(m_webViewClass, "stopFind", "()V");
     m_captureSnapshotForFreezeMethod = env->GetMethodID(m_webViewClass, "captureSnapshotForFreeze", "(J)V");
@@ -221,6 +224,9 @@ bool AndroidWebViewPrivate::initNativeView()
 
     m_viewStoreOffTheRecord = m_offTheRecord;
     m_viewStoreName = m_storageName;
+
+    // Apply before any load that setupNativeViewImpl may kick off on first create.
+    setHttpUserAgentImpl(m_httpUserAgent);
 
     return true;
 }
@@ -919,6 +925,29 @@ void AndroidWebViewPrivate::setZoomFactorImpl(qreal factor)
 
     env->CallVoidMethod(m_webViewObject, m_setZoomFactorMethod,
                         static_cast<jfloat>(factor));
+    clearJniExceptionIfAny(env);
+}
+
+void AndroidWebViewPrivate::setHttpUserAgentImpl(const QString &userAgent)
+{
+    QMutexLocker locker(&m_jniMutex);
+
+    if (!m_jniInitialized) {
+        return;
+    }
+
+    QJniEnvironment env;
+    if (!env.isValid() || !m_webViewObject || !m_setHttpUserAgentMethod) {
+        return;
+    }
+
+    const jstring jUserAgent = userAgent.isEmpty()
+        ? nullptr
+        : env->NewStringUTF(userAgent.toUtf8().constData());
+    env->CallVoidMethod(m_webViewObject, m_setHttpUserAgentMethod, jUserAgent);
+    if (jUserAgent) {
+        env->DeleteLocalRef(jUserAgent);
+    }
     clearJniExceptionIfAny(env);
 }
 

@@ -55,6 +55,7 @@ public:
     virtual void updateAllowedOriginsImpl(const QStringList &origins) = 0;
     virtual void updateInteractionEnabled(bool enabled) = 0;
     virtual void setZoomFactorImpl(qreal factor) = 0;
+    virtual void setHttpUserAgentImpl(const QString &userAgent) = 0;
     virtual void findTextImpl(const QString &text, int flags) = 0;
     virtual void stopFindImpl() = 0;
     virtual bool findSupportedImpl() const = 0;
@@ -115,6 +116,7 @@ public:
     int m_loadProgress = 0;
     QString m_favicon;
     qreal m_zoomFactor = 1.0;
+    QString m_httpUserAgent;
     QVariantList m_userScripts;
     QString m_webChannelNamespace = QStringLiteral("qt");
     QString m_invokeKey;
