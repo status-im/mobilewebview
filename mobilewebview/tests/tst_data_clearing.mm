@@ -414,6 +414,7 @@ private slots:
     void clearProfileDataRemovesCacheCookiesAndDomStorage();
     void clearSiteDataRemovesCurrentSiteCookiesCacheAndStorage();
     void clearSiteDataDoesNotClearSubstringRelatedHosts();
+    void clearSiteDataClearsRegistrableDomainRecordForSubdomain();
     void clearSiteDataReloadsCurrentPage();
     void clearSiteDataOnBlankUrlIsNoOp();
     void reloadAndBypassCacheReloadsCurrentPage();
@@ -753,6 +754,63 @@ void DataClearingTest::clearSiteDataDoesNotClearSubstringRelatedHosts()
     QVERIFY2(waitForExactRecordPresent(store, domStorageDataTypes(), hostLong),
              "clearSiteData must not remove records whose displayName only contains "
              "the current host as a substring");
+
+    QTest::qWait(500);
+}
+
+void DataClearingTest::clearSiteDataClearsRegistrableDomainRecordForSubdomain()
+{
+    // WKWebsiteDataRecord.displayName is the eTLD+1 (registrable domain), not the
+    // full host. Clearing from "sub.siteaaa.invalid" must remove the record named
+    // "siteaaa.invalid" — exact host equality alone leaves that data behind.
+    QQuickWindow window;
+
+    const QString registrableDomain = QStringLiteral("siteaaa.invalid");
+    const QString subdomainHost = QStringLiteral("sub.") + registrableDomain;
+    const QString otherDomain = QStringLiteral("sitebbb.invalid");
+    const QString baseSub = QStringLiteral("http://") + subdomainHost + QStringLiteral("/page.html");
+    const QString baseOther = QStringLiteral("http://") + otherDomain + QStringLiteral("/page.html");
+    const QString storageName = QStringLiteral("DataClearingTest_clear_site_etld");
+
+    {
+        MobileWebViewBackend backend;
+        backend.setStorageName(storageName);
+        attachToWindow(backend, window);
+        loadPageAt(backend, baseOther);
+        QCOMPARE(runJsAndWaitResult(backend,
+                                    QStringLiteral("localStorage.setItem('mwv_key','other'); 'ok'")),
+                 QStringLiteral("ok"));
+        backend.setOffTheRecord(true);
+        backend.setOffTheRecord(false);
+        QVERIFY(waitForLoaded(backend));
+        backend.setParentItem(nullptr);
+    }
+
+    MobileWebViewBackend backend;
+    backend.setStorageName(storageName);
+    attachToWindow(backend, window);
+    loadPageAt(backend, baseSub);
+    QCOMPARE(backend.url().host(), subdomainHost);
+    QCOMPARE(runJsAndWaitResult(backend,
+                                QStringLiteral("localStorage.setItem('mwv_key','sub'); 'ok'")),
+             QStringLiteral("ok"));
+    backend.setOffTheRecord(true);
+    backend.setOffTheRecord(false);
+    QVERIFY(waitForLoaded(backend));
+
+    WKWebsiteDataStore *store = dataStoreForBackend(backend);
+    // Subdomain pages are keyed under the registrable domain, not the full host.
+    QVERIFY2(waitForExactRecordPresent(store, domStorageDataTypes(), registrableDomain),
+             "expected WKWebsiteDataRecord.displayName to be eTLD+1 for subdomain page");
+    QVERIFY(waitForExactRecordPresent(store, domStorageDataTypes(), otherDomain));
+
+    QSignalSpy clearSiteDataCompletedSpy(&backend, &MobileWebViewBackend::clearSiteDataCompleted);
+    backend.clearSiteData();
+    QVERIFY(waitForClearCompleted(backend, clearSiteDataCompletedSpy));
+
+    QVERIFY2(waitForExactRecordGone(store, domStorageDataTypes(), registrableDomain),
+             "clearSiteData from a subdomain must remove the eTLD+1 data record");
+    QVERIFY(waitForExactRecordPresent(store, domStorageDataTypes(), otherDomain));
 
     QTest::qWait(500);
 }
