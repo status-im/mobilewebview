@@ -12,7 +12,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 find_package(QT NAMES Qt6 REQUIRED COMPONENTS Core)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Gui Qml Quick WebChannel)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Gui Qml Quick WebChannel Network HttpServer)
 
 if(POLICY QTP0002)
     qt_policy(SET QTP0002 NEW)
@@ -26,6 +26,8 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../mobilewebview
 
 qt_add_executable(MobileWebViewTest
     main.cpp
+    agentcontrol.h
+    agentcontrol.cpp
     downloadtestsupport.h
     downloadtestsupport.cpp
 )
@@ -71,6 +73,8 @@ target_link_libraries(MobileWebViewTest PRIVATE
     Qt::Qml
     Qt::Quick
     Qt::WebChannel
+    Qt::Network
+    Qt::HttpServer
 )
 
 target_include_directories(MobileWebViewTest PRIVATE

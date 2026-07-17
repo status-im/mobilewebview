@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "mobilewebview-test-app": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "test-app/mcp",
+        "python",
+        "server.py"
+      ]
+    }
+  }
+}

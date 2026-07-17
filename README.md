@@ -8,6 +8,7 @@ The repository contains:
 
 - `mobilewebview/` — reusable Qt library (`MobileWebView`)
 - `test-app/` — standalone test application that exercises the library
+- `test-app/mcp/` — MCP server so a Cursor agent can drive the test-app
 - `Makefile` — single entry point for building and running on all platforms
 
 ## Quick start
@@ -81,3 +82,30 @@ an ephemeral store (in-memory on Apple; a deletable Android profile that is remo
 teardown and swept after crashes).
 
 Changing either property on a live webview recreates the native view and reloads the current URL.
+
+## Agent control (test-app MCP)
+
+On macOS the test-app listens on `http://127.0.0.1:17321` (status bar shows `agent :17321`).
+A Cursor agent can open screens, navigate, run JS, invoke harness actions, and screenshot
+via the MCP server in `test-app/mcp/`.
+
+```bash
+./run_macos.sh          # starts app + control API
+# enable MCP server "mobilewebview-test-app" (see test-app/mcp/mcp.json)
+```
+
+| | |
+|---|---|
+| Control API | `GET /health`, `GET /state`, `POST /rpc` |
+| Port | `MWV_AGENT_PORT` (default `17321`; `0` disables) |
+| MCP setup | [test-app/mcp/README.md](test-app/mcp/README.md) |
+| Agent skill | [skills/mobilewebview-test-app/](skills/mobilewebview-test-app/) |
+
+Smoke without MCP:
+
+```bash
+curl -s http://127.0.0.1:17321/health
+curl -s http://127.0.0.1:17321/rpc \
+  -H 'content-type: application/json' \
+  -d '{"method":"list_screens","params":{}}'
+```

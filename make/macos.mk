@@ -17,4 +17,5 @@ _run_macos:
 	@APP="$(BUILD_BASE)/macos/MobileWebViewTest.app"; \
 	test -d "$$APP" || (echo "ERROR: app not found: $$APP"; exit 1); \
 	echo "Launching $$APP"; \
+	echo "Agent control: http://127.0.0.1:$${MWV_AGENT_PORT:-17321}  (MWV_AGENT_PORT=0 to disable)"; \
 	open "$$APP"

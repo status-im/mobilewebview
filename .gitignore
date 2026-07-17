@@ -1,2 +1,5 @@
 **/build*/
 *diagram.md
+test-app/mcp/.venv/
+**/__pycache__/
+*.pyc
