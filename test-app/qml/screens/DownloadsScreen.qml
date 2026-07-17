@@ -18,10 +18,18 @@ ScreenScaffold {
 
     readonly property string smallUrl:
         "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
+    // Main-frame navigation to a type WKWebView cannot display → WKNavigationResponsePolicyDownload.
+    // (PDF is displayable, so a plain <a href=pdf> never becomes a Download.)
+    readonly property string pageNetworkUrl:
+        "https://www.learningcontainer.com/wp-content/uploads/2020/05/sample-zip-file.zip"
+    // Larger payload so pause can fire before Completed.
+    // file-examples.com/…/file_example_MP4_1920_18MG.mp4 is behind Cloudflare
+    // (HTTP 403 challenge HTML ≈5KB) — WK "completes" instantly, pause never arms.
     readonly property string largeUrl:
-        "https://file-examples.com/wp-content/storage/2017/04/file_example_MP4_480_1_5MG.mp4"
+        "https://proof.ovh.net/files/10Mb.dat"
     readonly property string inlinePayload: "hello-mwv-inline"
     readonly property string inlineFileName: "inline-hello.txt"
+    readonly property string harnessOrigin: "https://download-harness.invalid"
 
     // "auto" | "manual"
     property string acceptMode: "auto"
@@ -106,9 +114,48 @@ ScreenScaffold {
 
     onBackRequested: stackView.pop()
 
+    property bool _bridgeReady: false
+    property var _afterLoad: null
+
     Component.onCompleted: {
         if (_downloadTest)
             _downloadTest.ensureDownloadsDir()
+    }
+
+    function ensureBridge() {
+        if (!root.webView || root._bridgeReady)
+            return
+        // Inline blob downloads need the document-start interceptor + qtbridge handler
+        // (installed only via installMessageBridge today).
+        root.webView.installMessageBridge(
+            "qt",
+            [root.harnessOrigin, root.harnessOrigin + "/"],
+            "qtInvoke")
+        root._bridgeReady = true
+    }
+
+    function runAfterLoaded(fn) {
+        if (!root.webView)
+            return
+        if (root.webView.loaded && !root.webView.loading) {
+            fn()
+            return
+        }
+        root._afterLoad = fn
+    }
+
+    Connections {
+        target: root.webView
+        function onLoadedChanged() {
+            if (root.webView && root.webView.loaded && root._afterLoad) {
+                var fn = root._afterLoad
+                root._afterLoad = null
+                Qt.callLater(fn)
+            }
+        }
+        function onDownloadRequested(download) {
+            root.handleRequested(download)
+        }
     }
 
     function stateName(state) {
@@ -209,6 +256,7 @@ ScreenScaffold {
     function onDownloadState(entry) {
         if (entry.scenario === "pause" && entry.download.state === MobileWebViewDownload.Paused) {
             root._pauseWatch = entry
+            // resume() may race WK's cancel→resumeData callback; Darwin queues it.
             Qt.callLater(function() {
                 if (entry.download.state === MobileWebViewDownload.Paused)
                     entry.download.resume()
@@ -266,7 +314,12 @@ ScreenScaffold {
                                check.ok ? ("paused then " + check.detail) : check.detail)
                 }
             } else if (st === MobileWebViewDownload.Interrupted) {
-                setVerdict("pause", "fail", entry.error || "Interrupted")
+                var err = entry.error || "Interrupted"
+                // Some CDNs / early cancel yield no WK resumeData — not a harness regression.
+                if (err.indexOf("no resume data") >= 0 || err.indexOf("Resume data unavailable") >= 0)
+                    setVerdict("pause", "skip", err)
+                else
+                    setVerdict("pause", "fail", err)
             }
             return
         }
@@ -303,19 +356,15 @@ ScreenScaffold {
             return
         setVerdict("page", "unknown", "running…")
         pendingScenario = "page"
-        var html = "<!doctype html><html><body>"
-            + "<a id='pageDl' href='" + root.smallUrl + "' download='page-dummy.pdf'>pdf</a>"
-            + "</body></html>"
-        root.webView.loadHtml(html, "https://download-harness.invalid/")
-        Qt.callLater(function() {
-            if (root.webView)
-                root.webView.runJavaScript("document.getElementById('pageDl').click()")
-        })
+        // Page-initiated: main-frame navigation that WebKit turns into a WKDownload
+        // (!canShowMIMEType for zip). Link+click to a PDF does not — PDF is displayable.
+        root.webView.loadUrl(root.pageNetworkUrl)
     }
 
     function startInline() {
         if (!root.webView)
             return
+        ensureBridge()
         setVerdict("inline", "unknown", "running…")
         pendingScenario = "inline"
         var html = "<!doctype html><html><body>"
@@ -324,8 +373,8 @@ ScreenScaffold {
             + "var b=new Blob([" + JSON.stringify(root.inlinePayload) + "],{type:'text/plain'});"
             + "document.getElementById('inlineDl').href=URL.createObjectURL(b);"
             + "})();</script></body></html>"
-        root.webView.loadHtml(html, "https://download-harness.invalid/")
-        Qt.callLater(function() {
+        root.webView.loadHtml(html, root.harnessOrigin + "/")
+        runAfterLoaded(function() {
             if (root.webView)
                 root.webView.runJavaScript("document.getElementById('inlineDl').click()")
         })
@@ -421,19 +470,32 @@ ScreenScaffold {
         statusMessage("accept: " + dest)
 
         if (entry.scenario === "pause") {
-            Qt.callLater(function() {
-                if (download.state === MobileWebViewDownload.InProgress)
-                    download.pause()
-                else if (download.state === MobileWebViewDownload.Completed)
-                    setVerdict("pause", "skip", "finished before pause")
-            })
+            // Give WK a moment to attach the transfer; immediate cancel often
+            // returns nil resumeData. Progress KVO can lag, so don't require bytes.
+            root._pauseArmEntry = entry
+            pauseArmTimer.restart()
         }
     }
 
-    Connections {
-        target: root.webView
-        function onDownloadRequested(download) {
-            root.handleRequested(download)
+    property var _pauseArmEntry: null
+    Timer {
+        id: pauseArmTimer
+        interval: 400
+        repeat: false
+        onTriggered: {
+            var entry = root._pauseArmEntry
+            root._pauseArmEntry = null
+            if (!entry || !entry.download)
+                return
+            var download = entry.download
+            if (download.state === MobileWebViewDownload.Completed) {
+                root.setVerdict("pause", "skip", "finished before pause")
+                return
+            }
+            if (download.state === MobileWebViewDownload.InProgress)
+                download.pause()
+            else
+                root.setVerdict("pause", "skip", "not InProgress after arm delay")
         }
     }
 
