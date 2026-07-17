@@ -30,9 +30,12 @@ public:
     explicit MobileWebViewBackendPrivate(MobileWebViewBackend *q);
     virtual ~MobileWebViewBackendPrivate();
     
-    // Platform-specific virtual methods (pure virtual)
+    // =========================================================================
+    // Mandatory core (pure virtual) — every platform must implement these.
+    // =========================================================================
     virtual bool initNativeView() = 0;
     virtual void destroyNativeView() = 0;
+    virtual void setupNativeViewImpl() = 0;
     virtual void loadUrlImpl(const QUrl &url) = 0;
     virtual void loadHtmlImpl(const QString &html, const QUrl &baseUrl) = 0;
     virtual void goBackImpl() = 0;
@@ -42,37 +45,60 @@ public:
     virtual void reloadAndBypassCacheImpl() = 0;
     virtual void stopImpl() = 0;
     virtual void clearHistoryImpl() = 0;
-    virtual void clearHttpCacheImpl(std::function<void()> completion) = 0;
-    virtual void deleteAllCookiesImpl(std::function<void()> completion) = 0;
-    virtual void clearDomStorageImpl(std::function<void()> completion) = 0;
-    virtual void clearSiteDataImpl(const QString &origin, std::function<void()> completion) = 0;
-    virtual bool clearSiteDataSupportedImpl() const = 0;
     virtual void evaluateJavaScript(const QString &script) = 0;
     virtual void updateNativeGeometry(const QRectF &rect) = 0;
     virtual void updateNativeVisibility(bool visible) = 0;
-    virtual bool installBridgeImpl(const QString &ns, const QStringList &origins, 
-                                   const QString &invokeKey, const QString &webChannelScriptPath) = 0;
-    virtual void postMessageToJavaScript(const QString &json) = 0;
-    virtual void setupNativeViewImpl() = 0;
-    virtual void updateAllowedOriginsImpl(const QStringList &origins) = 0;
-    virtual void updateInteractionEnabled(bool enabled) = 0;
-    virtual void setZoomFactorImpl(qreal factor) = 0;
-    virtual void setHttpUserAgentImpl(const QString &userAgent) = 0;
-    virtual void findTextImpl(const QString &text, int flags) = 0;
-    virtual void stopFindImpl() = 0;
-    virtual bool findSupportedImpl() const = 0;
-    virtual bool hasNativeFindPanelImpl() const = 0;
-    virtual void showFindPanelImpl() = 0;
-    virtual void hideFindPanelImpl() = 0;
 
     // Async snapshot for freeze and public requestSnapshot; must eventually call
     // notifySnapshotReady on the Qt thread
     virtual void captureSnapshotImpl(quint64 requestId) = 0;
 
-    // Downloads (ADR 0005): platform performs the transfer after host accept().
+    // =========================================================================
+    // Optional capability: data clearing.
+    // Defaults invoke the completion immediately so the "Clearing" busy counter
+    // (beginClear/endClear in mobilewebviewbackend.cpp) never hangs on
+    // platforms without clearing support. Overrides must eventually invoke the
+    // completion on the Qt thread.
+    // =========================================================================
+    virtual void clearHttpCacheImpl(std::function<void()> completion);
+    virtual void deleteAllCookiesImpl(std::function<void()> completion);
+    virtual void clearDomStorageImpl(std::function<void()> completion);
+    virtual void clearSiteDataImpl(const QString &origin, std::function<void()> completion);
+    virtual bool clearSiteDataSupportedImpl() const { return false; }
+
+    // =========================================================================
+    // Optional capability: find-in-page. Defaults: unsupported, no-ops.
+    // =========================================================================
+    virtual void findTextImpl(const QString &, int) {}
+    virtual void stopFindImpl() {}
+    virtual bool findSupportedImpl() const { return false; }
+    virtual bool hasNativeFindPanelImpl() const { return false; }
+    virtual void showFindPanelImpl() {}
+    virtual void hideFindPanelImpl() {}
+
+    // =========================================================================
+    // Optional capability: downloads (ADR 0005).
+    // Platform performs the transfer after host accept(). Default
+    // startDownloadImpl immediately reports the download as Interrupted.
+    // =========================================================================
     virtual void startDownloadImpl(quint64 downloadId, const QUrl &url,
-                                   const QString &destinationPath) = 0;
-    virtual void cancelDownloadImpl(quint64 downloadId) = 0;
+                                   const QString &destinationPath);
+    virtual void cancelDownloadImpl(quint64) {}
+
+    // =========================================================================
+    // Optional capability: JS message bridge. Defaults: no bridge, no-ops.
+    // =========================================================================
+    virtual bool installBridgeImpl(const QString &, const QStringList &,
+                                   const QString &, const QString &) { return false; }
+    virtual void postMessageToJavaScript(const QString &) {}
+    virtual void updateAllowedOriginsImpl(const QStringList &) {}
+
+    // =========================================================================
+    // Optional capability: view settings. Defaults: no-ops.
+    // =========================================================================
+    virtual void updateInteractionEnabled(bool) {}
+    virtual void setZoomFactorImpl(qreal) {}
+    virtual void setHttpUserAgentImpl(const QString &) {}
 
     // Called when platform snapshot is ready (Qt thread)
     void notifySnapshotReady(quint64 requestId, const QImage &image);

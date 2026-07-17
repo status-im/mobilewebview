@@ -141,19 +141,13 @@ public:
         lastAllowedOrigins = origins;
     }
 
-    void updateInteractionEnabled(bool) override {}
-    void setZoomFactorImpl(qreal) override {}
+    // updateInteractionEnabled / setZoomFactorImpl / find-in-page methods:
+    // base-class defaults (no-ops) — not probed by these tests.
     void setHttpUserAgentImpl(const QString &userAgent) override
     {
         ++setHttpUserAgentCalls;
         lastHttpUserAgent = userAgent;
     }
-    void findTextImpl(const QString &, int) override {}
-    void stopFindImpl() override {}
-    bool findSupportedImpl() const override { return true; }
-    bool hasNativeFindPanelImpl() const override { return false; }
-    void showFindPanelImpl() override {}
-    void hideFindPanelImpl() override {}
 
     void captureSnapshotImpl(quint64 requestId) override
     {

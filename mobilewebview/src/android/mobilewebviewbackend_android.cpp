@@ -22,6 +22,7 @@
 #include <QPointer>
 #include <optional>
 #include <functional>
+#include <utility>
 
 // =============================================================================
 // AndroidWebViewPrivate - Android-specific implementation
@@ -64,9 +65,8 @@ public:
     void findTextImpl(const QString &text, int flags) override;
     void stopFindImpl() override;
     bool findSupportedImpl() const override;
-    bool hasNativeFindPanelImpl() const override;
-    void showFindPanelImpl() override;
-    void hideFindPanelImpl() override;
+    // hasNativeFindPanelImpl/showFindPanelImpl/hideFindPanelImpl: base-class
+    // defaults (false / no-op) — the QML find panel is used on Android.
     void captureSnapshotImpl(quint64 requestId) override;
     void detachNativeViewFromSceneImpl() override;
     void startDownloadImpl(quint64 downloadId, const QUrl &url,
@@ -1034,21 +1034,6 @@ bool AndroidWebViewPrivate::findSupportedImpl() const
     return true;
 }
 
-bool AndroidWebViewPrivate::hasNativeFindPanelImpl() const
-{
-    return false;
-}
-
-void AndroidWebViewPrivate::showFindPanelImpl()
-{
-    // No-op on Android: QML find panel is used instead
-}
-
-void AndroidWebViewPrivate::hideFindPanelImpl()
-{
-    // No-op on Android: QML find panel is used instead
-}
-
 void AndroidWebViewPrivate::captureSnapshotImpl(quint64 requestId)
 {
     QMutexLocker locker(&m_jniMutex);
@@ -1177,151 +1162,135 @@ MobileWebViewBackendPrivate *createPlatformBackend(MobileWebViewBackend *q)
 // JNI callback implementations
 // =============================================================================
 
+namespace {
+
+// Inbound JNI marshalling helpers.
+//
+// Threading contract: every nativeOn* entry point runs on a JNI (Java) thread.
+// All JNIEnv/jstring access must happen there, BEFORE the queued hop to the Qt
+// thread; the hop lambda may only capture already-converted values by value.
+
+QString toQString(JNIEnv *env, jstring value)
+{
+    if (!value) {
+        return {};
+    }
+    const char *chars = env->GetStringUTFChars(value, nullptr);
+    QString out = QString::fromUtf8(chars);
+    env->ReleaseStringUTFChars(value, chars);
+    return out;
+}
+
+// Guard the native pointer, cast it, and queue `fn(backend)` onto the Qt
+// thread (context object = the backend's public QObject, so the invocation is
+// dropped if it is destroyed before delivery).
+template <typename Fn>
+void dispatchToBackend(jlong nativePtr, Fn &&fn)
+{
+    if (nativePtr == 0) {
+        return;
+    }
+    auto *backend = reinterpret_cast<AndroidWebViewPrivate *>(nativePtr);
+    QMetaObject::invokeMethod(backend->q_ptr,
+                              [backend, fn = std::forward<Fn>(fn)]() { fn(backend); },
+                              Qt::QueuedConnection);
+}
+
+} // namespace
+
 extern "C" {
 
 JNIEXPORT void JNICALL
-Java_org_mobilewebview_MobileWebView_nativeOnWebMessageReceived(JNIEnv *env, jobject obj, 
-                                                         jlong nativePtr, jstring message, 
+Java_org_mobilewebview_MobileWebView_nativeOnWebMessageReceived(JNIEnv *env, jobject,
+                                                         jlong nativePtr, jstring message,
                                                          jstring origin, jboolean isMainFrame)
 {
-    if (nativePtr == 0) return;
-    
-    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
-    const char *msgChars = env->GetStringUTFChars(message, nullptr);
-    const char *originChars = env->GetStringUTFChars(origin, nullptr);
-    
-    QString qMessage = QString::fromUtf8(msgChars);
-    QString qOrigin = QString::fromUtf8(originChars);
-    
-    env->ReleaseStringUTFChars(message, msgChars);
-    env->ReleaseStringUTFChars(origin, originChars);
-    
-    QMetaObject::invokeMethod(backend->q_ptr, [backend, qMessage, qOrigin, isMainFrame]() {
-        backend->onWebMessageReceived(qMessage, qOrigin, isMainFrame == JNI_TRUE);
-    }, Qt::QueuedConnection);
+    const QString qMessage = toQString(env, message);
+    const QString qOrigin = toQString(env, origin);
+    const bool mainFrame = isMainFrame == JNI_TRUE;
+    dispatchToBackend(nativePtr, [qMessage, qOrigin, mainFrame](AndroidWebViewPrivate *backend) {
+        backend->onWebMessageReceived(qMessage, qOrigin, mainFrame);
+    });
 }
 
 JNIEXPORT void JNICALL
-Java_org_mobilewebview_MobileWebView_nativeOnNavigationStarted(JNIEnv *env, jobject obj,
+Java_org_mobilewebview_MobileWebView_nativeOnNavigationStarted(JNIEnv *env, jobject,
                                                                jlong nativePtr, jstring url)
 {
-    if (nativePtr == 0) return;
-
-    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
-    QString qUrl;
-    if (url) {
-        const char *urlChars = env->GetStringUTFChars(url, nullptr);
-        qUrl = QString::fromUtf8(urlChars);
-        env->ReleaseStringUTFChars(url, urlChars);
-    }
-    QMetaObject::invokeMethod(backend->q_ptr, [backend, qUrl]() {
+    const QString qUrl = toQString(env, url);
+    dispatchToBackend(nativePtr, [qUrl](AndroidWebViewPrivate *backend) {
         backend->onNavigationStarted(qUrl);
-    }, Qt::QueuedConnection);
+    });
 }
 
 JNIEXPORT void JNICALL
-Java_org_mobilewebview_MobileWebView_nativeOnNavigationFinished(JNIEnv *env, jobject obj, 
+Java_org_mobilewebview_MobileWebView_nativeOnNavigationFinished(JNIEnv *env, jobject,
                                                         jlong nativePtr, jstring url)
 {
-    if (nativePtr == 0) return;
-    
-    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
-    const char *urlChars = env->GetStringUTFChars(url, nullptr);
-    QString qUrl = QString::fromUtf8(urlChars);
-    env->ReleaseStringUTFChars(url, urlChars);
-    
-    QMetaObject::invokeMethod(backend->q_ptr, [backend, qUrl]() {
+    const QString qUrl = toQString(env, url);
+    dispatchToBackend(nativePtr, [qUrl](AndroidWebViewPrivate *backend) {
         backend->onNavigationFinished(qUrl);
-    }, Qt::QueuedConnection);
+    });
 }
 
 JNIEXPORT void JNICALL
-Java_org_mobilewebview_MobileWebView_nativeOnNavigationFailed(JNIEnv *env, jobject obj, jlong nativePtr)
+Java_org_mobilewebview_MobileWebView_nativeOnNavigationFailed(JNIEnv *, jobject, jlong nativePtr)
 {
-    if (nativePtr == 0) return;
-    
-    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
-    QMetaObject::invokeMethod(backend->q_ptr, [backend]() {
+    dispatchToBackend(nativePtr, [](AndroidWebViewPrivate *backend) {
         backend->onNavigationFailed();
-    }, Qt::QueuedConnection);
+    });
 }
 
 JNIEXPORT void JNICALL
-Java_org_mobilewebview_MobileWebView_nativeOnJavaScriptResult(JNIEnv *env, jobject obj, 
+Java_org_mobilewebview_MobileWebView_nativeOnJavaScriptResult(JNIEnv *env, jobject,
                                                       jlong nativePtr, jstring result, jstring error)
 {
-    if (nativePtr == 0) return;
-    
-    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
-    const char *resultChars = env->GetStringUTFChars(result, nullptr);
-    const char *errorChars = env->GetStringUTFChars(error, nullptr);
-    
-    QString qResult = QString::fromUtf8(resultChars);
-    QString qError = QString::fromUtf8(errorChars);
-    
-    env->ReleaseStringUTFChars(result, resultChars);
-    env->ReleaseStringUTFChars(error, errorChars);
-    
-    QMetaObject::invokeMethod(backend->q_ptr, [backend, qResult, qError]() {
+    const QString qResult = toQString(env, result);
+    const QString qError = toQString(env, error);
+    dispatchToBackend(nativePtr, [qResult, qError](AndroidWebViewPrivate *backend) {
         backend->onJavaScriptResult(qResult, qError);
-    }, Qt::QueuedConnection);
+    });
 }
 
 JNIEXPORT void JNICALL
-Java_org_mobilewebview_MobileWebView_nativeOnTitleChanged(JNIEnv *env, jobject obj,
+Java_org_mobilewebview_MobileWebView_nativeOnTitleChanged(JNIEnv *env, jobject,
                                                           jlong nativePtr, jstring title)
 {
-    if (nativePtr == 0) return;
-
-    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
-    const char *titleChars = env->GetStringUTFChars(title, nullptr);
-    QString qTitle = QString::fromUtf8(titleChars);
-    env->ReleaseStringUTFChars(title, titleChars);
-
-    QMetaObject::invokeMethod(backend->q_ptr, [backend, qTitle]() {
+    const QString qTitle = toQString(env, title);
+    dispatchToBackend(nativePtr, [qTitle](AndroidWebViewPrivate *backend) {
         backend->onTitleChanged(qTitle);
-    }, Qt::QueuedConnection);
+    });
 }
 
 JNIEXPORT void JNICALL
-Java_org_mobilewebview_MobileWebView_nativeOnNavigationStateChanged(JNIEnv *env, jobject obj,
+Java_org_mobilewebview_MobileWebView_nativeOnNavigationStateChanged(JNIEnv *, jobject,
                                                                     jlong nativePtr, jboolean canGoBack,
                                                                     jboolean canGoForward)
 {
-    if (nativePtr == 0) return;
-
-    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
-    QMetaObject::invokeMethod(backend->q_ptr, [backend, canGoBack, canGoForward]() {
-        backend->onNavigationStateChanged(canGoBack == JNI_TRUE, canGoForward == JNI_TRUE);
-    }, Qt::QueuedConnection);
+    const bool back = canGoBack == JNI_TRUE;
+    const bool forward = canGoForward == JNI_TRUE;
+    dispatchToBackend(nativePtr, [back, forward](AndroidWebViewPrivate *backend) {
+        backend->onNavigationStateChanged(back, forward);
+    });
 }
 
 JNIEXPORT void JNICALL
-Java_org_mobilewebview_MobileWebView_nativeOnBackRequested(JNIEnv *env, jobject obj, jlong nativePtr,
+Java_org_mobilewebview_MobileWebView_nativeOnBackRequested(JNIEnv *, jobject, jlong nativePtr,
                                                            jboolean pressed)
 {
-    Q_UNUSED(env)
-    Q_UNUSED(obj)
-    if (nativePtr == 0) return;
-
-    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
     const QEvent::Type type = (pressed == JNI_TRUE) ? QEvent::KeyPress : QEvent::KeyRelease;
-    QMetaObject::invokeMethod(backend->q_ptr, [backend, type]() {
+    dispatchToBackend(nativePtr, [type](AndroidWebViewPrivate *backend) {
         QQuickWindow *win = backend->q_ptr->window();
         if (!win) return;
         QCoreApplication::postEvent(win, new QKeyEvent(type, Qt::Key_Back, Qt::NoModifier));
-    }, Qt::QueuedConnection);
+    });
 }
 
 JNIEXPORT void JNICALL
-Java_org_mobilewebview_MobileWebView_nativeOnHistoryChanged(JNIEnv *env, jobject obj,
+Java_org_mobilewebview_MobileWebView_nativeOnHistoryChanged(JNIEnv *env, jobject,
                                                             jlong nativePtr, jobjectArray urls,
                                                             jobjectArray titles, jint currentHistoryIndex)
 {
-    Q_UNUSED(obj)
-    if (nativePtr == 0) return;
-
-    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
     QVariantList historyItems;
 
     const jsize urlCount = urls ? env->GetArrayLength(urls) : 0;
@@ -1332,24 +1301,9 @@ Java_org_mobilewebview_MobileWebView_nativeOnHistoryChanged(JNIEnv *env, jobject
         auto *urlString = static_cast<jstring>(env->GetObjectArrayElement(urls, i));
         auto *titleString = i < titleCount ? static_cast<jstring>(env->GetObjectArrayElement(titles, i)) : nullptr;
 
-        QString qUrl;
-        QString qTitle;
-
-        if (urlString) {
-            const char *urlChars = env->GetStringUTFChars(urlString, nullptr);
-            qUrl = QString::fromUtf8(urlChars);
-            env->ReleaseStringUTFChars(urlString, urlChars);
-        }
-
-        if (titleString) {
-            const char *titleChars = env->GetStringUTFChars(titleString, nullptr);
-            qTitle = QString::fromUtf8(titleChars);
-            env->ReleaseStringUTFChars(titleString, titleChars);
-        }
-
         QVariantMap item;
-        item.insert(QStringLiteral("url"), qUrl);
-        item.insert(QStringLiteral("title"), qTitle);
+        item.insert(QStringLiteral("url"), toQString(env, urlString));
+        item.insert(QStringLiteral("title"), toQString(env, titleString));
         historyItems.append(item);
 
         if (urlString) {
@@ -1360,69 +1314,55 @@ Java_org_mobilewebview_MobileWebView_nativeOnHistoryChanged(JNIEnv *env, jobject
         }
     }
 
-    QMetaObject::invokeMethod(backend->q_ptr, [backend, historyItems, currentHistoryIndex]() {
-        backend->onHistoryChanged(historyItems, static_cast<int>(currentHistoryIndex));
-    }, Qt::QueuedConnection);
+    const int index = static_cast<int>(currentHistoryIndex);
+    dispatchToBackend(nativePtr, [historyItems, index](AndroidWebViewPrivate *backend) {
+        backend->onHistoryChanged(historyItems, index);
+    });
 }
 
 JNIEXPORT void JNICALL
-Java_org_mobilewebview_MobileWebView_nativeOnNewWindowRequested(JNIEnv *env, jobject obj,
+Java_org_mobilewebview_MobileWebView_nativeOnNewWindowRequested(JNIEnv *env, jobject,
                                                                 jlong nativePtr, jstring url,
                                                                 jboolean userInitiated)
 {
-    if (nativePtr == 0) return;
-
-    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
-    const char *urlChars = env->GetStringUTFChars(url, nullptr);
-    QString qUrl = QString::fromUtf8(urlChars);
-    env->ReleaseStringUTFChars(url, urlChars);
-
-    QMetaObject::invokeMethod(backend->q_ptr, [backend, qUrl, userInitiated]() {
-        backend->onNewWindowRequested(qUrl, userInitiated == JNI_TRUE);
-    }, Qt::QueuedConnection);
+    const QString qUrl = toQString(env, url);
+    const bool user = userInitiated == JNI_TRUE;
+    dispatchToBackend(nativePtr, [qUrl, user](AndroidWebViewPrivate *backend) {
+        backend->onNewWindowRequested(qUrl, user);
+    });
 }
 
 JNIEXPORT void JNICALL
-Java_org_mobilewebview_MobileWebView_nativeOnLoadProgressChanged(JNIEnv *env, jobject obj,
+Java_org_mobilewebview_MobileWebView_nativeOnLoadProgressChanged(JNIEnv *, jobject,
                                                                   jlong nativePtr, jint progress)
 {
-    if (nativePtr == 0) return;
-
-    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
-    QMetaObject::invokeMethod(backend->q_ptr, [backend, progress]() {
-        backend->onLoadProgressChanged(static_cast<int>(progress));
-    }, Qt::QueuedConnection);
+    const int qProgress = static_cast<int>(progress);
+    dispatchToBackend(nativePtr, [qProgress](AndroidWebViewPrivate *backend) {
+        backend->onLoadProgressChanged(qProgress);
+    });
 }
 
 JNIEXPORT void JNICALL
-Java_org_mobilewebview_MobileWebView_nativeOnFaviconReceived(JNIEnv *env, jobject obj,
+Java_org_mobilewebview_MobileWebView_nativeOnFaviconReceived(JNIEnv *env, jobject,
                                                               jlong nativePtr, jstring faviconUrl)
 {
-    if (nativePtr == 0) return;
-
-    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
-    const char *urlChars = env->GetStringUTFChars(faviconUrl, nullptr);
-    QString qUrl = QString::fromUtf8(urlChars);
-    env->ReleaseStringUTFChars(faviconUrl, urlChars);
-
-    QMetaObject::invokeMethod(backend->q_ptr, [backend, qUrl]() {
+    const QString qUrl = toQString(env, faviconUrl);
+    dispatchToBackend(nativePtr, [qUrl](AndroidWebViewPrivate *backend) {
         backend->onFaviconReceived(qUrl);
-    }, Qt::QueuedConnection);
+    });
 }
 
 JNIEXPORT void JNICALL
-Java_org_mobilewebview_MobileWebView_nativeOnFindResultChanged(JNIEnv *env, jobject obj,
+Java_org_mobilewebview_MobileWebView_nativeOnFindResultChanged(JNIEnv *, jobject,
                                                                 jlong nativePtr,
                                                                 jint activeMatchIndex,
                                                                 jint matchCount)
 {
-    if (nativePtr == 0) return;
-
-    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate*>(nativePtr);
-    QMetaObject::invokeMethod(backend->q_ptr, [backend, activeMatchIndex, matchCount]() {
-        backend->onFindResultChanged(static_cast<int>(activeMatchIndex),
-                                     static_cast<int>(matchCount));
-    }, Qt::QueuedConnection);
+    const int active = static_cast<int>(activeMatchIndex);
+    const int count = static_cast<int>(matchCount);
+    dispatchToBackend(nativePtr, [active, count](AndroidWebViewPrivate *backend) {
+        backend->onFindResultChanged(active, count);
+    });
 }
 
 JNIEXPORT void JNICALL
@@ -1433,13 +1373,7 @@ Java_org_mobilewebview_MobileWebView_nativeOnFreezeSnapshotReady(JNIEnv *env, jo
                                                                  jint height,
                                                                  jbyteArray jdata)
 {
-    if (nativePtr == 0) {
-        return;
-    }
-
-    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate *>(nativePtr);
-    QPointer<MobileWebViewBackend> guard(backend->q_ptr);
-
+    // Copy the pixel buffer on the JNI thread; the QImage is built on the Qt thread.
     QByteArray pixels;
     if (jdata && width > 0 && height > 0) {
         const jsize len = env->GetArrayLength(jdata);
@@ -1454,19 +1388,18 @@ Java_org_mobilewebview_MobileWebView_nativeOnFreezeSnapshotReady(JNIEnv *env, jo
     }
 
     const quint64 rid = static_cast<quint64>(requestId);
+    const int w = static_cast<int>(width);
+    const int h = static_cast<int>(height);
 
-    QMetaObject::invokeMethod(backend->q_ptr, [guard, backend, rid, width, height, pixels]() {
-        if (!guard) {
-            return;
-        }
+    dispatchToBackend(nativePtr, [rid, w, h, pixels](AndroidWebViewPrivate *backend) {
         QImage img;
-        if (!pixels.isEmpty() && width > 0 && height > 0) {
+        if (!pixels.isEmpty() && w > 0 && h > 0) {
             img = QImage(reinterpret_cast<const uchar *>(pixels.constData()),
-                         width, height, width * 4, QImage::Format_RGBA8888)
+                         w, h, w * 4, QImage::Format_RGBA8888)
                       .copy();
         }
         backend->notifySnapshotReady(rid, img);
-    }, Qt::QueuedConnection);
+    });
 }
 
 JNIEXPORT void JNICALL
@@ -1474,14 +1407,10 @@ Java_org_mobilewebview_MobileWebView_nativeOnClearHttpCacheCompleted(JNIEnv *, j
                                                                       jlong nativePtr,
                                                                       jlong requestId)
 {
-    if (nativePtr == 0) {
-        return;
-    }
-    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate *>(nativePtr);
     const quint64 rid = static_cast<quint64>(requestId);
-    QMetaObject::invokeMethod(backend->q_ptr, [backend, rid]() {
+    dispatchToBackend(nativePtr, [rid](AndroidWebViewPrivate *backend) {
         backend->onClearCompleted(rid);
-    }, Qt::QueuedConnection);
+    });
 }
 
 JNIEXPORT void JNICALL
@@ -1489,14 +1418,10 @@ Java_org_mobilewebview_MobileWebView_nativeOnDeleteAllCookiesCompleted(JNIEnv *,
                                                                         jlong nativePtr,
                                                                         jlong requestId)
 {
-    if (nativePtr == 0) {
-        return;
-    }
-    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate *>(nativePtr);
     const quint64 rid = static_cast<quint64>(requestId);
-    QMetaObject::invokeMethod(backend->q_ptr, [backend, rid]() {
+    dispatchToBackend(nativePtr, [rid](AndroidWebViewPrivate *backend) {
         backend->onClearCompleted(rid);
-    }, Qt::QueuedConnection);
+    });
 }
 
 JNIEXPORT void JNICALL
@@ -1504,14 +1429,10 @@ Java_org_mobilewebview_MobileWebView_nativeOnClearDomStorageCompleted(JNIEnv *, 
                                                                        jlong nativePtr,
                                                                        jlong requestId)
 {
-    if (nativePtr == 0) {
-        return;
-    }
-    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate *>(nativePtr);
     const quint64 rid = static_cast<quint64>(requestId);
-    QMetaObject::invokeMethod(backend->q_ptr, [backend, rid]() {
+    dispatchToBackend(nativePtr, [rid](AndroidWebViewPrivate *backend) {
         backend->onClearCompleted(rid);
-    }, Qt::QueuedConnection);
+    });
 }
 
 JNIEXPORT void JNICALL
@@ -1519,14 +1440,10 @@ Java_org_mobilewebview_MobileWebView_nativeOnClearSiteDataCompleted(JNIEnv *, jo
                                                                     jlong nativePtr,
                                                                     jlong requestId)
 {
-    if (nativePtr == 0) {
-        return;
-    }
-    AndroidWebViewPrivate *backend = reinterpret_cast<AndroidWebViewPrivate *>(nativePtr);
     const quint64 rid = static_cast<quint64>(requestId);
-    QMetaObject::invokeMethod(backend->q_ptr, [backend, rid]() {
+    dispatchToBackend(nativePtr, [rid](AndroidWebViewPrivate *backend) {
         backend->onClearCompleted(rid);
-    }, Qt::QueuedConnection);
+    });
 }
 
 JNIEXPORT void JNICALL
@@ -1534,64 +1451,38 @@ Java_org_mobilewebview_MobileWebView_nativeOnDownloadDetected(JNIEnv *env, jobje
         jlong nativePtr, jstring url, jstring fileName, jstring mimeType,
         jlong contentLength, jstring /*userAgent*/)
 {
-    if (nativePtr == 0)
-        return;
-
-    auto *backend = reinterpret_cast<AndroidWebViewPrivate *>(nativePtr);
-    auto toQString = [env](jstring value) -> QString {
-        if (!value)
-            return {};
-        const char *chars = env->GetStringUTFChars(value, nullptr);
-        QString out = QString::fromUtf8(chars);
-        env->ReleaseStringUTFChars(value, chars);
-        return out;
-    };
-
-    const QString qUrl = toQString(url);
-    const QString qFileName = toQString(fileName);
-    const QString qMime = toQString(mimeType);
+    const QString qUrl = toQString(env, url);
+    const QString qFileName = toQString(env, fileName);
+    const QString qMime = toQString(env, mimeType);
     const qint64 total = contentLength > 0 ? static_cast<qint64>(contentLength) : -1;
 
-    QMetaObject::invokeMethod(backend->q_ptr, [backend, qUrl, qFileName, qMime, total]() {
+    dispatchToBackend(nativePtr, [qUrl, qFileName, qMime, total](AndroidWebViewPrivate *backend) {
         backend->onDownloadDetected(QUrl(qUrl), qFileName, qMime, total);
-    }, Qt::QueuedConnection);
+    });
 }
 
 JNIEXPORT void JNICALL
 Java_org_mobilewebview_MobileWebView_nativeOnDownloadProgress(JNIEnv *, jobject,
         jlong nativePtr, jlong downloadId, jlong receivedBytes, jlong totalBytes)
 {
-    if (nativePtr == 0)
-        return;
-
-    auto *backend = reinterpret_cast<AndroidWebViewPrivate *>(nativePtr);
     const quint64 id = static_cast<quint64>(downloadId);
     const qint64 received = static_cast<qint64>(receivedBytes);
     const qint64 total = totalBytes >= 0 ? static_cast<qint64>(totalBytes) : -1;
-    QMetaObject::invokeMethod(backend->q_ptr, [backend, id, received, total]() {
+    dispatchToBackend(nativePtr, [id, received, total](AndroidWebViewPrivate *backend) {
         backend->onDownloadProgress(id, received, total);
-    }, Qt::QueuedConnection);
+    });
 }
 
 JNIEXPORT void JNICALL
 Java_org_mobilewebview_MobileWebView_nativeOnDownloadFinished(JNIEnv *env, jobject,
         jlong nativePtr, jlong downloadId, jboolean ok, jstring error)
 {
-    if (nativePtr == 0)
-        return;
-
-    auto *backend = reinterpret_cast<AndroidWebViewPrivate *>(nativePtr);
-    QString qError;
-    if (error) {
-        const char *chars = env->GetStringUTFChars(error, nullptr);
-        qError = QString::fromUtf8(chars);
-        env->ReleaseStringUTFChars(error, chars);
-    }
+    const QString qError = toQString(env, error);
     const quint64 id = static_cast<quint64>(downloadId);
     const bool success = ok == JNI_TRUE;
-    QMetaObject::invokeMethod(backend->q_ptr, [backend, id, success, qError]() {
+    dispatchToBackend(nativePtr, [id, success, qError](AndroidWebViewPrivate *backend) {
         backend->onDownloadFinished(id, success, qError);
-    }, Qt::QueuedConnection);
+    });
 }
 
 } // extern "C"

@@ -5,6 +5,8 @@
 #include "origin_utils.h"
 #include "navigationdelegate.h"
 #include "downloaddelegate.h"
+#include "dataclearops.h"
+#include "snapshotcapture.h"
 #include "userscripts.h"
 #include "script_utils.h"
 #include "dispatch_utils.h"
@@ -29,53 +31,6 @@
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
 
 namespace {
-
-void invokeClearCompletion(MobileWebViewBackend *backend, std::function<void()> completion)
-{
-    if (!completion) {
-        return;
-    }
-
-    QPointer<MobileWebViewBackend> guard(backend);
-    QMetaObject::invokeMethod(backend, [guard, completion = std::move(completion)]() mutable {
-        if (guard) {
-            completion();
-        }
-    }, Qt::QueuedConnection);
-}
-
-static QImage qImageFromCGImage(CGImageRef cg)
-{
-    if (!cg) {
-        return QImage();
-    }
-    const size_t w = CGImageGetWidth(cg);
-    const size_t h = CGImageGetHeight(cg);
-    if (w == 0 || h == 0) {
-        return QImage();
-    }
-
-    QImage img(static_cast<int>(w), static_cast<int>(h), QImage::Format_ARGB32_Premultiplied);
-    img.fill(Qt::transparent);
-
-    CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-    if (!cs) {
-        return QImage();
-    }
-
-    CGContextRef ctx = CGBitmapContextCreate(
-        img.bits(), w, h, 8, img.bytesPerLine(), cs,
-        static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little));
-    CGColorSpaceRelease(cs);
-    if (!ctx) {
-        return QImage();
-    }
-
-    CGContextSetBlendMode(ctx, kCGBlendModeCopy);
-    CGContextDrawImage(ctx, CGRectMake(0, 0, static_cast<CGFloat>(w), static_cast<CGFloat>(h)), cg);
-    CGContextRelease(ctx);
-    return img;
-}
 
 QVariantMap toHistoryItemVariant(WKBackForwardListItem *item)
 {
@@ -256,8 +211,9 @@ public:
     void updateInteractionEnabled(bool enabled) override;
     void setZoomFactorImpl(qreal factor) override;
     void setHttpUserAgentImpl(const QString &userAgent) override;
-    void findTextImpl(const QString &text, int flags) override;
-    void stopFindImpl() override;
+    // findTextImpl/stopFindImpl: base-class no-ops.
+    // macOS: find-in-page not supported (no public API for programmatic find with highlight).
+    // iOS: uses native WKFindInteraction via showFindPanel/hideFindPanel.
     bool findSupportedImpl() const override;
     bool hasNativeFindPanelImpl() const override;
     void showFindPanelImpl() override;
@@ -554,121 +510,22 @@ void DarwinWebViewPrivate::reloadAndBypassCacheImpl()
 
 void DarwinWebViewPrivate::clearHttpCacheImpl(std::function<void()> completion)
 {
-    if (!m_webView) {
-        invokeClearCompletion(q_ptr, std::move(completion));
-        return;
-    }
-
-    WKWebView *webView = m_webView;
-    MobileWebViewBackend *backend = q_ptr;
-    runOnMainThread(^{
-        NSSet *types = [NSSet setWithObjects:
-            WKWebsiteDataTypeDiskCache,
-            WKWebsiteDataTypeMemoryCache,
-            WKWebsiteDataTypeOfflineWebApplicationCache,
-            nil];
-        [webView.configuration.websiteDataStore removeDataOfTypes:types
-                                                    modifiedSince:[NSDate distantPast]
-                                                completionHandler:^{
-            invokeClearCompletion(backend, std::move(completion));
-        }];
-    });
+    DataClearOps::clearHttpCache(m_webView, q_ptr, std::move(completion));
 }
 
 void DarwinWebViewPrivate::deleteAllCookiesImpl(std::function<void()> completion)
 {
-    if (!m_webView) {
-        invokeClearCompletion(q_ptr, std::move(completion));
-        return;
-    }
-
-    WKWebView *webView = m_webView;
-    MobileWebViewBackend *backend = q_ptr;
-    runOnMainThread(^{
-        NSSet *types = [NSSet setWithObjects:WKWebsiteDataTypeCookies, nil];
-        [webView.configuration.websiteDataStore removeDataOfTypes:types
-                                                    modifiedSince:[NSDate distantPast]
-                                                completionHandler:^{
-            invokeClearCompletion(backend, std::move(completion));
-        }];
-    });
+    DataClearOps::deleteAllCookies(m_webView, q_ptr, std::move(completion));
 }
 
 void DarwinWebViewPrivate::clearDomStorageImpl(std::function<void()> completion)
 {
-    if (!m_webView) {
-        invokeClearCompletion(q_ptr, std::move(completion));
-        return;
-    }
-
-    WKWebView *webView = m_webView;
-    MobileWebViewBackend *backend = q_ptr;
-    runOnMainThread(^{
-        NSSet *types = [NSSet setWithObjects:
-            WKWebsiteDataTypeLocalStorage,
-            WKWebsiteDataTypeSessionStorage,
-            WKWebsiteDataTypeIndexedDBDatabases,
-            WKWebsiteDataTypeWebSQLDatabases,
-            WKWebsiteDataTypeServiceWorkerRegistrations,
-            WKWebsiteDataTypeOfflineWebApplicationCache,
-            nil];
-        [webView.configuration.websiteDataStore removeDataOfTypes:types
-                                                    modifiedSince:[NSDate distantPast]
-                                                completionHandler:^{
-            invokeClearCompletion(backend, std::move(completion));
-        }];
-    });
+    DataClearOps::clearDomStorage(m_webView, q_ptr, std::move(completion));
 }
 
 void DarwinWebViewPrivate::clearSiteDataImpl(const QString &origin, std::function<void()> completion)
 {
-    if (!m_webView) {
-        invokeClearCompletion(q_ptr, std::move(completion));
-        return;
-    }
-
-    const QUrl url(origin);
-    const QString host = url.host();
-    if (host.isEmpty()) {
-        qWarning() << "DarwinWebViewPrivate::clearSiteDataImpl: invalid origin, ignoring:" << origin;
-        invokeClearCompletion(q_ptr, std::move(completion));
-        return;
-    }
-
-    // Per-site clearing is host-granular: WKWebsiteDataRecord.displayName is the
-    // eTLD+1 (registrable domain), not the full host, and does not include the
-    // port (see ADR 0004). A page at "sub.example.com" is stored under a record
-    // named "example.com", so match when the record name equals the host or is
-    // a dot-boundary suffix of it. Plain suffix/substring matching would clear
-    // unrelated sites (e.g. "aaa.invalid" matching "siteaaa.invalid").
-    WKWebView *webView = m_webView;
-    MobileWebViewBackend *backend = q_ptr;
-    runOnMainThread(^{
-        NSSet *types = [WKWebsiteDataStore allWebsiteDataTypes];
-        WKWebsiteDataStore *store = webView.configuration.websiteDataStore;
-        NSString *hostName = host.toNSString();
-        [store fetchDataRecordsOfTypes:types completionHandler:^(NSArray<WKWebsiteDataRecord *> *records) {
-            NSMutableArray<WKWebsiteDataRecord *> *toRemove = [NSMutableArray array];
-            for (WKWebsiteDataRecord *record in records) {
-                if (record.displayName == nil) {
-                    continue;
-                }
-                const BOOL exactMatch = [record.displayName isEqualToString:hostName];
-                const BOOL registrableDomainOfHost =
-                    [hostName hasSuffix:[@"." stringByAppendingString:record.displayName]];
-                if (exactMatch || registrableDomainOfHost) {
-                    [toRemove addObject:record];
-                }
-            }
-            if (toRemove.count > 0) {
-                [store removeDataOfTypes:types forDataRecords:toRemove completionHandler:^{
-                    invokeClearCompletion(backend, std::move(completion));
-                }];
-            } else {
-                invokeClearCompletion(backend, std::move(completion));
-            }
-        }];
-    });
+    DataClearOps::clearSiteData(m_webView, q_ptr, origin, std::move(completion));
 }
 
 bool DarwinWebViewPrivate::clearSiteDataSupportedImpl() const
@@ -912,20 +769,6 @@ void DarwinWebViewPrivate::setHttpUserAgentImpl(const QString &userAgent)
     });
 }
 
-void DarwinWebViewPrivate::findTextImpl(const QString &text, int flags)
-{
-    Q_UNUSED(text)
-    Q_UNUSED(flags)
-    // macOS: find-in-page not supported (no public API for programmatic find with highlight)
-    // iOS: uses native WKFindInteraction via showFindPanel/hideFindPanel
-}
-
-void DarwinWebViewPrivate::stopFindImpl()
-{
-    // macOS: no-op
-    // iOS: dismissing WKFindInteraction is done via hideFindPanel
-}
-
 bool DarwinWebViewPrivate::findSupportedImpl() const
 {
 #ifdef Q_OS_IOS
@@ -1125,67 +968,7 @@ void DarwinWebViewPrivate::setupNativeViewImpl()
 
 void DarwinWebViewPrivate::captureSnapshotImpl(quint64 requestId)
 {
-    if (!m_webView) {
-        QPointer<MobileWebViewBackend> guard(q_ptr);
-        QMetaObject::invokeMethod(q_ptr, [guard, this, requestId]() {
-            if (!guard) {
-                return;
-            }
-            notifySnapshotReady(requestId, QImage());
-        }, Qt::QueuedConnection);
-        return;
-    }
-
-    WKWebView *webView = m_webView;
-    QPointer<MobileWebViewBackend> guard(q_ptr);
-
-    WKSnapshotConfiguration *cfg = [[WKSnapshotConfiguration alloc] init];
-#if defined(Q_OS_IOS)
-    if (@available(iOS 11.0, *)) {
-        cfg.afterScreenUpdates = YES;
-    }
-#else
-    if (@available(macOS 10.13, *)) {
-        cfg.afterScreenUpdates = YES;
-    }
-#endif
-
-    [webView takeSnapshotWithConfiguration:cfg
-                         completionHandler:^(id snapshotImage, NSError *error) {
-        QImage qimg;
-        if (!error && snapshotImage) {
-#if defined(Q_OS_IOS)
-            if ([snapshotImage isKindOfClass:[UIImage class]]) {
-                UIImage *ui = static_cast<UIImage *>(snapshotImage);
-                CGImageRef cg = ui.CGImage;
-                if (cg) {
-                    qimg = qImageFromCGImage(cg);
-                }
-            }
-#else
-            if ([snapshotImage isKindOfClass:[NSImage class]]) {
-                NSImage *ni = static_cast<NSImage *>(snapshotImage);
-                CGImageRef cg = [ni CGImageForProposedRect:NULL context:nil hints:nil];
-                if (cg) {
-                    qimg = qImageFromCGImage(cg);
-                }
-            }
-#endif
-        }
-
-        MobileWebViewBackend *backendObj = guard.data();
-        if (!backendObj) {
-            return;
-        }
-
-        QMetaObject::invokeMethod(backendObj, [this, guard, requestId, qimg]() {
-            if (!guard) {
-                return;
-            }
-            notifySnapshotReady(requestId, qimg);
-        }, Qt::QueuedConnection);
-    }];
-    [cfg release];
+    SnapshotCapture::capture(m_webView, this, requestId);
 }
 
 void DarwinWebViewPrivate::startDownloadImpl(quint64 downloadId, const QUrl &url,

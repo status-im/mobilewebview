@@ -92,6 +92,57 @@ MobileWebViewBackendPrivate::~MobileWebViewBackendPrivate()
     QObject::disconnect(m_afterAnimatingConnection);
 }
 
+// Default data-clearing implementations: complete immediately so the
+// beginClear/endClear busy counter never hangs on platforms without support.
+
+void MobileWebViewBackendPrivate::clearHttpCacheImpl(std::function<void()> completion)
+{
+    if (completion) {
+        completion();
+    }
+}
+
+void MobileWebViewBackendPrivate::deleteAllCookiesImpl(std::function<void()> completion)
+{
+    if (completion) {
+        completion();
+    }
+}
+
+void MobileWebViewBackendPrivate::clearDomStorageImpl(std::function<void()> completion)
+{
+    if (completion) {
+        completion();
+    }
+}
+
+void MobileWebViewBackendPrivate::clearSiteDataImpl(const QString &origin,
+                                                    std::function<void()> completion)
+{
+    Q_UNUSED(origin)
+    if (completion) {
+        completion();
+    }
+}
+
+// Default download implementation: report the download as Interrupted via the
+// same onDownloadFinished path platforms use, queued so the host sees the
+// InProgress -> Interrupted transition after accept() returns.
+void MobileWebViewBackendPrivate::startDownloadImpl(quint64 downloadId, const QUrl &url,
+                                                    const QString &destinationPath)
+{
+    Q_UNUSED(url)
+    Q_UNUSED(destinationPath)
+    QPointer<MobileWebViewBackend> guard(q_ptr);
+    QMetaObject::invokeMethod(q_ptr, [this, guard, downloadId]() {
+        if (!guard) {
+            return;
+        }
+        onDownloadFinished(downloadId, false,
+                           QStringLiteral("Downloads not supported on this platform"));
+    }, Qt::QueuedConnection);
+}
+
 void MobileWebViewBackendPrivate::syncNativeGeometryFromScene()
 {
     if (!m_nativeViewSetup || !q_ptr->isVisible()) {
