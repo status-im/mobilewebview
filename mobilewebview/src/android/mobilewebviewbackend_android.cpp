@@ -69,6 +69,9 @@ public:
     void hideFindPanelImpl() override;
     void captureSnapshotImpl(quint64 requestId) override;
     void detachNativeViewFromSceneImpl() override;
+    void startDownloadImpl(quint64 downloadId, const QUrl &url,
+                           const QString &destinationPath) override;
+    void cancelDownloadImpl(quint64 downloadId) override;
 
     // JNI helper methods
     void cleanupJni();
@@ -126,6 +129,8 @@ private:
     jmethodID m_findTextMethod = nullptr;
     jmethodID m_stopFindMethod = nullptr;
     jmethodID m_captureSnapshotForFreezeMethod = nullptr;
+    jmethodID m_startDownloadMethod = nullptr;
+    jmethodID m_cancelDownloadMethod = nullptr;
 
     bool m_jniInitialized = false;
     QMutex m_jniMutex;  // Protect JNI calls
@@ -219,6 +224,9 @@ bool AndroidWebViewPrivate::initNativeView()
     m_findTextMethod = env->GetMethodID(m_webViewClass, "findText", "(Ljava/lang/String;I)V");
     m_stopFindMethod = env->GetMethodID(m_webViewClass, "stopFind", "()V");
     m_captureSnapshotForFreezeMethod = env->GetMethodID(m_webViewClass, "captureSnapshotForFreeze", "(J)V");
+    m_startDownloadMethod = env->GetMethodID(m_webViewClass, "startDownload",
+        "(JLjava/lang/String;Ljava/lang/String;)V");
+    m_cancelDownloadMethod = env->GetMethodID(m_webViewClass, "cancelDownload", "(J)V");
 
     m_jniInitialized = true;
 
@@ -951,6 +959,52 @@ void AndroidWebViewPrivate::setHttpUserAgentImpl(const QString &userAgent)
     clearJniExceptionIfAny(env);
 }
 
+void AndroidWebViewPrivate::startDownloadImpl(quint64 downloadId, const QUrl &url,
+                                              const QString &destinationPath)
+{
+    QMutexLocker locker(&m_jniMutex);
+
+    if (!m_jniInitialized || !m_webViewObject || !m_startDownloadMethod) {
+        QMetaObject::invokeMethod(q_ptr, [this, downloadId]() {
+            onDownloadFinished(downloadId, false, QStringLiteral("Download unavailable"));
+        }, Qt::QueuedConnection);
+        return;
+    }
+
+    QJniEnvironment env;
+    if (!env.isValid()) {
+        QMetaObject::invokeMethod(q_ptr, [this, downloadId]() {
+            onDownloadFinished(downloadId, false, QStringLiteral("Download unavailable"));
+        }, Qt::QueuedConnection);
+        return;
+    }
+
+    jstring jUrl = env->NewStringUTF(url.toString().toUtf8().constData());
+    jstring jDest = env->NewStringUTF(destinationPath.toUtf8().constData());
+    env->CallVoidMethod(m_webViewObject, m_startDownloadMethod,
+                        static_cast<jlong>(downloadId), jUrl, jDest);
+    if (jUrl)
+        env->DeleteLocalRef(jUrl);
+    if (jDest)
+        env->DeleteLocalRef(jDest);
+    clearJniExceptionIfAny(env);
+}
+
+void AndroidWebViewPrivate::cancelDownloadImpl(quint64 downloadId)
+{
+    QMutexLocker locker(&m_jniMutex);
+
+    if (!m_jniInitialized || !m_webViewObject || !m_cancelDownloadMethod)
+        return;
+
+    QJniEnvironment env;
+    if (!env.isValid())
+        return;
+
+    env->CallVoidMethod(m_webViewObject, m_cancelDownloadMethod, static_cast<jlong>(downloadId));
+    clearJniExceptionIfAny(env);
+}
+
 void AndroidWebViewPrivate::findTextImpl(const QString &text, int flags)
 {
     QMutexLocker locker(&m_jniMutex);
@@ -1472,6 +1526,71 @@ Java_org_mobilewebview_MobileWebView_nativeOnClearSiteDataCompleted(JNIEnv *, jo
     const quint64 rid = static_cast<quint64>(requestId);
     QMetaObject::invokeMethod(backend->q_ptr, [backend, rid]() {
         backend->onClearCompleted(rid);
+    }, Qt::QueuedConnection);
+}
+
+JNIEXPORT void JNICALL
+Java_org_mobilewebview_MobileWebView_nativeOnDownloadDetected(JNIEnv *env, jobject,
+        jlong nativePtr, jstring url, jstring fileName, jstring mimeType,
+        jlong contentLength, jstring /*userAgent*/)
+{
+    if (nativePtr == 0)
+        return;
+
+    auto *backend = reinterpret_cast<AndroidWebViewPrivate *>(nativePtr);
+    auto toQString = [env](jstring value) -> QString {
+        if (!value)
+            return {};
+        const char *chars = env->GetStringUTFChars(value, nullptr);
+        QString out = QString::fromUtf8(chars);
+        env->ReleaseStringUTFChars(value, chars);
+        return out;
+    };
+
+    const QString qUrl = toQString(url);
+    const QString qFileName = toQString(fileName);
+    const QString qMime = toQString(mimeType);
+    const qint64 total = contentLength > 0 ? static_cast<qint64>(contentLength) : -1;
+
+    QMetaObject::invokeMethod(backend->q_ptr, [backend, qUrl, qFileName, qMime, total]() {
+        backend->onDownloadDetected(QUrl(qUrl), qFileName, qMime, total);
+    }, Qt::QueuedConnection);
+}
+
+JNIEXPORT void JNICALL
+Java_org_mobilewebview_MobileWebView_nativeOnDownloadProgress(JNIEnv *, jobject,
+        jlong nativePtr, jlong downloadId, jlong receivedBytes, jlong totalBytes)
+{
+    if (nativePtr == 0)
+        return;
+
+    auto *backend = reinterpret_cast<AndroidWebViewPrivate *>(nativePtr);
+    const quint64 id = static_cast<quint64>(downloadId);
+    const qint64 received = static_cast<qint64>(receivedBytes);
+    const qint64 total = totalBytes >= 0 ? static_cast<qint64>(totalBytes) : -1;
+    QMetaObject::invokeMethod(backend->q_ptr, [backend, id, received, total]() {
+        backend->onDownloadProgress(id, received, total);
+    }, Qt::QueuedConnection);
+}
+
+JNIEXPORT void JNICALL
+Java_org_mobilewebview_MobileWebView_nativeOnDownloadFinished(JNIEnv *env, jobject,
+        jlong nativePtr, jlong downloadId, jboolean ok, jstring error)
+{
+    if (nativePtr == 0)
+        return;
+
+    auto *backend = reinterpret_cast<AndroidWebViewPrivate *>(nativePtr);
+    QString qError;
+    if (error) {
+        const char *chars = env->GetStringUTFChars(error, nullptr);
+        qError = QString::fromUtf8(chars);
+        env->ReleaseStringUTFChars(error, chars);
+    }
+    const quint64 id = static_cast<quint64>(downloadId);
+    const bool success = ok == JNI_TRUE;
+    QMetaObject::invokeMethod(backend->q_ptr, [backend, id, success, qError]() {
+        backend->onDownloadFinished(id, success, qError);
     }, Qt::QueuedConnection);
 }
 

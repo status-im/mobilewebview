@@ -67,9 +67,21 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
 
     private final WebViewProfileManager mProfileManager = new WebViewProfileManager();
     private final DataClearManager mDataClearManager = new DataClearManager();
+    private final DownloadFetcher mDownloadFetcher = new DownloadFetcher(new DownloadFetcher.Callbacks() {
+        @Override
+        public void onProgress(long downloadId, long receivedBytes, long totalBytes) {
+            withNativePtr(ptr -> nativeOnDownloadProgress(ptr, downloadId, receivedBytes, totalBytes));
+        }
+
+        @Override
+        public void onFinished(long downloadId, boolean ok, String error) {
+            withNativePtr(ptr -> nativeOnDownloadFinished(ptr, downloadId, ok, error));
+        }
+    });
     private String mStorageName = "";
     private boolean mOffTheRecord = false;
     private String mActiveProfileName = null;
+    private String mHttpUserAgent = "";
 
     /**
      * Constructor - creates and initializes WebView
@@ -187,6 +199,17 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
 
         mWebView.setWebViewClient(new MobileWebViewClient(this));
         mWebView.setWebChromeClient(new MobileWebChromeClient(this));
+        mWebView.setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> {
+            if (!DownloadUrlPolicy.isSupportedDownloadUrl(url)) {
+                return;
+            }
+            String fileName = DownloadUrlPolicy.guessFileName(url, contentDisposition, mimeType);
+            String ua = (mHttpUserAgent != null && !mHttpUserAgent.isEmpty())
+                    ? mHttpUserAgent
+                    : userAgent;
+            withNativePtr(ptr -> nativeOnDownloadDetected(
+                    ptr, url, fileName, mimeType != null ? mimeType : "", contentLength, ua));
+        });
 
         mActiveProfileName = mProfileManager.configureProfile(mWebView, mStorageName, mOffTheRecord);
 
@@ -414,6 +437,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
      * Null or empty restores the platform default.
      */
     public void setHttpUserAgent(String userAgent) {
+        mHttpUserAgent = userAgent != null ? userAgent : "";
         runOnMainThread(() -> {
             if (mWebView == null) return;
             WebSettings settings = mWebView.getSettings();
@@ -641,10 +665,26 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     }
 
     /**
+     * Start a self-fetch download after the host accepted a Download Target.
+     */
+    public void startDownload(long downloadId, String url, String destination) {
+        String ua = mHttpUserAgent;
+        if ((ua == null || ua.isEmpty()) && mWebView != null) {
+            ua = mWebView.getSettings().getUserAgentString();
+        }
+        mDownloadFetcher.start(downloadId, url, destination, ua, mOffTheRecord, mContext);
+    }
+
+    public void cancelDownload(long downloadId) {
+        mDownloadFetcher.cancel(downloadId);
+    }
+
+    /**
      * Destroy WebView and cleanup
      */
     public void destroy() {
         mNativePtr = 0;  // zero out immediately so JNI callbacks are ignored
+        mDownloadFetcher.cancelAll();
         runOnMainThread(() -> {
             mBridgeInjector.clearDocumentStartScripts();
             if (mWebView != null) {
@@ -884,4 +924,10 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     private native void nativeOnDeleteAllCookiesCompleted(long nativePtr, long requestId);
     private native void nativeOnClearDomStorageCompleted(long nativePtr, long requestId);
     private native void nativeOnClearSiteDataCompleted(long nativePtr, long requestId);
+    private native void nativeOnDownloadDetected(long nativePtr, String url, String fileName,
+                                                 String mimeType, long contentLength, String userAgent);
+    private native void nativeOnDownloadProgress(long nativePtr, long downloadId,
+                                                 long receivedBytes, long totalBytes);
+    private native void nativeOnDownloadFinished(long nativePtr, long downloadId,
+                                                 boolean ok, String error);
 }

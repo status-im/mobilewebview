@@ -167,7 +167,9 @@ if(APPLE)
     add_executable(tst_mobilewebviewbackend_common
         tst_mobilewebviewbackend_common.mm
         ../include/MobileWebView/mobilewebviewbackend.h
+        ../include/MobileWebView/mobilewebviewdownload.h
         ../src/common/mobilewebviewbackend.cpp
+        ../src/common/mobilewebviewdownload.cpp
         ../src/common/snapshotimageprovider.cpp
         ../src/common/snapshotitem.cpp
         ../src/common/origin_utils.cpp

@@ -7,10 +7,12 @@
 #include <QRectF>
 #include <QImage>
 #include <QSize>
+#include <QHash>
 #include <QMetaObject>
 #include <functional>
 
 class MobileWebViewBackend;
+class MobileWebViewDownload;
 class WebChannelTransport;
 class MobileWebViewSnapshotItem;
 
@@ -67,8 +69,33 @@ public:
     // notifySnapshotReady on the Qt thread
     virtual void captureSnapshotImpl(quint64 requestId) = 0;
 
+    // Downloads (ADR 0005): platform performs the transfer after host accept().
+    virtual void startDownloadImpl(quint64 downloadId, const QUrl &url,
+                                   const QString &destinationPath) = 0;
+    virtual void cancelDownloadImpl(quint64 downloadId) = 0;
+
     // Called when platform snapshot is ready (Qt thread)
     void notifySnapshotReady(quint64 requestId, const QImage &image);
+
+    // Download lifecycle (Qt thread). Platform calls onDownloadDetected for
+    // page-initiated downloads; downloadUrl() uses the same path.
+    // createDownload does not emit; emitDownloadRequested notifies the host.
+    // Darwin page-initiated flow registers the id with WKDownload before emit
+    // so accept() during the handler can supply the destination safely.
+    MobileWebViewDownload *createDownload(const QUrl &url,
+                                          const QString &suggestedFileName,
+                                          const QString &mimeType,
+                                          qint64 totalBytes);
+    void emitDownloadRequested(MobileWebViewDownload *download);
+    MobileWebViewDownload *onDownloadDetected(const QUrl &url,
+                                              const QString &suggestedFileName,
+                                              const QString &mimeType,
+                                              qint64 totalBytes);
+    void onDownloadProgress(quint64 downloadId, qint64 receivedBytes, qint64 totalBytes);
+    void onDownloadFinished(quint64 downloadId, bool ok, const QString &error);
+    void forgetDownload(quint64 downloadId);
+    void cancelAllDownloads();
+    MobileWebViewDownload *downloadById(quint64 downloadId) const;
 
     void clearFreezeState();
     void applyFreezeOverlaySizeFromImage(const QImage &image);
@@ -166,6 +193,10 @@ public:
     virtual void detachNativeViewFromSceneImpl() {}
 
     QMetaObject::Connection m_afterAnimatingConnection;
+
+    // Active (non-terminal) downloads owned by this backend.
+    quint64 m_nextDownloadId = 0;
+    QHash<quint64, MobileWebViewDownload *> m_downloads;
 };
 
 // Factory function for creating platform-specific implementation

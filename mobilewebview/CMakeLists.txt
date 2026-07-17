@@ -41,7 +41,9 @@ endif()
 
 set(MOBILEWEBVIEW_COMMON_SOURCES
     include/MobileWebView/mobilewebviewbackend.h
+    include/MobileWebView/mobilewebviewdownload.h
     src/common/mobilewebviewbackend.cpp
+    src/common/mobilewebviewdownload.cpp
     src/common/mobilewebviewbackend_p.h
     src/common/snapshotitem.h
     src/common/snapshotitem.cpp
@@ -63,6 +65,8 @@ set(MOBILEWEBVIEW_DARWIN_SOURCES
     src/darwin/mobilewebviewbackend_darwin.mm
     src/darwin/navigationdelegate.h
     src/darwin/navigationdelegate.mm
+    src/darwin/downloaddelegate.h
+    src/darwin/downloaddelegate.mm
     src/darwin/userscripts.h
     src/darwin/userscripts.mm
     src/darwin/origin_utils.h

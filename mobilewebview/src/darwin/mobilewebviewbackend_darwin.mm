@@ -4,6 +4,7 @@
 #include "../common/storage_profile_utils.h"
 #include "origin_utils.h"
 #include "navigationdelegate.h"
+#include "downloaddelegate.h"
 #include "userscripts.h"
 #include "script_utils.h"
 #include "dispatch_utils.h"
@@ -263,10 +264,14 @@ public:
     void hideFindPanelImpl() override;
     void captureSnapshotImpl(quint64 requestId) override;
     void detachNativeViewFromSceneImpl() override;
+    void startDownloadImpl(quint64 downloadId, const QUrl &url,
+                           const QString &destinationPath) override;
+    void cancelDownloadImpl(quint64 downloadId) override;
 
 private:
     WKWebView *m_webView = nullptr;
     NavigationDelegate *m_navigationDelegate = nullptr;
+    DownloadDelegate *m_downloadDelegate = nullptr;
     WebViewUiDelegate *m_uiDelegate = nullptr;
     WebViewStateObserver *m_stateObserver = nullptr;
     UserScriptsManager *m_userScriptsManager = nullptr;
@@ -289,6 +294,12 @@ void DarwinWebViewPrivate::destroyNativeView()
 {
     if (m_navigationDelegate) {
         m_navigationDelegate.owner = nullptr;
+        m_navigationDelegate.downloadDelegate = nil;
+    }
+    if (m_downloadDelegate) {
+        // Null owner first so cancel/fail callbacks cannot re-enter the backend.
+        m_downloadDelegate.owner = nullptr;
+        [m_downloadDelegate cancelAll];
     }
     if (m_uiDelegate) {
         m_uiDelegate.owner = nullptr;
@@ -313,10 +324,12 @@ void DarwinWebViewPrivate::destroyNativeView()
     if (m_webView) {
         WKWebView *webView = m_webView;
         NavigationDelegate *delegate = m_navigationDelegate;
+        DownloadDelegate *downloadDelegate = m_downloadDelegate;
         WebViewUiDelegate *uiDelegate = m_uiDelegate;
 
         m_webView = nullptr;
         m_navigationDelegate = nullptr;
+        m_downloadDelegate = nullptr;
         m_uiDelegate = nullptr;
 
         runOnMainThread(^{
@@ -326,7 +339,14 @@ void DarwinWebViewPrivate::destroyNativeView()
             webView.UIDelegate = nil;
             [webView release];
             [delegate release];
+            [downloadDelegate release];
             [uiDelegate release];
+        });
+    } else if (m_downloadDelegate) {
+        DownloadDelegate *downloadDelegate = m_downloadDelegate;
+        m_downloadDelegate = nullptr;
+        runOnMainThread(^{
+            [downloadDelegate release];
         });
     }
 
@@ -364,6 +384,11 @@ bool DarwinWebViewPrivate::initNativeView()
 
     m_navigationDelegate = [[NavigationDelegate alloc] init];
     m_navigationDelegate.owner = q_ptr;
+    if (@available(macOS 11.3, iOS 14.5, *)) {
+        m_downloadDelegate = [[DownloadDelegate alloc] init];
+        m_downloadDelegate.owner = q_ptr;
+        m_navigationDelegate.downloadDelegate = m_downloadDelegate;
+    }
     m_webView.navigationDelegate = m_navigationDelegate;
 
     m_uiDelegate = [[WebViewUiDelegate alloc] init];
@@ -1161,6 +1186,45 @@ void DarwinWebViewPrivate::captureSnapshotImpl(quint64 requestId)
         }, Qt::QueuedConnection);
     }];
     [cfg release];
+}
+
+void DarwinWebViewPrivate::startDownloadImpl(quint64 downloadId, const QUrl &url,
+                                             const QString &destinationPath)
+{
+    if (!m_downloadDelegate) {
+        QMetaObject::invokeMethod(q_ptr, [this, downloadId]() {
+            onDownloadFinished(downloadId, false,
+                               QStringLiteral("Downloads unsupported on this OS version"));
+        }, Qt::QueuedConnection);
+        return;
+    }
+
+    DownloadDelegate *delegate = m_downloadDelegate;
+    WKWebView *webView = m_webView;
+    NSString *path = destinationPath.toNSString();
+    NSURL *nsUrl = url.toNSURL();
+
+    // Page-initiated: id is already registered → provide destination (may stash).
+    // Explicit downloadUrl(): id unknown to the delegate → start a new WKDownload.
+    if ([delegate provideDestinationPath:path forDownloadId:downloadId])
+        return;
+
+    runOnMainThread(^{
+        [delegate startExplicitDownloadWithURL:nsUrl
+                                    downloadId:downloadId
+                               destinationPath:path
+                                       webView:webView];
+    });
+}
+
+void DarwinWebViewPrivate::cancelDownloadImpl(quint64 downloadId)
+{
+    if (!m_downloadDelegate)
+        return;
+    DownloadDelegate *delegate = m_downloadDelegate;
+    runOnMainThread(^{
+        [delegate cancelDownloadId:downloadId];
+    });
 }
 
 // =============================================================================
