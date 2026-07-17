@@ -4,9 +4,9 @@
 #include <QUrl>
 #include <QtQml/qqmlregistration.h>
 
-#if defined(Q_OS_ANDROID) || defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#include <functional>
 
-class MobileWebViewBackendPrivate;
+#if defined(Q_OS_ANDROID) || defined(Q_OS_MACOS) || defined(Q_OS_IOS)
 
 /// One Download for its full lifecycle: Requested → InProgress → terminal state.
 /// Created only by MobileWebViewBackend; surfaced via downloadRequested().
@@ -34,6 +34,12 @@ public:
         Interrupted = 4,
     };
     Q_ENUM(State)
+
+    struct TransferHooks {
+        std::function<void(quint64 id, const QUrl &url, const QString &destination)> start;
+        // Platform cancel + registry forget; download still does setCancelled+deleteLater.
+        std::function<void(quint64 id)> cancel;
+    };
 
     quint64 downloadId() const { return m_id; }
     QUrl url() const { return m_url; }
@@ -64,7 +70,7 @@ signals:
     void finished();
 
 private:
-    friend class MobileWebViewBackendPrivate;
+    friend class DownloadRegistry;
 
     explicit MobileWebViewDownload(quint64 id,
                                    const QUrl &url,
@@ -73,7 +79,7 @@ private:
                                    qint64 totalBytes,
                                    QObject *parent = nullptr);
 
-    void bindBackend(MobileWebViewBackendPrivate *backend);
+    void bindTransferHooks(TransferHooks hooks);
     void setInProgress();
     void setProgress(qint64 receivedBytes, qint64 totalBytes);
     void setCompleted();
@@ -89,7 +95,7 @@ private:
     State m_state = State::Requested;
     QString m_destinationPath;
     QString m_errorString;
-    MobileWebViewBackendPrivate *m_backend = nullptr;
+    TransferHooks m_hooks;
 };
 
 #endif // Q_OS_ANDROID || Q_OS_MACOS || Q_OS_IOS

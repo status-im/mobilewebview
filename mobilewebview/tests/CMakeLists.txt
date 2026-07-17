@@ -14,6 +14,53 @@ target_link_libraries(tst_origin_utils PRIVATE
 )
 add_test(NAME tst_origin_utils COMMAND tst_origin_utils)
 
+add_executable(tst_downloadpolicy
+    tst_downloadpolicy.cpp
+    ../src/common/downloadpolicy.cpp
+)
+target_include_directories(tst_downloadpolicy PRIVATE
+    ../src/common
+)
+target_link_libraries(tst_downloadpolicy PRIVATE
+    Qt::Core
+    Qt::Test
+)
+add_test(NAME tst_downloadpolicy COMMAND tst_downloadpolicy)
+
+add_executable(tst_freezecontroller
+    tst_freezecontroller.cpp
+    ../src/common/freezecontroller.cpp
+)
+target_include_directories(tst_freezecontroller PRIVATE
+    ../src/common
+)
+target_link_libraries(tst_freezecontroller PRIVATE
+    Qt::Core
+    Qt::Gui
+    Qt::Test
+)
+add_test(NAME tst_freezecontroller COMMAND tst_freezecontroller)
+
+if(APPLE)
+    add_executable(tst_downloadregistry
+        tst_downloadregistry.cpp
+        ../include/MobileWebView/mobilewebviewdownload.h
+        ../src/common/downloadregistry.cpp
+        ../src/common/downloadpolicy.cpp
+        ../src/common/mobilewebviewdownload.cpp
+    )
+    target_include_directories(tst_downloadregistry PRIVATE
+        ../include
+        ../src/common
+    )
+    target_link_libraries(tst_downloadregistry PRIVATE
+        Qt::Core
+        Qt::Qml
+        Qt::Test
+    )
+    add_test(NAME tst_downloadregistry COMMAND tst_downloadregistry)
+endif()
+
 add_executable(tst_webchanneltransport
     tst_webchanneltransport.cpp
     ../src/common/origin_utils.cpp
@@ -173,6 +220,9 @@ if(APPLE)
         ../src/common/snapshotimageprovider.cpp
         ../src/common/snapshotitem.cpp
         ../src/common/origin_utils.cpp
+        ../src/common/downloadpolicy.cpp
+        ../src/common/downloadregistry.cpp
+        ../src/common/freezecontroller.cpp
         ../src/common/userscript_utils.cpp
         ../src/common/webchanneltransport.cpp
         ../src/darwin/navigationdelegate.mm

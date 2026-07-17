@@ -5,6 +5,8 @@
 #include "snapshotitem.h"
 #include "webchanneltransport.h"
 #include "origin_utils.h"
+#include "downloadregistry.h"
+#include "freezecontroller.h"
 
 #include <QUuid>
 #include <QDebug>
@@ -29,23 +31,6 @@ constexpr int kFreezeOverlayFrameDelayMs = 48;
 QString snapshotImageProviderKey(const MobileWebViewBackend *backend)
 {
     return QStringLiteral("mwv") + QString::number(reinterpret_cast<quintptr>(backend), 16);
-}
-
-bool isUnsupportedDownloadScheme(const QUrl &url)
-{
-    // ADR 0005: blob:/data: downloads are out of scope for v1.
-    const QString scheme = url.scheme().toLower();
-    return scheme == QLatin1String("blob") || scheme == QLatin1String("data");
-}
-
-QString suggestedFileNameFromUrl(const QUrl &url, const QString &suggestedFileName)
-{
-    if (!suggestedFileName.isEmpty())
-        return suggestedFileName;
-    const QString fileName = url.fileName();
-    if (!fileName.isEmpty())
-        return fileName;
-    return QStringLiteral("download");
 }
 
 void ensureSnapshotImageProviderRegistered(QQmlEngine *engine)
@@ -85,6 +70,88 @@ void ensureSnapshotImageProviderRegistered(QQmlEngine *engine)
 MobileWebViewBackendPrivate::MobileWebViewBackendPrivate(MobileWebViewBackend *q)
     : q_ptr(q)
 {
+    if (!q)
+        return;
+    m_downloadRegistry = std::make_unique<DownloadRegistry>(
+        q,
+        [this](MobileWebViewDownload *download) {
+            if (download)
+                emit q_ptr->downloadRequested(download);
+        },
+        [this](quint64 id, const QUrl &url, const QString &path) {
+            startDownloadImpl(id, url, path);
+        },
+        [this](quint64 id) { cancelDownloadImpl(id); });
+
+    FreezeController::Callbacks freezeCb;
+    freezeCb.captureSnapshot = [this](quint64 requestId) {
+        captureSnapshotImpl(requestId);
+    };
+    freezeCb.applyOverlay = [this](const QImage &image) {
+        if (!m_snapshotItem)
+            m_snapshotItem = new MobileWebViewSnapshotItem(q_ptr);
+        if (!m_freezeClipStateStored) {
+            m_clipStateBeforeFreeze = q_ptr->clip();
+            m_freezeClipStateStored = true;
+        }
+        q_ptr->setClip(true);
+        m_snapshotItem->setImage(image);
+        m_snapshotItem->setVisible(true);
+        applyFreezeOverlaySizeFromImage(image);
+    };
+    freezeCb.hideOverlay = [this]() {
+        if (m_snapshotItem) {
+            m_snapshotItem->deleteLater();
+            m_snapshotItem = nullptr;
+        }
+    };
+    freezeCb.unfreezeFromFrozen = [this]() {
+        MobileWebViewSnapshotItem *overlay = m_snapshotItem;
+        m_snapshotItem = nullptr;
+        QTimer::singleShot(kFreezeOverlayFrameDelayMs, q_ptr, [overlay]() {
+            if (overlay)
+                overlay->deleteLater();
+        });
+    };
+    freezeCb.restoreClip = [this]() { restoreClipState(); };
+    freezeCb.updateNativeVisibility = [this]() {
+        updateNativeVisibility(q_ptr->isVisible());
+    };
+    freezeCb.emitFreezeChanged = [this]() { emit q_ptr->freezeChanged(); };
+    freezeCb.scheduleMarkFrozen = [this](quint64 token) {
+        QPointer<MobileWebViewBackend> guard(q_ptr);
+        QTimer::singleShot(kFreezeOverlayFrameDelayMs, q_ptr, [this, guard, token]() {
+            if (!guard || !m_freeze)
+                return;
+            m_freeze->markFrozen(token);
+        });
+    };
+    freezeCb.deliverPublicSnapshot = [this](quint64 /*requestId*/, const QImage &image,
+                                            QSize targetSize, qreal dpr) {
+        const QString key = snapshotImageProviderKey(q_ptr);
+        const bool ok = !image.isNull();
+        QUrl imageUrl;
+        if (ok) {
+            QImage out = image;
+            if (targetSize.isValid() && targetSize.width() > 0 && targetSize.height() > 0) {
+                const int tw = qRound(targetSize.width() * dpr);
+                const int th = qRound(targetSize.height() * dpr);
+                if (tw > 0 && th > 0) {
+                    out = image.scaled(QSize(tw, th), Qt::KeepAspectRatio,
+                                       Qt::SmoothTransformation);
+                }
+            }
+            MobileWebViewSnapshotImageProvider::registerImage(key, out);
+            imageUrl = QUrl(QStringLiteral("image://mobilewebview-snapshot/") + key);
+        } else {
+            MobileWebViewSnapshotImageProvider::releaseImage(key);
+        }
+        emit q_ptr->snapshotReady(imageUrl, ok);
+    };
+    freezeCb.warnEmptyFreezeSnapshot = []() {
+        qWarning() << "MobileWebViewBackend: freeze snapshot failed or empty";
+    };
+    m_freeze = std::make_unique<FreezeController>(std::move(freezeCb));
 }
 
 MobileWebViewBackendPrivate::~MobileWebViewBackendPrivate()
@@ -160,14 +227,8 @@ void MobileWebViewBackendPrivate::syncNativeGeometryFromScene()
 
 void MobileWebViewBackendPrivate::detachNativeViewFromScene()
 {
-    if (m_freezeState != FreezeState::Idle) {
-        m_freezeState = FreezeState::Idle;
-        if (m_snapshotItem) {
-            m_snapshotItem->deleteLater();
-            m_snapshotItem = nullptr;
-        }
-        restoreClipState();
-    }
+    if (m_freeze && m_freeze->state() != FreezeState::Idle)
+        m_freeze->clear();
     updateNativeVisibility(false);
     detachNativeViewFromSceneImpl();
 }
@@ -295,80 +356,16 @@ void MobileWebViewBackendPrivate::appendAllowedOrigin(const QString &origin)
 
 void MobileWebViewBackendPrivate::notifySnapshotReady(quint64 requestId, const QImage &image)
 {
-    if (m_publicSnapshotPending && requestId == m_publicSnapshotRequestId) {
-        m_publicSnapshotPending = false;
-        const QString key = snapshotImageProviderKey(q_ptr);
-        const bool ok = !image.isNull();
-        QUrl imageUrl;
-        if (ok) {
-            QImage out = image;
-            if (m_publicSnapshotTargetSize.isValid() && m_publicSnapshotTargetSize.width() > 0
-                && m_publicSnapshotTargetSize.height() > 0) {
-                const int tw = qRound(m_publicSnapshotTargetSize.width() * m_publicSnapshotDpr);
-                const int th = qRound(m_publicSnapshotTargetSize.height() * m_publicSnapshotDpr);
-                if (tw > 0 && th > 0) {
-                    out = image.scaled(QSize(tw, th), Qt::KeepAspectRatio,
-                                        Qt::SmoothTransformation);
-                }
-            }
-            MobileWebViewSnapshotImageProvider::registerImage(key, out);
-            imageUrl = QUrl(QStringLiteral("image://mobilewebview-snapshot/") + key);
-        } else {
-            MobileWebViewSnapshotImageProvider::releaseImage(key);
-        }
-        emit q_ptr->snapshotReady(imageUrl, ok);
+    if (!m_freeze)
         return;
-    }
-
-    if (requestId != m_freezeRequestId) {
-        return;
-    }
-    if (m_freezeState != FreezeState::Capturing) {
-        return;
-    }
-
-    if (image.isNull()) {
-        qWarning() << "MobileWebViewBackend: freeze snapshot failed or empty";
-        clearFreezeState();
-        emit q_ptr->freezeChanged();
-        return;
-    }
-
-    if (!m_snapshotItem) {
-        m_snapshotItem = new MobileWebViewSnapshotItem(q_ptr);
-    }
-    if (!m_freezeClipStateStored) {
-        m_clipStateBeforeFreeze = q_ptr->clip();
-        m_freezeClipStateStored = true;
-    }
-    q_ptr->setClip(true);
-    m_snapshotItem->setImage(image);
-    m_snapshotItem->setVisible(true);
-    applyFreezeOverlaySizeFromImage(image);
-
-    const quint64 captureToken = requestId;
-    QPointer<MobileWebViewBackend> guard(q_ptr);
-    QTimer::singleShot(kFreezeOverlayFrameDelayMs, q_ptr, [this, guard, captureToken]() {
-        if (!guard) {
-            return;
-        }
-        if (m_freezeState != FreezeState::Capturing || m_freezeRequestId != captureToken) {
-            return;
-        }
-        m_freezeState = FreezeState::Frozen;
-        updateNativeVisibility(guard->isVisible());
-    });
+    m_freeze->notifySnapshotReady(requestId, image);
 }
 
 void MobileWebViewBackendPrivate::clearFreezeState()
 {
-    m_freezeState = FreezeState::Idle;
-    if (m_snapshotItem) {
-        m_snapshotItem->deleteLater();
-        m_snapshotItem = nullptr;
-    }
-    restoreClipState();
-    updateNativeVisibility(q_ptr->isVisible());
+    if (!m_freeze)
+        return;
+    m_freeze->clear();
 }
 
 void MobileWebViewBackendPrivate::applyFreezeOverlaySizeFromImage(const QImage &image)
@@ -499,89 +496,74 @@ void MobileWebViewBackendPrivate::recreateNativeViewForStore()
 
 MobileWebViewDownload *MobileWebViewBackendPrivate::createDownload(
     const QUrl &url,
-    const QString &suggestedFileName,
+    const QString &platformSuggestion,
+    const QString &contentDisposition,
     const QString &mimeType,
     qint64 totalBytes)
 {
-    if (!url.isValid() || url.isEmpty() || isUnsupportedDownloadScheme(url))
+    if (!m_downloadRegistry)
         return nullptr;
-
-    const quint64 id = ++m_nextDownloadId;
-    auto *download = new MobileWebViewDownload(
-        id,
-        url,
-        suggestedFileNameFromUrl(url, suggestedFileName),
-        mimeType,
-        totalBytes,
-        q_ptr);
-    download->bindBackend(this);
-    m_downloads.insert(id, download);
-    return download;
+    return m_downloadRegistry->create(
+        url, platformSuggestion, contentDisposition, mimeType, totalBytes);
 }
 
 void MobileWebViewBackendPrivate::emitDownloadRequested(MobileWebViewDownload *download)
 {
-    if (!download)
+    if (!m_downloadRegistry)
         return;
-    emit q_ptr->downloadRequested(download);
+    m_downloadRegistry->emitRequested(download);
 }
 
 MobileWebViewDownload *MobileWebViewBackendPrivate::onDownloadDetected(
     const QUrl &url,
-    const QString &suggestedFileName,
+    const QString &platformSuggestion,
+    const QString &contentDisposition,
     const QString &mimeType,
     qint64 totalBytes)
 {
-    MobileWebViewDownload *download = createDownload(url, suggestedFileName, mimeType, totalBytes);
-    emitDownloadRequested(download);
-    return download;
+    if (!m_downloadRegistry)
+        return nullptr;
+    return m_downloadRegistry->onDetected(
+        url, platformSuggestion, contentDisposition, mimeType, totalBytes);
 }
 
 void MobileWebViewBackendPrivate::onDownloadProgress(quint64 downloadId,
                                                      qint64 receivedBytes,
                                                      qint64 totalBytes)
 {
-    if (auto *download = m_downloads.value(downloadId, nullptr))
-        download->setProgress(receivedBytes, totalBytes);
+    if (!m_downloadRegistry)
+        return;
+    m_downloadRegistry->onProgress(downloadId, receivedBytes, totalBytes);
 }
 
 void MobileWebViewBackendPrivate::onDownloadFinished(quint64 downloadId,
                                                      bool ok,
                                                      const QString &error)
 {
-    auto *download = m_downloads.take(downloadId);
-    if (!download)
+    if (!m_downloadRegistry)
         return;
-
-    if (ok)
-        download->setCompleted();
-    else
-        download->setInterrupted(error);
-    download->deleteLater();
+    m_downloadRegistry->onFinished(downloadId, ok, error);
 }
 
 void MobileWebViewBackendPrivate::forgetDownload(quint64 downloadId)
 {
-    m_downloads.remove(downloadId);
+    if (!m_downloadRegistry)
+        return;
+    m_downloadRegistry->forget(downloadId);
 }
 
 void MobileWebViewBackendPrivate::cancelAllDownloads()
 {
-    const auto active = m_downloads;
-    m_downloads.clear();
-    for (auto it = active.cbegin(); it != active.cend(); ++it) {
-        MobileWebViewDownload *download = it.value();
-        if (!download)
-            continue;
-        cancelDownloadImpl(download->downloadId());
-        download->setCancelled();
-        download->deleteLater();
-    }
+    if (!m_downloadRegistry)
+        return;
+    m_downloadRegistry->cancelAll();
 }
 
 MobileWebViewDownload *MobileWebViewBackendPrivate::downloadById(quint64 downloadId) const
 {
-    return m_downloads.value(downloadId, nullptr);
+    if (!m_downloadRegistry)
+        return nullptr;
+    return m_downloadRegistry->downloadById(downloadId);
 }
 
 void MobileWebViewBackendPrivate::beginClear()
@@ -633,14 +615,12 @@ void MobileWebViewBackend::requestSnapshot(const QSize &targetSize)
         }
     }
     ensureSnapshotImageProviderRegistered(engine);
-    d->m_publicSnapshotRequestId = ++d->m_nextSnapshotId;
-    d->m_publicSnapshotPending = true;
-    d->m_publicSnapshotTargetSize = targetSize;
-    d->m_publicSnapshotDpr = 1.0;
-    if (QQuickWindow *w = window()) {
-        d->m_publicSnapshotDpr = w->devicePixelRatio();
-    }
-    d->captureSnapshotImpl(d->m_publicSnapshotRequestId);
+    if (!d->m_freeze)
+        return;
+    qreal dpr = 1.0;
+    if (QQuickWindow *w = window())
+        dpr = w->devicePixelRatio();
+    d->m_freeze->beginPublicSnapshot(targetSize, dpr);
 }
 
 bool MobileWebViewBackend::loading() const
@@ -819,19 +799,21 @@ void MobileWebViewBackend::emitNewWindowRequested(const QUrl &url, bool userInit
 MobileWebViewDownload *MobileWebViewBackend::beginDownload(const QUrl &url,
                                                           const QString &suggestedFileName,
                                                           const QString &mimeType,
-                                                          qint64 totalBytes)
+                                                          qint64 totalBytes,
+                                                          const QString &contentDisposition)
 {
     Q_D(MobileWebViewBackend);
-    return d->onDownloadDetected(url, suggestedFileName, mimeType, totalBytes);
+    return d->onDownloadDetected(url, suggestedFileName, contentDisposition, mimeType, totalBytes);
 }
 
 MobileWebViewDownload *MobileWebViewBackend::createDownload(const QUrl &url,
                                                             const QString &suggestedFileName,
                                                             const QString &mimeType,
-                                                            qint64 totalBytes)
+                                                            qint64 totalBytes,
+                                                            const QString &contentDisposition)
 {
     Q_D(MobileWebViewBackend);
-    return d->createDownload(url, suggestedFileName, mimeType, totalBytes);
+    return d->createDownload(url, suggestedFileName, contentDisposition, mimeType, totalBytes);
 }
 
 void MobileWebViewBackend::emitDownloadRequested(MobileWebViewDownload *download)
@@ -859,7 +841,7 @@ void MobileWebViewBackend::reportDownloadFinished(quint64 downloadId,
 void MobileWebViewBackend::downloadUrl(const QUrl &url, const QString &suggestedFileName)
 {
     Q_D(MobileWebViewBackend);
-    d->onDownloadDetected(url, suggestedFileName, QString(), -1);
+    d->onDownloadDetected(url, suggestedFileName, QString(), QString(), -1);
 }
 
 bool MobileWebViewBackend::interactionEnabled() const
@@ -917,7 +899,8 @@ bool MobileWebViewBackend::clearSiteDataSupported() const
 bool MobileWebViewBackend::freeze() const
 {
     Q_D(const MobileWebViewBackend);
-    return d->m_freezeState != MobileWebViewBackendPrivate::FreezeState::Idle;
+    return d->m_freeze
+        && d->m_freeze->state() != MobileWebViewBackendPrivate::FreezeState::Idle;
 }
 
 bool MobileWebViewBackend::offTheRecord() const
@@ -989,40 +972,15 @@ bool MobileWebViewBackend::clearing() const
 void MobileWebViewBackend::setFreeze(bool freeze)
 {
     Q_D(MobileWebViewBackend);
-    using FS = MobileWebViewBackendPrivate::FreezeState;
+    if (!d->m_freeze)
+        return;
 
     if (freeze) {
-        if (d->m_freezeState == FS::Capturing || d->m_freezeState == FS::Frozen) {
-            return;
-        }
-        d->m_freezeState = FS::Capturing;
-        d->m_freezeRequestId = ++d->m_nextSnapshotId;
-        emit freezeChanged();
-        d->captureSnapshotImpl(d->m_freezeRequestId);
+        d->m_freeze->beginFreeze();
         return;
     }
 
-    if (d->m_freezeState == FS::Idle) {
-        return;
-    }
-
-    if (d->m_freezeState == FS::Frozen) {
-        MobileWebViewSnapshotItem *overlay = d->m_snapshotItem;
-        d->m_snapshotItem = nullptr;
-        d->m_freezeState = FS::Idle;
-        d->restoreClipState();
-        d->updateNativeVisibility(d->q_ptr->isVisible());
-        emit freezeChanged();
-        QTimer::singleShot(kFreezeOverlayFrameDelayMs, this, [overlay]() {
-            if (overlay) {
-                overlay->deleteLater();
-            }
-        });
-        return;
-    }
-
-    d->clearFreezeState();
-    emit freezeChanged();
+    d->m_freeze->endFreeze();
 }
 
 void MobileWebViewBackend::setZoomFactor(qreal factor)

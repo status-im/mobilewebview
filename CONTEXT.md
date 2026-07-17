@@ -63,6 +63,18 @@ has completed. Completion order across overlapping clears is not part of the
 contract.
 _Avoid_: busy, in-flight clear, clear in progress.
 
+### Snapshot
+An asynchronous capture of the WebView's current frame as an image. Taken either
+on the host's explicit request or as the first step of a Freeze.
+_Avoid_: screenshot, thumbnail.
+
+### Freeze
+Replacing the live WebView with its last captured Snapshot rendered in the Qt
+scene. While a Freeze is active the native view is hidden and the page appears
+static; unfreezing shows the live view again. Used to keep the page visually
+present when the native view cannot be (e.g. during scene transitions).
+_Avoid_: pause, suspend.
+
 ### Download
 A file transfer the library performs and tracks on the host's behalf; it is not a
 navigation. Triggered either by page content the WebView will not render inline

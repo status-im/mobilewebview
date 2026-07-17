@@ -77,6 +77,10 @@ not handing off to the OS download UI), exposing a per-transfer model to QML.
   `DownloadManager`, whose public API has no manual pause/resume at all (only
   automatic network-loss resilience) and which would reintroduce the cookie-jar
   and Incognito-leak problems.
+- **Download Request policy** (scheme support + filename guessing, including
+  Content-Disposition) lives in common C++ (`DownloadPolicy`). Platforms pass raw
+  inputs (URL, optional platform suggestion such as WKDownload `suggestedFilename`,
+  Content-Disposition, MIME); Java does not re-implement the policy.
 - **Ownership:** the backend owns each Download object until it reaches a terminal
   state, then `deleteLater`. No global cross-view registry; downloads are surfaced
   per `MobileWebViewBackend`, and the host aggregates if it wants a unified list.

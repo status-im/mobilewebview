@@ -200,15 +200,14 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         mWebView.setWebViewClient(new MobileWebViewClient(this));
         mWebView.setWebChromeClient(new MobileWebChromeClient(this));
         mWebView.setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> {
-            if (!DownloadUrlPolicy.isSupportedDownloadUrl(url)) {
-                return;
-            }
-            String fileName = DownloadUrlPolicy.guessFileName(url, contentDisposition, mimeType);
-            String ua = (mHttpUserAgent != null && !mHttpUserAgent.isEmpty())
-                    ? mHttpUserAgent
-                    : userAgent;
+            // Scheme filter + filename guessing live in C++ DownloadPolicy; pass raw inputs.
             withNativePtr(ptr -> nativeOnDownloadDetected(
-                    ptr, url, fileName, mimeType != null ? mimeType : "", contentLength, ua));
+                    ptr,
+                    url,
+                    contentDisposition != null ? contentDisposition : "",
+                    mimeType != null ? mimeType : "",
+                    contentLength,
+                    userAgent));
         });
 
         mActiveProfileName = mProfileManager.configureProfile(mWebView, mStorageName, mOffTheRecord);
@@ -924,7 +923,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     private native void nativeOnDeleteAllCookiesCompleted(long nativePtr, long requestId);
     private native void nativeOnClearDomStorageCompleted(long nativePtr, long requestId);
     private native void nativeOnClearSiteDataCompleted(long nativePtr, long requestId);
-    private native void nativeOnDownloadDetected(long nativePtr, String url, String fileName,
+    private native void nativeOnDownloadDetected(long nativePtr, String url, String contentDisposition,
                                                  String mimeType, long contentLength, String userAgent);
     private native void nativeOnDownloadProgress(long nativePtr, long downloadId,
                                                  long receivedBytes, long totalBytes);

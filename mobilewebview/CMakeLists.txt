@@ -51,6 +51,12 @@ set(MOBILEWEBVIEW_COMMON_SOURCES
     src/common/snapshotimageprovider.cpp
     src/common/origin_utils.h
     src/common/origin_utils.cpp
+    src/common/downloadpolicy.h
+    src/common/downloadpolicy.cpp
+    src/common/downloadregistry.h
+    src/common/downloadregistry.cpp
+    src/common/freezecontroller.h
+    src/common/freezecontroller.cpp
     src/common/userscript_utils.h
     src/common/userscript_utils.cpp
     src/common/webchanneltransport.h

@@ -1448,16 +1448,16 @@ Java_org_mobilewebview_MobileWebView_nativeOnClearSiteDataCompleted(JNIEnv *, jo
 
 JNIEXPORT void JNICALL
 Java_org_mobilewebview_MobileWebView_nativeOnDownloadDetected(JNIEnv *env, jobject,
-        jlong nativePtr, jstring url, jstring fileName, jstring mimeType,
+        jlong nativePtr, jstring url, jstring contentDisposition, jstring mimeType,
         jlong contentLength, jstring /*userAgent*/)
 {
     const QString qUrl = toQString(env, url);
-    const QString qFileName = toQString(env, fileName);
+    const QString qDisposition = toQString(env, contentDisposition);
     const QString qMime = toQString(env, mimeType);
     const qint64 total = contentLength > 0 ? static_cast<qint64>(contentLength) : -1;
 
-    dispatchToBackend(nativePtr, [qUrl, qFileName, qMime, total](AndroidWebViewPrivate *backend) {
-        backend->onDownloadDetected(QUrl(qUrl), qFileName, qMime, total);
+    dispatchToBackend(nativePtr, [qUrl, qDisposition, qMime, total](AndroidWebViewPrivate *backend) {
+        backend->onDownloadDetected(QUrl(qUrl), QString(), qDisposition, qMime, total);
     });
 }
 

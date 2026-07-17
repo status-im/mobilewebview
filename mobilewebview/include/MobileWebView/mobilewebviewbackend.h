@@ -105,12 +105,14 @@ public:
     MobileWebViewDownload *beginDownload(const QUrl &url,
                                          const QString &suggestedFileName,
                                          const QString &mimeType,
-                                         qint64 totalBytes);
+                                         qint64 totalBytes,
+                                         const QString &contentDisposition = QString());
     /// Create without emitting; pair with emitDownloadRequested after platform registration.
     MobileWebViewDownload *createDownload(const QUrl &url,
                                           const QString &suggestedFileName,
                                           const QString &mimeType,
-                                          qint64 totalBytes);
+                                          qint64 totalBytes,
+                                          const QString &contentDisposition = QString());
     void emitDownloadRequested(MobileWebViewDownload *download);
     void reportDownloadProgress(quint64 downloadId, qint64 receivedBytes, qint64 totalBytes);
     void reportDownloadFinished(quint64 downloadId, bool ok, const QString &error = QString());
