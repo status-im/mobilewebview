@@ -13,6 +13,21 @@ ScreenScaffold {
 
     property bool historyVisible: false
 
+    readonly property var agentActions: ({
+        "google": function() { root.navigateTo("google.com") },
+        "netflix": function() { root.navigateTo("netflix.com") },
+        "amazon": function() { root.navigateTo("amazon.com") },
+        "toggle_history": function() { root.historyVisible = !root.historyVisible }
+    })
+
+    function agentState() {
+        return {
+            historyVisible: root.historyVisible,
+            historyCount: root.webView ? root.webView.historyItems.length : 0,
+            currentHistoryIndex: root.webView ? root.webView.currentHistoryIndex : -1
+        }
+    }
+
     onBackRequested: stackView.pop()
 
     ColumnLayout {

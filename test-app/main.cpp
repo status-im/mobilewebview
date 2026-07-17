@@ -8,6 +8,7 @@
 
 #include "MobileWebView/mobilewebviewbackend.h"
 #include "MobileWebView/mobilewebviewdownload.h"
+#include "agentcontrol.h"
 #include "downloadtestsupport.h"
 
 static QString loadTextResource(const QString &path)
@@ -30,6 +31,7 @@ int main(int argc, char *argv[])
                                             "QWebChannel is provided via WebChannel QML type");
 
     DownloadTestSupport downloadTestSupport;
+    AgentControl agentControl;
 
     QQmlApplicationEngine engine;
     engine.addImportPath(QStringLiteral("qrc:/"));
@@ -41,11 +43,21 @@ int main(int argc, char *argv[])
         loadTextResource(QStringLiteral(":/MobileWebViewTest/web/test_webchannel.html")));
     engine.rootContext()->setContextProperty(
         QStringLiteral("_downloadTest"), &downloadTestSupport);
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("_agentPort"), 0);
 
     engine.load(QUrl(QStringLiteral("qrc:/MobileWebViewTest/qml/main.qml")));
 
     if (engine.rootObjects().isEmpty()) {
         return -1;
+    }
+
+    QObject *root = engine.rootObjects().constFirst();
+    agentControl.setRootWindow(root);
+    if (agentControl.start()) {
+        engine.rootContext()->setContextProperty(
+            QStringLiteral("_agentPort"), static_cast<int>(agentControl.port()));
+        root->setProperty("agentPort", static_cast<int>(agentControl.port()));
     }
 
     return app.exec();

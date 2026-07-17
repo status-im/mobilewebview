@@ -50,6 +50,60 @@ ScreenScaffold {
     property var _pauseWatch: null
     property var _retryWatch: null
 
+    readonly property var agentActions: ({
+        "url_small": function() { root.startUrlSmall() },
+        "page": function() { root.startPageNetwork() },
+        "inline": function() { root.startInline() },
+        "cancel": function() { root.startCancel() },
+        "pause": function() { root.startUrlLargePause() },
+        "retry": function() { root.startRetry() },
+        "profile_cancel": function() { root.startProfileCancel() },
+        "clear_list": function() { root.clearList() },
+        "accept_mode_auto": function() { root.acceptMode = "auto" },
+        "accept_mode_manual": function() { root.acceptMode = "manual" },
+        "toggle_incognito": function() { root.offTheRecord = !root.offTheRecord }
+    })
+
+    function agentState() {
+        return {
+            acceptMode: root.acceptMode,
+            pendingScenario: root.pendingScenario,
+            offTheRecord: root.offTheRecord,
+            storageName: root.storageName,
+            downloadCount: root.downloads.length,
+            downloads: root.downloads.map(function(d) {
+                return {
+                    downloadId: d.downloadId,
+                    url: d.url,
+                    suggestedFileName: d.suggestedFileName,
+                    state: d.stateLabel,
+                    path: d.path,
+                    error: d.error,
+                    scenario: d.scenario,
+                    isInline: d.isInline
+                }
+            }),
+            verdicts: {
+                urlSmall: root.verdictUrlSmall,
+                page: root.verdictPage,
+                inline: root.verdictInline,
+                cancel: root.verdictCancel,
+                pause: root.verdictPause,
+                retry: root.verdictRetry,
+                profile: root.verdictProfile
+            },
+            details: {
+                urlSmall: root.detailUrlSmall,
+                page: root.detailPage,
+                inline: root.detailInline,
+                cancel: root.detailCancel,
+                pause: root.detailPause,
+                retry: root.detailRetry,
+                profile: root.detailProfile
+            }
+        }
+    }
+
     onBackRequested: stackView.pop()
 
     Component.onCompleted: {
