@@ -67,6 +67,10 @@ set(MOBILEWEBVIEW_DARWIN_SOURCES
     src/darwin/navigationdelegate.mm
     src/darwin/downloaddelegate.h
     src/darwin/downloaddelegate.mm
+    src/darwin/dataclearops.h
+    src/darwin/dataclearops.mm
+    src/darwin/snapshotcapture.h
+    src/darwin/snapshotcapture.mm
     src/darwin/userscripts.h
     src/darwin/userscripts.mm
     src/darwin/origin_utils.h
