@@ -6,7 +6,9 @@
 #include "webchanneltransport.h"
 #include "origin_utils.h"
 #include "downloadregistry.h"
+#include "downloadpolicy.h"
 #include "freezecontroller.h"
+#include "inlinedownloadcodec.h"
 
 #include <QUuid>
 #include <QDebug>
@@ -81,7 +83,10 @@ MobileWebViewBackendPrivate::MobileWebViewBackendPrivate(MobileWebViewBackend *q
         [this](quint64 id, const QUrl &url, const QString &path) {
             startDownloadImpl(id, url, path);
         },
-        [this](quint64 id) { cancelDownloadImpl(id); });
+        [this](quint64 id) { cancelDownloadImpl(id); },
+        [this](quint64 id) { pauseDownloadImpl(id); },
+        [this](quint64 id) { resumeDownloadImpl(id); },
+        [this](MobileWebViewDownload *download) { retryDownloadRequest(download); });
 
     FreezeController::Callbacks freezeCb;
     freezeCb.captureSnapshot = [this](quint64 requestId) {
@@ -207,6 +212,26 @@ void MobileWebViewBackendPrivate::startDownloadImpl(quint64 downloadId, const QU
         }
         onDownloadFinished(downloadId, false,
                            QStringLiteral("Downloads not supported on this platform"));
+    }, Qt::QueuedConnection);
+}
+
+void MobileWebViewBackendPrivate::pauseDownloadImpl(quint64 downloadId)
+{
+    QPointer<MobileWebViewBackend> guard(q_ptr);
+    QMetaObject::invokeMethod(q_ptr, [this, guard, downloadId]() {
+        if (!guard)
+            return;
+        onDownloadFinished(downloadId, false, QStringLiteral("Pause not supported"));
+    }, Qt::QueuedConnection);
+}
+
+void MobileWebViewBackendPrivate::resumeDownloadImpl(quint64 downloadId)
+{
+    QPointer<MobileWebViewBackend> guard(q_ptr);
+    QMetaObject::invokeMethod(q_ptr, [this, guard, downloadId]() {
+        if (!guard)
+            return;
+        onDownloadFinished(downloadId, false, QStringLiteral("Resume not supported"));
     }, Qt::QueuedConnection);
 }
 
@@ -527,6 +552,18 @@ MobileWebViewDownload *MobileWebViewBackendPrivate::onDownloadDetected(
         url, platformSuggestion, contentDisposition, mimeType, totalBytes);
 }
 
+MobileWebViewDownload *MobileWebViewBackendPrivate::onInlineDownloadDetected(
+    const QUrl &url,
+    const QString &platformSuggestion,
+    const QString &mimeType,
+    QByteArray payload)
+{
+    if (!m_downloadRegistry)
+        return nullptr;
+    return m_downloadRegistry->onInlineDetected(
+        url, platformSuggestion, mimeType, std::move(payload));
+}
+
 void MobileWebViewBackendPrivate::onDownloadProgress(quint64 downloadId,
                                                      qint64 receivedBytes,
                                                      qint64 totalBytes)
@@ -564,6 +601,26 @@ MobileWebViewDownload *MobileWebViewBackendPrivate::downloadById(quint64 downloa
     if (!m_downloadRegistry)
         return nullptr;
     return m_downloadRegistry->downloadById(downloadId);
+}
+
+void MobileWebViewBackendPrivate::retryDownloadRequest(MobileWebViewDownload *download)
+{
+    if (!download || !m_downloadRegistry)
+        return;
+
+    if (download->hasInlinePayload()) {
+        onInlineDownloadDetected(download->url(),
+                                 download->suggestedFileName(),
+                                 download->mimeType(),
+                                 download->inlinePayload());
+        return;
+    }
+
+    onDownloadDetected(download->url(),
+                       download->suggestedFileName(),
+                       QString(),
+                       download->mimeType(),
+                       -1);
 }
 
 void MobileWebViewBackendPrivate::beginClear()
@@ -804,6 +861,22 @@ MobileWebViewDownload *MobileWebViewBackend::beginDownload(const QUrl &url,
 {
     Q_D(MobileWebViewBackend);
     return d->onDownloadDetected(url, suggestedFileName, contentDisposition, mimeType, totalBytes);
+}
+
+MobileWebViewDownload *MobileWebViewBackend::beginInlineDownload(const QUrl &url,
+                                                                const QString &suggestedFileName,
+                                                                const QString &mimeType,
+                                                                const QString &base64Payload)
+{
+    Q_D(MobileWebViewBackend);
+    if (!MobileWebView::DownloadPolicy::isInlineUrl(url))
+        return nullptr;
+
+    const auto decoded = MobileWebView::InlineDownloadCodec::decodeBase64(base64Payload);
+    if (!decoded.ok)
+        return nullptr;
+
+    return d->onInlineDownloadDetected(url, suggestedFileName, mimeType, decoded.bytes);
 }
 
 MobileWebViewDownload *MobileWebViewBackend::createDownload(const QUrl &url,

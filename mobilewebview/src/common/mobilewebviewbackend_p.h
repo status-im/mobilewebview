@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QByteArray>
 #include <QUrl>
 #include <QStringList>
 #include <QVariantList>
@@ -84,6 +85,10 @@ public:
     virtual void startDownloadImpl(quint64 downloadId, const QUrl &url,
                                    const QString &destinationPath);
     virtual void cancelDownloadImpl(quint64) {}
+    /// Default: interrupt with "pause not supported".
+    virtual void pauseDownloadImpl(quint64 downloadId);
+    /// Default: interrupt with "resume not supported".
+    virtual void resumeDownloadImpl(quint64 downloadId);
 
     // =========================================================================
     // Optional capability: JS message bridge. Defaults: no bridge, no-ops.
@@ -121,11 +126,16 @@ public:
                                               const QString &contentDisposition,
                                               const QString &mimeType,
                                               qint64 totalBytes);
+    MobileWebViewDownload *onInlineDownloadDetected(const QUrl &url,
+                                                    const QString &platformSuggestion,
+                                                    const QString &mimeType,
+                                                    QByteArray payload);
     void onDownloadProgress(quint64 downloadId, qint64 receivedBytes, qint64 totalBytes);
     void onDownloadFinished(quint64 downloadId, bool ok, const QString &error);
     void forgetDownload(quint64 downloadId);
     void cancelAllDownloads();
     MobileWebViewDownload *downloadById(quint64 downloadId) const;
+    void retryDownloadRequest(MobileWebViewDownload *download);
 
     void clearFreezeState();
     void applyFreezeOverlaySizeFromImage(const QImage &image);

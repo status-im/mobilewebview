@@ -42,15 +42,12 @@ not handing off to the OS download UI), exposing a per-transfer model to QML.
   transfer machinery at near-zero marginal cost, and it is what makes host-side
   retry of a failed download possible in v1 and covers context-menu "save link".
   "Save page as MHTML" is deferred.
-- **Out of scope (v1): `blob:` and `data:` downloads** — files generated
-  client-side by the page (`URL.createObjectURL` + `<a download>`), a common dapp
-  pattern (key backups, exports). Deliberately deferred: Apple would be nearly free
-  (`WKDownload` handles blobs natively), but Android has no engine support at all —
-  `DownloadListener` receives an unfetchable `blob:` string and `androidx.webkit`
-  offers nothing — so it requires a library-owned user-script + bridge path
-  (FileReader → base64 → WebChannel). Known consequence: page-generated files do
-  not download in v1; the JS-bridge design is the pre-identified v2 approach and
-  slots into the same Download lifecycle.
+- **Inline Downloads (`blob:` / `data:`):** page-generated files
+  (`URL.createObjectURL` + `<a download>`) are supported via a library-owned
+  user-script + bridge path (FileReader → base64 → native bridge → decode → write
+  on accept). Network self-fetch still rejects bare blob/data URLs without a
+  payload. Cross-platform parity uses the script path on both Apple and Android
+  (not WKDownload-only for blobs).
 - **Async accept model:** when a Download is detected the backend emits
   `downloadRequested(MobileWebViewDownload* download)` carrying metadata only
   (source URL, suggested filename, MIME, expected size) before any bytes are written.
@@ -66,17 +63,19 @@ not handing off to the OS download UI), exposing a per-transfer model to QML.
 - **`MobileWebViewDownload`** is a `QObject` exposed to QML: `downloadId` (not
   QML's reserved `id`), `url`, `suggestedFileName`, `mimeType`, `totalBytes`
   (−1 if unknown), `receivedBytes`, `state` (Requested / InProgress / Completed /
-  Cancelled / Interrupted), `destinationPath`, `errorString`; method
-  `accept(target)` / `cancel()`; signals `stateChanged`, `receivedBytesChanged`,
-  `totalBytesChanged`, `finished`. Transfer speed is left to the host to derive
-  from `receivedBytes` deltas.
-- **Lifecycle ops (v1):** cancel only; a failed download is retried by the host via
-  `downloadUrl()`. The designated v2 evolution path for pause/resume is
-  `WKDownload` resume data on Apple and HTTP `Range` requests (`.part` file +
-  `If-Range` validator) over the self-fetch on Android — **not** the system
-  `DownloadManager`, whose public API has no manual pause/resume at all (only
-  automatic network-loss resilience) and which would reintroduce the cookie-jar
-  and Incognito-leak problems.
+  Paused / Cancelled / Interrupted), `destinationPath`, `errorString`; method
+  `accept(target)` / `cancel()` / `pause()` / `resume()` / `retry()`; `isPaused`;
+  signals `stateChanged`, `receivedBytesChanged`, `totalBytesChanged`, `finished`.
+  Transfer speed is left to the host to derive from `receivedBytes` deltas.
+- **Lifecycle ops:** cancel, pause/resume (non-terminal **Paused** state;
+  `isPaused` for WebEngine-shaped bindings), and `retry()` on a terminal
+  Interrupted/Cancelled Download which emits a **new** Download Request (new id)
+  rather than reviving the dead object. Pause/resume: `WKDownload` resume data on
+  Apple; HTTP `Range` with append to the host Download Target on Android
+  self-fetch (partial bytes kept at the destination across pause; cancel deletes
+  them) — **not** the system `DownloadManager`. Inline Downloads: pause/resume
+  are not applicable (bytes are written on accept). Process-death survival /
+  foreground service remains future work.
 - **Download Request policy** (scheme support + filename guessing, including
   Content-Disposition) lives in common C++ (`DownloadPolicy`). Platforms pass raw
   inputs (URL, optional platform suggestion such as WKDownload `suggestedFilename`,

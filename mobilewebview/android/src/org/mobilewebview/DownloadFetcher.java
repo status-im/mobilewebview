@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * Self-fetch download worker (ADR 0005). Reuses WebView cookies + User-Agent.
  * Registers completed files with the system Downloads UI in Standard mode only.
+ * Pause keeps the partial file; resume uses HTTP Range + append.
  */
 final class DownloadFetcher {
     private static final String TAG = "MobileWebView";
@@ -33,9 +34,25 @@ final class DownloadFetcher {
         void onFinished(long downloadId, boolean ok, String error);
     }
 
+    private static final class Session {
+        final String url;
+        final String destination;
+        volatile String userAgent;
+        volatile boolean offTheRecord;
+
+        Session(String url, String destination, String userAgent, boolean offTheRecord) {
+            this.url = url;
+            this.destination = destination;
+            this.userAgent = userAgent;
+            this.offTheRecord = offTheRecord;
+        }
+    }
+
     private final ExecutorService mExecutor = Executors.newCachedThreadPool();
     private final Map<Long, Future<?>> mActive = new ConcurrentHashMap<>();
     private final Map<Long, AtomicBoolean> mCancelled = new ConcurrentHashMap<>();
+    private final Map<Long, AtomicBoolean> mPaused = new ConcurrentHashMap<>();
+    private final Map<Long, Session> mSessions = new ConcurrentHashMap<>();
     private final Callbacks mCallbacks;
 
     DownloadFetcher(Callbacks callbacks) {
@@ -49,18 +66,39 @@ final class DownloadFetcher {
                boolean offTheRecord,
                Context context) {
         cancel(downloadId);
-        AtomicBoolean cancelled = new AtomicBoolean(false);
-        mCancelled.put(downloadId, cancelled);
+        Session session = new Session(url, destination, userAgent, offTheRecord);
+        mSessions.put(downloadId, session);
+        startFetch(downloadId, session, /*resumeOffset*/ 0L, context);
+    }
 
-        Future<?> future = mExecutor.submit(() -> {
-            try {
-                fetch(downloadId, url, destination, userAgent, offTheRecord, context, cancelled);
-            } finally {
-                mActive.remove(downloadId);
-                mCancelled.remove(downloadId);
-            }
-        });
-        mActive.put(downloadId, future);
+    void pause(long downloadId) {
+        AtomicBoolean paused = mPaused.get(downloadId);
+        if (paused != null) {
+            paused.set(true);
+        }
+        Future<?> future = mActive.remove(downloadId);
+        if (future != null) {
+            future.cancel(true);
+        }
+        // Keep mSessions + partial file for resume. Do not call onFinished.
+    }
+
+    void resume(long downloadId, String userAgent, boolean offTheRecord, Context context) {
+        Session session = mSessions.get(downloadId);
+        if (session == null) {
+            mCallbacks.onFinished(downloadId, false, "Resume data unavailable");
+            return;
+        }
+        if (userAgent != null && !userAgent.isEmpty()) {
+            session.userAgent = userAgent;
+        }
+        session.offTheRecord = offTheRecord;
+
+        long offset = 0L;
+        if (session.destination != null && !session.destination.startsWith("content:")) {
+            offset = RangeFetchPolicy.existingFileLength(new File(session.destination));
+        }
+        startFetch(downloadId, session, offset, context);
     }
 
     void cancel(long downloadId) {
@@ -68,35 +106,69 @@ final class DownloadFetcher {
         if (flag != null) {
             flag.set(true);
         }
+        AtomicBoolean paused = mPaused.get(downloadId);
+        if (paused != null) {
+            paused.set(true);
+        }
         Future<?> future = mActive.remove(downloadId);
         if (future != null) {
             future.cancel(true);
         }
+        Session session = mSessions.remove(downloadId);
+        if (session != null) {
+            cleanupPartial(session.destination, null);
+        }
+        mCancelled.remove(downloadId);
+        mPaused.remove(downloadId);
     }
 
     void cancelAll() {
+        for (Long id : mSessions.keySet()) {
+            cancel(id);
+        }
         for (Long id : mActive.keySet()) {
             cancel(id);
         }
     }
 
+    private void startFetch(long downloadId, Session session, long resumeOffset, Context context) {
+        AtomicBoolean cancelled = new AtomicBoolean(false);
+        AtomicBoolean paused = new AtomicBoolean(false);
+        mCancelled.put(downloadId, cancelled);
+        mPaused.put(downloadId, paused);
+
+        Future<?> future = mExecutor.submit(() -> {
+            try {
+                fetch(downloadId, session, resumeOffset, context, cancelled, paused);
+            } finally {
+                mActive.remove(downloadId);
+                mCancelled.remove(downloadId);
+                mPaused.remove(downloadId);
+            }
+        });
+        mActive.put(downloadId, future);
+    }
+
     private void fetch(long downloadId,
-                       String url,
-                       String destination,
-                       String userAgent,
-                       boolean offTheRecord,
+                       Session session,
+                       long resumeOffset,
                        Context context,
-                       AtomicBoolean cancelled) {
+                       AtomicBoolean cancelled,
+                       AtomicBoolean paused) {
         HttpURLConnection conn = null;
         OutputStream out = null;
         try {
-            // startDownload is only invoked for Downloads that already passed
-            // C++ DownloadPolicy (scheme support) on the Download Request seam.
-            URL current = new URL(url);
+            URL current = new URL(session.url);
             int redirects = 0;
+            long offset = resumeOffset;
             while (true) {
                 if (cancelled.get() || Thread.interrupted()) {
-                    cleanupPartial(destination, context);
+                    if (!paused.get()) {
+                        cleanupPartial(session.destination, context);
+                    }
+                    return;
+                }
+                if (paused.get()) {
                     return;
                 }
 
@@ -104,12 +176,16 @@ final class DownloadFetcher {
                 conn.setInstanceFollowRedirects(false);
                 conn.setConnectTimeout(30_000);
                 conn.setReadTimeout(60_000);
-                if (userAgent != null && !userAgent.isEmpty()) {
-                    conn.setRequestProperty("User-Agent", userAgent);
+                if (session.userAgent != null && !session.userAgent.isEmpty()) {
+                    conn.setRequestProperty("User-Agent", session.userAgent);
                 }
                 String cookies = CookieManager.getInstance().getCookie(current.toString());
                 if (cookies != null && !cookies.isEmpty()) {
                     conn.setRequestProperty("Cookie", cookies);
+                }
+                String range = RangeFetchPolicy.rangeHeader(offset);
+                if (range != null) {
+                    conn.setRequestProperty("Range", range);
                 }
 
                 int code = conn.getResponseCode();
@@ -117,13 +193,22 @@ final class DownloadFetcher {
                     String location = conn.getHeaderField("Location");
                     conn.disconnect();
                     if (location == null || location.isEmpty() || ++redirects > 10) {
+                        mSessions.remove(downloadId);
                         mCallbacks.onFinished(downloadId, false, "Too many redirects");
                         return;
                     }
                     current = new URL(current, location);
                     continue;
                 }
+                if (offset > 0 && code == 200) {
+                    // Server ignored Range — discard partial and retry without Range.
+                    conn.disconnect();
+                    offset = 0;
+                    cleanupPartial(session.destination, context);
+                    continue;
+                }
                 if (code < 200 || code >= 300) {
+                    mSessions.remove(downloadId);
                     mCallbacks.onFinished(downloadId, false, "HTTP " + code);
                     return;
                 }
@@ -131,15 +216,25 @@ final class DownloadFetcher {
             }
 
             long total = conn.getContentLengthLong();
-            out = openDestination(destination, context);
+            if (RangeFetchPolicy.isPartialContent(conn.getResponseCode())) {
+                total = RangeFetchPolicy.totalFromContentRange(
+                    conn.getHeaderField("Content-Range"), total >= 0 ? total + offset : -1);
+            }
+
+            out = openDestination(session.destination, context, offset);
             try (InputStream in = conn.getInputStream()) {
                 byte[] buf = new byte[BUFFER_SIZE];
-                long received = 0;
+                long received = offset;
                 long lastNotify = 0;
                 int n;
                 while ((n = in.read(buf)) != -1) {
                     if (cancelled.get() || Thread.interrupted()) {
-                        cleanupPartial(destination, context);
+                        if (!paused.get()) {
+                            cleanupPartial(session.destination, context);
+                        }
+                        return;
+                    }
+                    if (paused.get()) {
                         return;
                     }
                     out.write(buf, 0, n);
@@ -153,17 +248,22 @@ final class DownloadFetcher {
                 mCallbacks.onProgress(downloadId, received, total >= 0 ? total : received);
             }
 
-            if (!offTheRecord) {
-                registerInSystemDownloads(destination, context, conn.getContentType());
+            if (!session.offTheRecord) {
+                registerInSystemDownloads(session.destination, context, conn.getContentType());
             }
+            mSessions.remove(downloadId);
             mCallbacks.onFinished(downloadId, true, null);
         } catch (Exception e) {
-            if (cancelled.get() || Thread.interrupted()) {
-                cleanupPartial(destination, context);
+            if (paused.get()) {
                 return;
             }
-            Log.e(TAG, "Download failed: " + url, e);
-            cleanupPartial(destination, context);
+            if (cancelled.get() || Thread.interrupted()) {
+                cleanupPartial(session.destination, context);
+                return;
+            }
+            Log.e(TAG, "Download failed: " + session.url, e);
+            cleanupPartial(session.destination, context);
+            mSessions.remove(downloadId);
             mCallbacks.onFinished(downloadId, false,
                     e.getMessage() != null ? e.getMessage() : "Download failed");
         } finally {
@@ -179,11 +279,12 @@ final class DownloadFetcher {
         }
     }
 
-    private static OutputStream openDestination(String destination, Context context)
+    private static OutputStream openDestination(String destination, Context context, long offset)
             throws Exception {
         if (destination != null && destination.startsWith("content:")) {
             Uri uri = Uri.parse(destination);
-            OutputStream stream = context.getContentResolver().openOutputStream(uri, "w");
+            String mode = RangeFetchPolicy.shouldAppend(offset) ? "wa" : "w";
+            OutputStream stream = context.getContentResolver().openOutputStream(uri, mode);
             if (stream == null) {
                 throw new IllegalStateException("Cannot open content URI");
             }
@@ -194,13 +295,15 @@ final class DownloadFetcher {
         if (parent != null && !parent.exists() && !parent.mkdirs()) {
             throw new IllegalStateException("Cannot create destination directory");
         }
-        return new FileOutputStream(file);
+        return new FileOutputStream(file, RangeFetchPolicy.shouldAppend(offset));
     }
 
     private static void cleanupPartial(String destination, Context context) {
         try {
             if (destination != null && destination.startsWith("content:")) {
-                context.getContentResolver().delete(Uri.parse(destination), null, null);
+                if (context != null) {
+                    context.getContentResolver().delete(Uri.parse(destination), null, null);
+                }
             } else if (destination != null) {
                 //noinspection ResultOfMethodCallIgnored
                 new File(destination).delete();
@@ -219,7 +322,6 @@ final class DownloadFetcher {
             if (!file.exists()) {
                 return;
             }
-            // Scan the host-written file into the media store / Downloads UI.
             MediaScannerConnection.scanFile(
                     context,
                     new String[] { file.getAbsolutePath() },

@@ -27,6 +27,19 @@ target_link_libraries(tst_downloadpolicy PRIVATE
 )
 add_test(NAME tst_downloadpolicy COMMAND tst_downloadpolicy)
 
+add_executable(tst_inlinedownloadcodec
+    tst_inlinedownloadcodec.cpp
+    ../src/common/inlinedownloadcodec.cpp
+)
+target_include_directories(tst_inlinedownloadcodec PRIVATE
+    ../src/common
+)
+target_link_libraries(tst_inlinedownloadcodec PRIVATE
+    Qt::Core
+    Qt::Test
+)
+add_test(NAME tst_inlinedownloadcodec COMMAND tst_inlinedownloadcodec)
+
 add_executable(tst_freezecontroller
     tst_freezecontroller.cpp
     ../src/common/freezecontroller.cpp
@@ -48,6 +61,7 @@ if(APPLE)
         ../src/common/downloadregistry.cpp
         ../src/common/downloadpolicy.cpp
         ../src/common/mobilewebviewdownload.cpp
+        ../src/common/inlinedownloadcodec.cpp
     )
     target_include_directories(tst_downloadregistry PRIVATE
         ../include
@@ -222,6 +236,7 @@ if(APPLE)
         ../src/common/origin_utils.cpp
         ../src/common/downloadpolicy.cpp
         ../src/common/downloadregistry.cpp
+        ../src/common/inlinedownloadcodec.cpp
         ../src/common/freezecontroller.cpp
         ../src/common/userscript_utils.cpp
         ../src/common/webchanneltransport.cpp

@@ -107,6 +107,11 @@ public:
                                          const QString &mimeType,
                                          qint64 totalBytes,
                                          const QString &contentDisposition = QString());
+    /// Inline blob:/data: Download from a base64 payload (JS bridge). nullptr on failure.
+    MobileWebViewDownload *beginInlineDownload(const QUrl &url,
+                                               const QString &suggestedFileName,
+                                               const QString &mimeType,
+                                               const QString &base64Payload);
     /// Create without emitting; pair with emitDownloadRequested after platform registration.
     MobileWebViewDownload *createDownload(const QUrl &url,
                                           const QString &suggestedFileName,

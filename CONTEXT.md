@@ -96,6 +96,13 @@ a Download with no Target is never written.
 
 ### Download State
 The lifecycle stage of a Download: **Requested** (awaiting a Target),
-**InProgress** (bytes transferring), **Completed** (fully written),
-**Cancelled** (stopped by host or by a profile switch), or **Interrupted**
-(failed mid-transfer). A Download in any of the last three is terminal.
+**InProgress** (bytes transferring), **Paused** (transfer suspended; may resume),
+**Completed** (fully written), **Cancelled** (stopped by host or by a profile
+switch), or **Interrupted** (failed mid-transfer). Completed, Cancelled, and
+Interrupted are terminal; Paused is not.
+
+### Inline Download
+A Download whose bytes are already held by the library (typically from a page
+`blob:` or `data:` URL read via a user-script bridge) and written to the Download
+Target on accept without an HTTP transfer.
+_Avoid_: blob download, data URL download.

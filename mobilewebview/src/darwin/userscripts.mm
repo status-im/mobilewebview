@@ -3,6 +3,7 @@
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
 
 #include "userscripts.h"
+#include "../common/inlinedownloadmessage.h"
 #include "../common/origin_utils.h"
 #include "../common/userscript_utils.h"
 #include "origin_utils.h"
@@ -225,9 +226,12 @@ static std::unique_ptr<WorldContext> createWorldContext()
     QString qBody = QString::fromNSString(body);
 
     runOnMainThread(^{
-        if (backend) {
-            emit backend->webMessageReceived(qBody, qOrigin, true);
-        }
+        if (!backend)
+            return;
+        // Inline Download envelopes bypass WebChannel entirely.
+        if (MobileWebView::tryHandleInlineDownloadMessage(backend, qBody))
+            return;
+        emit backend->webMessageReceived(qBody, qOrigin, true);
     });
 }
 
@@ -305,6 +309,15 @@ bool UserScriptsManager::installMessageBridge(const QString &ns,
 
     bootstrapPageSource.replace(QStringLiteral("%NS%"), ns);
     injectScript(bootstrapPageSource, true, false);  // pageWorld
+
+    // Inline blob:/data: <a download> → native beginInlineDownload (page world).
+    QString inlineDownloadSource =
+        loadScriptFromResources(QStringLiteral(":/CustomWebView/js/inline_download_interceptor.js"));
+    if (inlineDownloadSource.isEmpty()) {
+        qWarning() << "[UserScriptsManager] Failed to load inline_download_interceptor.js";
+        return false;
+    }
+    injectScript(inlineDownloadSource, true, false);  // pageWorld
 
     // Inject bootstrap_bridge.js in isolated world if available
     if (m_worldContext->isIsolated()) {

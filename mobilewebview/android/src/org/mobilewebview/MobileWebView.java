@@ -50,6 +50,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     private final List<String> mUserScripts = new ArrayList<>();
     private String mBootstrapPageScript = "";
     private String mBootstrapBridgeScript = "";
+    private String mInlineDownloadScript = "";
     private volatile String mCurrentMainFrameOrigin = "";
     private volatile String mActiveNavigationUrl = "";
 
@@ -232,7 +233,8 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
      */
     public void installMessageBridge(String namespace, String[] allowedOrigins,
                                      String invokeKey, String[] userScripts,
-                                     String bootstrapPageScript, String bootstrapBridgeScript) {
+                                     String bootstrapPageScript, String bootstrapBridgeScript,
+                                     String inlineDownloadScript) {
         synchronized (mBridgeLock) {
             mBridgeNamespace = namespace != null ? namespace : "";
             mInvokeKey = invokeKey != null ? invokeKey : "";
@@ -246,6 +248,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
             }
             mBootstrapPageScript = bootstrapPageScript != null ? bootstrapPageScript : "";
             mBootstrapBridgeScript = bootstrapBridgeScript != null ? bootstrapBridgeScript : "";
+            mInlineDownloadScript = inlineDownloadScript != null ? inlineDownloadScript : "";
             mBridgeInstalled = true;
         }
         runOnMainThread(mBridgeInjector::configureInjectionMode);
@@ -678,6 +681,18 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         mDownloadFetcher.cancel(downloadId);
     }
 
+    public void pauseDownload(long downloadId) {
+        mDownloadFetcher.pause(downloadId);
+    }
+
+    public void resumeDownload(long downloadId) {
+        String ua = mHttpUserAgent;
+        if ((ua == null || ua.isEmpty()) && mWebView != null) {
+            ua = mWebView.getSettings().getUserAgentString();
+        }
+        mDownloadFetcher.resume(downloadId, ua, mOffTheRecord, mContext);
+    }
+
     /**
      * Destroy WebView and cleanup
      */
@@ -819,6 +834,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
                 new ArrayList<>(mUserScripts),
                 mBootstrapPageScript,
                 mBootstrapBridgeScript,
+                mInlineDownloadScript,
                 new ArrayList<>(mAllowedOrigins));
         }
     }

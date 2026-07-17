@@ -1,5 +1,6 @@
 #include "MobileWebView/mobilewebviewbackend.h"
 #include "../common/mobilewebviewbackend_p.h"
+#include "../common/inlinedownloadmessage.h"
 #include "../common/origin_utils.h"
 #include "../common/userscript_utils.h"
 #include "../common/android_js_result.h"
@@ -72,6 +73,8 @@ public:
     void startDownloadImpl(quint64 downloadId, const QUrl &url,
                            const QString &destinationPath) override;
     void cancelDownloadImpl(quint64 downloadId) override;
+    void pauseDownloadImpl(quint64 downloadId) override;
+    void resumeDownloadImpl(quint64 downloadId) override;
 
     // JNI helper methods
     void cleanupJni();
@@ -131,6 +134,8 @@ private:
     jmethodID m_captureSnapshotForFreezeMethod = nullptr;
     jmethodID m_startDownloadMethod = nullptr;
     jmethodID m_cancelDownloadMethod = nullptr;
+    jmethodID m_pauseDownloadMethod = nullptr;
+    jmethodID m_resumeDownloadMethod = nullptr;
 
     bool m_jniInitialized = false;
     QMutex m_jniMutex;  // Protect JNI calls
@@ -227,6 +232,8 @@ bool AndroidWebViewPrivate::initNativeView()
     m_startDownloadMethod = env->GetMethodID(m_webViewClass, "startDownload",
         "(JLjava/lang/String;Ljava/lang/String;)V");
     m_cancelDownloadMethod = env->GetMethodID(m_webViewClass, "cancelDownload", "(J)V");
+    m_pauseDownloadMethod = env->GetMethodID(m_webViewClass, "pauseDownload", "(J)V");
+    m_resumeDownloadMethod = env->GetMethodID(m_webViewClass, "resumeDownload", "(J)V");
 
     m_jniInitialized = true;
 
@@ -746,6 +753,15 @@ bool AndroidWebViewPrivate::installBridgeImpl(const QString &ns, const QStringLi
         qWarning() << "AndroidWebViewPrivate: Failed to load bootstrap_bridge_android.js";
     }
 
+    QFile inlineDownloadFile(QStringLiteral(":/CustomWebView/js/inline_download_interceptor.js"));
+    QString inlineDownloadScript;
+    if (inlineDownloadFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        inlineDownloadScript = QString::fromUtf8(inlineDownloadFile.readAll());
+        inlineDownloadFile.close();
+    } else {
+        qWarning() << "AndroidWebViewPrivate: Failed to load inline_download_interceptor.js";
+    }
+
     // Load user scripts content
     QStringList scriptContents;
     for (const QVariant &scriptVariant : m_userScripts) {
@@ -798,15 +814,17 @@ bool AndroidWebViewPrivate::installBridgeImpl(const QString &ns, const QStringLi
     jstring jInvokeKey = env->NewStringUTF(invokeKey.toUtf8().constData());
     jstring jBootstrapPage = env->NewStringUTF(bootstrapPageScript.toUtf8().constData());
     jstring jBootstrapBridge = env->NewStringUTF(bootstrapBridgeScript.toUtf8().constData());
+    jstring jInlineDownload = env->NewStringUTF(inlineDownloadScript.toUtf8().constData());
 
     jmethodID installMethod = env->GetMethodID(m_webViewClass, "installMessageBridge",
-        "(Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
+        "(Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;"
+        "Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
     
     bool success = false;
     if (installMethod) {
         env->CallVoidMethod(m_webViewObject, installMethod, jNamespace, 
                            jAllowedOrigins, jInvokeKey, jUserScripts,
-                           jBootstrapPage, jBootstrapBridge);
+                           jBootstrapPage, jBootstrapBridge, jInlineDownload);
         success = true;
     }
 
@@ -814,6 +832,7 @@ bool AndroidWebViewPrivate::installBridgeImpl(const QString &ns, const QStringLi
     env->DeleteLocalRef(jInvokeKey);
     env->DeleteLocalRef(jBootstrapPage);
     env->DeleteLocalRef(jBootstrapBridge);
+    env->DeleteLocalRef(jInlineDownload);
     env->DeleteLocalRef(jAllowedOrigins);
     env->DeleteLocalRef(jUserScripts);
 
@@ -1005,6 +1024,44 @@ void AndroidWebViewPrivate::cancelDownloadImpl(quint64 downloadId)
     clearJniExceptionIfAny(env);
 }
 
+void AndroidWebViewPrivate::pauseDownloadImpl(quint64 downloadId)
+{
+    QMutexLocker locker(&m_jniMutex);
+
+    if (!m_jniInitialized || !m_webViewObject || !m_pauseDownloadMethod)
+        return;
+
+    QJniEnvironment env;
+    if (!env.isValid())
+        return;
+
+    env->CallVoidMethod(m_webViewObject, m_pauseDownloadMethod, static_cast<jlong>(downloadId));
+    clearJniExceptionIfAny(env);
+}
+
+void AndroidWebViewPrivate::resumeDownloadImpl(quint64 downloadId)
+{
+    QMutexLocker locker(&m_jniMutex);
+
+    if (!m_jniInitialized || !m_webViewObject || !m_resumeDownloadMethod) {
+        QMetaObject::invokeMethod(q_ptr, [this, downloadId]() {
+            onDownloadFinished(downloadId, false, QStringLiteral("Resume data unavailable"));
+        }, Qt::QueuedConnection);
+        return;
+    }
+
+    QJniEnvironment env;
+    if (!env.isValid()) {
+        QMetaObject::invokeMethod(q_ptr, [this, downloadId]() {
+            onDownloadFinished(downloadId, false, QStringLiteral("Resume data unavailable"));
+        }, Qt::QueuedConnection);
+        return;
+    }
+
+    env->CallVoidMethod(m_webViewObject, m_resumeDownloadMethod, static_cast<jlong>(downloadId));
+    clearJniExceptionIfAny(env);
+}
+
 void AndroidWebViewPrivate::findTextImpl(const QString &text, int flags)
 {
     QMutexLocker locker(&m_jniMutex);
@@ -1078,6 +1135,8 @@ void AndroidWebViewPrivate::onClearCompleted(quint64 requestId)
 // Callback handlers
 void AndroidWebViewPrivate::onWebMessageReceived(const QString &message, const QString &origin, bool isMainFrame)
 {
+    if (MobileWebView::tryHandleInlineDownloadMessage(q_ptr, message))
+        return;
     emit q_ptr->webMessageReceived(message, origin, isMainFrame);
 }
 

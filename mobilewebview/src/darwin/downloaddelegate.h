@@ -27,5 +27,9 @@ API_AVAILABLE(macos(11.3), ios(14.5))
                              webView:(WKWebView *)webView;
 
 - (void)cancelDownloadId:(uint64_t)downloadId;
+/// Pause: cancel the WKDownload and keep resumeData for a later resume.
+- (void)pauseDownloadId:(uint64_t)downloadId;
+/// Resume from stored resumeData via WKWebView resumeDownloadFromResumeData:.
+- (void)resumeDownloadId:(uint64_t)downloadId webView:(WKWebView *)webView;
 - (void)cancelAll;
 @end

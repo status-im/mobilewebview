@@ -27,6 +27,19 @@
     }
   });
 
+  // Inline Download envelope from page world — forward as-is (no WebChannel invokeKey).
+  document.addEventListener('__mwv_download__', function(e) {
+    if (typeof e.detail !== 'string') {
+      console.error(TAG, 'Expected string __mwv_download__ detail, got:', typeof e.detail);
+      return;
+    }
+    if (handlerAvailable) {
+      webkit.messageHandlers.qtbridge.postMessage(e.detail);
+    } else {
+      console.error(TAG, 'Message handler not available for inline download');
+    }
+  });
+
   // Signal to pageWorld that bridge is ready to receive messages
   // Using DOM attribute instead of event to avoid race conditions between content worlds
   document.documentElement.dataset.sqBridgeReady = '1';

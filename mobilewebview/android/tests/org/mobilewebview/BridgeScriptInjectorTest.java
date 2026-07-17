@@ -43,7 +43,7 @@ public final class BridgeScriptInjectorTest {
 
     private static void injectOnceSkipsWhenBridgeNotInstalled() {
         FakeBridgeInjectorHost host = hostWithWebView();
-        host.state = new BridgeState(false, Collections.emptyList(), "", "", Collections.emptyList());
+        host.state = new BridgeState(false, Collections.emptyList(), "", "", "", Collections.emptyList());
         BridgeScriptInjector injector = new BridgeScriptInjector(host);
 
         injector.injectOnce(ScriptInjectionPhase.ON_PAGE_STARTED);
@@ -58,9 +58,10 @@ public final class BridgeScriptInjectorTest {
         injector.injectOnce(ScriptInjectionPhase.ON_PAGE_STARTED);
 
         List<String> scripts = host.webView.evaluatedScripts();
-        TestAssert.assertTrue(scripts.size() >= 3);
+        TestAssert.assertTrue(scripts.size() >= 4);
         TestAssert.assertContains(scripts.get(0), "bootstrapPage");
         TestAssert.assertContains(scripts.get(1), "bootstrapBridge");
+        TestAssert.assertContains(scripts.get(2), "inlineDownload");
         TestAssert.assertContains(scripts.get(scripts.size() - 1), "__SQ_USER_SCRIPTS_LOADED__");
     }
 
@@ -114,7 +115,7 @@ public final class BridgeScriptInjectorTest {
 
     private static void configureInjectionModeBridgeNotInstalled() {
         FakeBridgeInjectorHost host = hostWithWebView();
-        host.state = new BridgeState(false, Collections.emptyList(), "", "", Collections.emptyList());
+        host.state = new BridgeState(false, Collections.emptyList(), "", "", "", Collections.emptyList());
         BridgeScriptInjector injector = new BridgeScriptInjector(host);
         injector.configureInjectionMode();
         TestAssert.assertEquals(0, host.webView.evaluatedScripts().size());
@@ -204,6 +205,7 @@ public final class BridgeScriptInjectorTest {
             Collections.singletonList("window.userOnly=true;"),
             null,
             "",
+            "",
             Arrays.asList("https://app.example", "https://other.example"));
         BridgeScriptInjector injector = new BridgeScriptInjector(host);
 
@@ -216,6 +218,7 @@ public final class BridgeScriptInjectorTest {
         for (String script : scripts) {
             TestAssert.assertFalse(script.contains("bootstrapPage"));
             TestAssert.assertFalse(script.contains("bootstrapBridge"));
+            TestAssert.assertFalse(script.contains("inlineDownload"));
         }
     }
 
@@ -249,6 +252,7 @@ public final class BridgeScriptInjectorTest {
             Arrays.asList("window.valid1=true;", null, "", "window.valid2=true;"),
             "window.bootstrapPage=true;",
             "window.bootstrapBridge=true;",
+            "window.inlineDownload=true;",
             Arrays.asList("https://app.example"));
         BridgeScriptInjector injector = new BridgeScriptInjector(host);
 
@@ -265,7 +269,8 @@ public final class BridgeScriptInjectorTest {
             }
         }
         TestAssert.assertEquals(2, userScriptEvals);
-        TestAssert.assertEquals(5, scripts.size());
+        // page + bridge + inline download + 2 user scripts + load marker
+        TestAssert.assertEquals(6, scripts.size());
     }
 
     private static void documentStartRegistrationIncludesMarker() throws Exception {
@@ -288,7 +293,8 @@ public final class BridgeScriptInjectorTest {
         handlersField.setAccessible(true);
         @SuppressWarnings("unchecked")
         List<Object> handlers = (List<Object>) handlersField.get(injector);
-        TestAssert.assertEquals(4, handlers.size());
+        // page + bridge + inline download + user script + load marker
+        TestAssert.assertEquals(5, handlers.size());
     }
 
     private static void injectNullWebViewDoesNotFlipInjectedFlag() throws Exception {

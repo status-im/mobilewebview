@@ -176,6 +176,7 @@ final class BridgeScriptInjector {
         final Runnable injectBody = () -> {
             injectScriptIfPresent(webView, state.bootstrapPageScript, "bootstrap_page");
             injectScriptIfPresent(webView, state.bootstrapBridgeScript, "bootstrap_bridge_android");
+            injectScriptIfPresent(webView, state.inlineDownloadScript, "inline_download_interceptor");
 
             for (String scriptContent : state.userScripts) {
                 if (scriptContent != null && !scriptContent.isEmpty()) {
@@ -215,7 +216,8 @@ final class BridgeScriptInjector {
         BridgeState state = mHost.snapshot();
         final Set<String> allowedOriginRules = buildAllowedOriginRules(state.allowedOrigins);
         boolean ok = addDocumentStartScriptIfPresent(state.bootstrapPageScript, allowedOriginRules)
-            && addDocumentStartScriptIfPresent(state.bootstrapBridgeScript, allowedOriginRules);
+            && addDocumentStartScriptIfPresent(state.bootstrapBridgeScript, allowedOriginRules)
+            && addDocumentStartScriptIfPresent(state.inlineDownloadScript, allowedOriginRules);
 
         for (String scriptContent : state.userScripts) {
             if (scriptContent == null || scriptContent.isEmpty()) {

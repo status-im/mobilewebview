@@ -33,6 +33,7 @@ SOURCES=(
   "$ANDROID_SRC/BridgeState.java"
   "$ANDROID_SRC/ScriptInjectionPhase.java"
   "$ANDROID_SRC/BridgeScriptInjector.java"
+  "$ANDROID_SRC/RangeFetchPolicy.java"
   "$ANDROID_TEST/OriginUtilsTest.java"
   "$ANDROID_TEST/BridgeScriptBuilderTest.java"
   "$ANDROID_TEST/MobileWebViewPendingActionsTest.java"
@@ -42,6 +43,7 @@ SOURCES=(
   "$ANDROID_TEST/BridgeScriptInjectorTest.java"
   "$ANDROID_TEST/WebViewProfileManagerTest.java"
   "$ANDROID_TEST/DataClearManagerTest.java"
+  "$ANDROID_TEST/RangeFetchPolicyTest.java"
 )
 
 echo "Compiling Java tests..."
@@ -55,6 +57,7 @@ TESTS=(
   org.mobilewebview.BridgeScriptInjectorTest
   org.mobilewebview.WebViewProfileManagerTest
   org.mobilewebview.DataClearManagerTest
+  org.mobilewebview.RangeFetchPolicyTest
 )
 
 for test in "${TESTS[@]}"; do

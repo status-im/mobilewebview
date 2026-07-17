@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QByteArray>
 #include <QObject>
 #include <QUrl>
 #include <QtQml/qqmlregistration.h>
@@ -22,16 +23,19 @@ class MobileWebViewDownload : public QObject
     Q_PROPERTY(qint64 totalBytes READ totalBytes NOTIFY totalBytesChanged)
     Q_PROPERTY(qint64 receivedBytes READ receivedBytes NOTIFY receivedBytesChanged)
     Q_PROPERTY(State state READ state NOTIFY stateChanged)
+    Q_PROPERTY(bool isPaused READ isPaused NOTIFY stateChanged)
     Q_PROPERTY(QString destinationPath READ destinationPath NOTIFY destinationPathChanged)
     Q_PROPERTY(QString errorString READ errorString NOTIFY errorStringChanged)
 
 public:
+    // WebEngine-shaped numbering: keep 0–4 stable; Paused is 5.
     enum class State {
         Requested = 0,
         InProgress = 1,
         Completed = 2,
         Cancelled = 3,
         Interrupted = 4,
+        Paused = 5,
     };
     Q_ENUM(State)
 
@@ -39,6 +43,10 @@ public:
         std::function<void(quint64 id, const QUrl &url, const QString &destination)> start;
         // Platform cancel + registry forget; download still does setCancelled+deleteLater.
         std::function<void(quint64 id)> cancel;
+        std::function<void(quint64 id)> pause;
+        std::function<void(quint64 id)> resume;
+        // Spawns a new Download Request; does not revive this object.
+        std::function<void(MobileWebViewDownload *download)> retryRequest;
     };
 
     quint64 downloadId() const { return m_id; }
@@ -48,6 +56,7 @@ public:
     qint64 totalBytes() const { return m_totalBytes; }
     qint64 receivedBytes() const { return m_receivedBytes; }
     State state() const { return m_state; }
+    bool isPaused() const { return m_state == State::Paused; }
     QString destinationPath() const { return m_destinationPath; }
     QString errorString() const { return m_errorString; }
 
@@ -58,8 +67,15 @@ public:
             || m_state == State::Interrupted;
     }
 
+    bool hasInlinePayload() const { return !m_inlinePayload.isEmpty(); }
+    QByteArray inlinePayload() const { return m_inlinePayload; }
+
     Q_INVOKABLE void accept(const QString &destinationPath);
     Q_INVOKABLE void cancel();
+    Q_INVOKABLE void pause();
+    Q_INVOKABLE void resume();
+    /// From Interrupted/Cancelled only: asks the backend to emit a new Download Request.
+    Q_INVOKABLE void retry();
 
 signals:
     void stateChanged();
@@ -80,7 +96,9 @@ private:
                                    QObject *parent = nullptr);
 
     void bindTransferHooks(TransferHooks hooks);
+    void setInlinePayload(QByteArray payload);
     void setInProgress();
+    void setPaused();
     void setProgress(qint64 receivedBytes, qint64 totalBytes);
     void setCompleted();
     void setInterrupted(const QString &error);
@@ -95,6 +113,7 @@ private:
     State m_state = State::Requested;
     QString m_destinationPath;
     QString m_errorString;
+    QByteArray m_inlinePayload;
     TransferHooks m_hooks;
 };
 

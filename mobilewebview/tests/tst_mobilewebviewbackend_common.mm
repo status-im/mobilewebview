@@ -1,10 +1,12 @@
 #include <QtTest/QtTest>
 
 #include <QCoreApplication>
+#include <QFile>
 #include <QPointer>
 #include <QQuickView>
 #include <QQuickWindow>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QVariantMap>
 
 #include "MobileWebView/mobilewebviewbackend.h"
@@ -170,6 +172,18 @@ public:
         lastCancelDownloadId = downloadId;
     }
 
+    void pauseDownloadImpl(quint64 downloadId) override
+    {
+        ++pauseDownloadCalls;
+        lastPauseDownloadId = downloadId;
+    }
+
+    void resumeDownloadImpl(quint64 downloadId) override
+    {
+        ++resumeDownloadCalls;
+        lastResumeDownloadId = downloadId;
+    }
+
     int loadUrlCalls = 0;
     int loadHtmlCalls = 0;
     int goBackCalls = 0;
@@ -198,9 +212,13 @@ public:
     int setHttpUserAgentCalls = 0;
     int startDownloadCalls = 0;
     int cancelDownloadCalls = 0;
+    int pauseDownloadCalls = 0;
+    int resumeDownloadCalls = 0;
     quint64 lastFreezeCaptureRequestId = 0;
     quint64 lastStartDownloadId = 0;
     quint64 lastCancelDownloadId = 0;
+    quint64 lastPauseDownloadId = 0;
+    quint64 lastResumeDownloadId = 0;
     QUrl lastStartDownloadUrl;
     QString lastStartDownloadDestination;
 
@@ -270,6 +288,9 @@ private slots:
     void downloadProgressAndCompletionReachTerminalState();
     void downloadRejectsBlobAndDataSchemes();
     void downloadCancelledOnProfileSwitch();
+    void beginInlineDownloadAcceptWritesFile();
+    void downloadPauseResumeInvokesPlatform();
+    void downloadRetryEmitsNewRequest();
 };
 
 void MobileWebViewBackendCommonTest::forwardsCallsAndStateChanges()
@@ -1276,6 +1297,102 @@ void MobileWebViewBackendCommonTest::downloadCancelledOnProfileSwitch()
     QCOMPARE(d->lastCancelDownloadId, download->downloadId());
     // deleteLater is posted; may not flush while nested in recreate — state is the contract.
     Q_UNUSED(guard);
+}
+
+void MobileWebViewBackendCommonTest::beginInlineDownloadAcceptWritesFile()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d);
+
+    QSignalSpy requestedSpy(&backend, &MobileWebViewBackend::downloadRequested);
+    // "hello" in base64
+    auto *download = backend.beginInlineDownload(
+        QUrl(QStringLiteral("blob:https://example.com/uuid")),
+        QStringLiteral("hello.txt"),
+        QStringLiteral("text/plain"),
+        QStringLiteral("aGVsbG8="));
+    QVERIFY(download);
+    QCOMPARE(requestedSpy.count(), 1);
+    QVERIFY(download->hasInlinePayload());
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("hello.txt"));
+    QSignalSpy finishedSpy(download, &MobileWebViewDownload::finished);
+    download->accept(path);
+
+    QCOMPARE(d->startDownloadCalls, 0);
+    QCOMPARE(finishedSpy.count(), 1);
+    QCOMPARE(download->state(), MobileWebViewDownload::State::Completed);
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), QByteArray("hello"));
+
+    QVERIFY(backend.beginInlineDownload(
+                QUrl(QStringLiteral("https://example.com/x")),
+                QStringLiteral("x.bin"),
+                QStringLiteral("application/octet-stream"),
+                QStringLiteral("aGVsbG8="))
+            == nullptr);
+    QVERIFY(backend.beginInlineDownload(
+                QUrl(QStringLiteral("blob:https://example.com/x")),
+                QStringLiteral("x.bin"),
+                QStringLiteral("application/octet-stream"),
+                QString())
+            == nullptr);
+}
+
+void MobileWebViewBackendCommonTest::downloadPauseResumeInvokesPlatform()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+
+    QSignalSpy requestedSpy(&backend, &MobileWebViewBackend::downloadRequested);
+    backend.downloadUrl(QUrl(QStringLiteral("https://example.com/p.bin")),
+                        QStringLiteral("p.bin"));
+    auto *download = qvariant_cast<MobileWebViewDownload *>(requestedSpy.at(0).at(0));
+    QVERIFY(download);
+    download->accept(QStringLiteral("/tmp/p.bin"));
+    QCOMPARE(download->state(), MobileWebViewDownload::State::InProgress);
+
+    download->pause();
+    QCOMPARE(download->state(), MobileWebViewDownload::State::Paused);
+    QVERIFY(download->isPaused());
+    QCOMPARE(d->pauseDownloadCalls, 1);
+    QCOMPARE(d->lastPauseDownloadId, download->downloadId());
+
+    download->resume();
+    QCOMPARE(download->state(), MobileWebViewDownload::State::InProgress);
+    QVERIFY(!download->isPaused());
+    QCOMPARE(d->resumeDownloadCalls, 1);
+    QCOMPARE(d->lastResumeDownloadId, download->downloadId());
+}
+
+void MobileWebViewBackendCommonTest::downloadRetryEmitsNewRequest()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+
+    QSignalSpy requestedSpy(&backend, &MobileWebViewBackend::downloadRequested);
+    backend.downloadUrl(QUrl(QStringLiteral("https://example.com/r.bin")),
+                        QStringLiteral("r.bin"));
+    auto *download = qvariant_cast<MobileWebViewDownload *>(requestedSpy.at(0).at(0));
+    QVERIFY(download);
+    download->accept(QStringLiteral("/tmp/r.bin"));
+    backend.reportDownloadFinished(download->downloadId(), false, QStringLiteral("fail"));
+    QCOMPARE(download->state(), MobileWebViewDownload::State::Interrupted);
+
+    download->retry();
+    QCOMPARE(requestedSpy.count(), 2);
+    auto *retryDownload = qvariant_cast<MobileWebViewDownload *>(requestedSpy.at(1).at(0));
+    QVERIFY(retryDownload);
+    QVERIFY(retryDownload != download);
+    QCOMPARE(retryDownload->url(), QUrl(QStringLiteral("https://example.com/r.bin")));
+    QCOMPARE(retryDownload->suggestedFileName(), QStringLiteral("r.bin"));
+    QCOMPARE(retryDownload->state(), MobileWebViewDownload::State::Requested);
 }
 
 QTEST_MAIN(MobileWebViewBackendCommonTest)

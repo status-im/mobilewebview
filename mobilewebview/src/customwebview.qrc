@@ -3,5 +3,6 @@
         <file>js/bootstrap_page.js</file>
         <file>js/bootstrap_bridge.js</file>
         <file>js/bootstrap_bridge_android.js</file>
+        <file>js/inline_download_interceptor.js</file>
     </qresource>
 </RCC>

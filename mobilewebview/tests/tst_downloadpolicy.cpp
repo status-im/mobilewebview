@@ -11,6 +11,7 @@ class DownloadPolicyTest : public QObject
 private slots:
     void isSupportedUrl_httpsAndHttp();
     void isSupportedUrl_rejectsBlobDataEmptyInvalid();
+    void isInlineUrl_blobAndData();
     void suggestedFileName_fromContentDisposition();
     void suggestedFileName_fromUrlPath();
     void suggestedFileName_mimeFallback();
@@ -33,6 +34,15 @@ void DownloadPolicyTest::isSupportedUrl_rejectsBlobDataEmptyInvalid()
     QVERIFY(!isSupportedUrl(QUrl()));
     QVERIFY(!isSupportedUrl(QUrl(QStringLiteral(""))));
     QVERIFY(!isSupportedUrl(QUrl(QStringLiteral("not-a-url"))));
+    QVERIFY(!isSupportedUrl(QUrl(QStringLiteral("file:///tmp/x.bin"))));
+}
+
+void DownloadPolicyTest::isInlineUrl_blobAndData()
+{
+    QVERIFY(isInlineUrl(QUrl(QStringLiteral("blob:https://example.com/uuid"))));
+    QVERIFY(isInlineUrl(QUrl(QStringLiteral("data:text/plain,hi"))));
+    QVERIFY(!isInlineUrl(QUrl(QStringLiteral("https://example.com/a.pdf"))));
+    QVERIFY(!isInlineUrl(QUrl()));
 }
 
 void DownloadPolicyTest::suggestedFileName_fromContentDisposition()
