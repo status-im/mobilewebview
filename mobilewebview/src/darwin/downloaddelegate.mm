@@ -29,6 +29,8 @@ bool isUnsupportedScheme(NSURL *url)
 @property (nonatomic, strong) NSMapTable<WKDownload *, NSNumber *> *idsByDownload;
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, id> *destinationHandlersById;
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSString *> *pendingDestinationsById;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSData *> *resumeDataById;
+@property (nonatomic, strong) NSMutableSet<NSNumber *> *pausingIds;
 @end
 
 @implementation DownloadDelegate
@@ -43,6 +45,8 @@ bool isUnsupportedScheme(NSURL *url)
                                                        capacity:0];
         _destinationHandlersById = [[NSMutableDictionary alloc] init];
         _pendingDestinationsById = [[NSMutableDictionary alloc] init];
+        _resumeDataById = [[NSMutableDictionary alloc] init];
+        _pausingIds = [[NSMutableSet alloc] init];
     }
     return self;
 }
@@ -58,6 +62,10 @@ bool isUnsupportedScheme(NSURL *url)
     _destinationHandlersById = nil;
     [_pendingDestinationsById release];
     _pendingDestinationsById = nil;
+    [_resumeDataById release];
+    _resumeDataById = nil;
+    [_pausingIds release];
+    _pausingIds = nil;
     [super dealloc];
 }
 
@@ -79,6 +87,8 @@ bool isUnsupportedScheme(NSURL *url)
         [handler release];
     [self.destinationHandlersById removeObjectForKey:key];
     [self.pendingDestinationsById removeObjectForKey:key];
+    [self.resumeDataById removeObjectForKey:key];
+    [self.pausingIds removeObject:key];
 }
 
 - (void)observeProgressForDownload:(WKDownload *)download downloadId:(uint64_t)downloadId
@@ -142,6 +152,7 @@ bool isUnsupportedScheme(NSURL *url)
         return;
 
     NSURL *url = download.originalRequest.URL;
+    // Reject blob:/data: WKDownload attachments — Inline Download script owns those.
     if (!url || isUnsupportedScheme(url)) {
         [download cancel:^(NSData *) {}];
         return;
@@ -227,6 +238,73 @@ bool isUnsupportedScheme(NSURL *url)
     [self forgetDownloadId:downloadId];
 }
 
+- (void)pauseDownloadId:(uint64_t)downloadId
+{
+    NSNumber *key = @(downloadId);
+    WKDownload *download = self.downloadsById[key];
+    if (!download) {
+        // Still Requested (destination handler pending) — release like cancel.
+        id handler = self.destinationHandlersById[key];
+        if (handler) {
+            void (^completion)(NSURL *) = handler;
+            completion(nil);
+            [handler release];
+            [self.destinationHandlersById removeObjectForKey:key];
+        }
+        return;
+    }
+
+    [self.pausingIds addObject:key];
+    __block DownloadDelegate *blockSelf = self;
+    [download cancel:^(NSData *resumeData) {
+        if (resumeData)
+            blockSelf.resumeDataById[key] = [[resumeData copy] autorelease];
+        [blockSelf.pausingIds removeObject:key];
+        // Drop active WKDownload mapping; keep resumeData for resumeDownloadId:.
+        WKDownload *active = blockSelf.downloadsById[key];
+        if (active) {
+            @try {
+                [active.progress removeObserver:blockSelf forKeyPath:@"completedUnitCount"];
+            } @catch (NSException *) {
+            }
+            [blockSelf.idsByDownload removeObjectForKey:active];
+        }
+        [blockSelf.downloadsById removeObjectForKey:key];
+        [blockSelf.pendingDestinationsById removeObjectForKey:key];
+    }];
+}
+
+- (void)resumeDownloadId:(uint64_t)downloadId webView:(WKWebView *)webView
+{
+    NSNumber *key = @(downloadId);
+    NSData *resumeData = self.resumeDataById[key];
+    auto fail = ^(MobileWebViewBackend *owner, const QString &message) {
+        if (!owner)
+            return;
+        QPointer<MobileWebViewBackend> guard(owner);
+        QMetaObject::invokeMethod(owner, [guard, downloadId, message]() {
+            if (guard)
+                guard->reportDownloadFinished(downloadId, false, message);
+        }, Qt::QueuedConnection);
+    };
+
+    if (!webView || !resumeData) {
+        fail(self.owner, QStringLiteral("Resume data unavailable"));
+        return;
+    }
+
+    [self.resumeDataById removeObjectForKey:key];
+    __block DownloadDelegate *blockSelf = self;
+    [webView resumeDownloadFromResumeData:resumeData completionHandler:^(WKDownload *download) {
+        if (!download) {
+            fail(blockSelf.owner, QStringLiteral("Resume data unavailable"));
+            return;
+        }
+        download.delegate = blockSelf;
+        [blockSelf registerDownload:download downloadId:downloadId];
+    }];
+}
+
 - (void)cancelAll
 {
     NSArray<NSNumber *> *keys = [self.downloadsById.allKeys copy];
@@ -243,6 +321,8 @@ bool isUnsupportedScheme(NSURL *url)
     }
     [self.destinationHandlersById removeAllObjects];
     [self.pendingDestinationsById removeAllObjects];
+    [self.resumeDataById removeAllObjects];
+    [self.pausingIds removeAllObjects];
 }
 
 - (void)download:(WKDownload *)download
@@ -355,15 +435,52 @@ API_AVAILABLE(macos(11.3), ios(14.5))
           resumeData:(NSData *)resumeData
 API_AVAILABLE(macos(11.3), ios(14.5))
 {
-    Q_UNUSED(resumeData);
     NSNumber *idNumber = [self.idsByDownload objectForKey:download];
     if (!idNumber)
         return;
 
     const uint64_t downloadId = idNumber.unsignedLongLongValue;
+    NSNumber *key = @(downloadId);
+
+    // Pause cancels with resumeData; ignore the failure callback for that path.
+    if ([self.pausingIds containsObject:key] || self.resumeDataById[key]) {
+        if (resumeData && !self.resumeDataById[key])
+            self.resumeDataById[key] = [[resumeData copy] autorelease];
+        WKDownload *active = self.downloadsById[key];
+        if (active) {
+            @try {
+                [active.progress removeObserver:self forKeyPath:@"completedUnitCount"];
+            } @catch (NSException *) {
+            }
+            [self.idsByDownload removeObjectForKey:active];
+        }
+        [self.downloadsById removeObjectForKey:key];
+        [self.pausingIds removeObject:key];
+        return;
+    }
+
+    // Keep resumeData for a possible host retry path that reuses WK resume.
+    if (resumeData)
+        self.resumeDataById[key] = [[resumeData copy] autorelease];
+
     const QString message = qStringFromNS(error.localizedDescription);
     MobileWebViewBackend *owner = self.owner;
-    [self forgetDownloadId:downloadId];
+    // forget without wiping resumeData we just stored
+    WKDownload *active = self.downloadsById[key];
+    if (active) {
+        @try {
+            [active.progress removeObserver:self forKeyPath:@"completedUnitCount"];
+        } @catch (NSException *) {
+        }
+        [self.idsByDownload removeObjectForKey:active];
+    }
+    [self.downloadsById removeObjectForKey:key];
+    id handler = self.destinationHandlersById[key];
+    if (handler)
+        [handler release];
+    [self.destinationHandlersById removeObjectForKey:key];
+    [self.pendingDestinationsById removeObjectForKey:key];
+
     if (!owner)
         return;
 

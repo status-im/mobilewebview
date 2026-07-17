@@ -100,9 +100,18 @@ bool isSupportedUrl(const QUrl &url)
     if (!url.isValid() || url.isEmpty() || url.scheme().isEmpty())
         return false;
     const QString scheme = url.scheme().toLower();
+    // Network fetch only — inline blob/data use isInlineUrl + beginInlineDownload.
     if (scheme == QLatin1String("blob") || scheme == QLatin1String("data"))
         return false;
-    return true;
+    return scheme == QLatin1String("http") || scheme == QLatin1String("https");
+}
+
+bool isInlineUrl(const QUrl &url)
+{
+    if (!url.isValid() || url.isEmpty())
+        return false;
+    const QString scheme = url.scheme().toLower();
+    return scheme == QLatin1String("blob") || scheme == QLatin1String("data");
 }
 
 QString suggestedFileName(const QUrl &url,

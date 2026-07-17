@@ -22,6 +22,13 @@ void MobileWebViewDownload::bindTransferHooks(TransferHooks hooks)
     m_hooks = std::move(hooks);
 }
 
+void MobileWebViewDownload::setInlinePayload(QByteArray payload)
+{
+    m_inlinePayload = std::move(payload);
+    if (m_totalBytes < 0)
+        m_totalBytes = m_inlinePayload.size();
+}
+
 void MobileWebViewDownload::accept(const QString &destinationPath)
 {
     if (m_state != State::Requested || !m_hooks.start)
@@ -47,11 +54,51 @@ void MobileWebViewDownload::cancel()
     deleteLater();
 }
 
+void MobileWebViewDownload::pause()
+{
+    // Inline Downloads write on accept; pause/resume are not applicable.
+    if (hasInlinePayload())
+        return;
+    if (m_state != State::InProgress || !m_hooks.pause)
+        return;
+
+    m_hooks.pause(m_id);
+    setPaused();
+}
+
+void MobileWebViewDownload::resume()
+{
+    if (hasInlinePayload())
+        return;
+    if (m_state != State::Paused || !m_hooks.resume)
+        return;
+
+    setInProgress();
+    m_hooks.resume(m_id);
+}
+
+void MobileWebViewDownload::retry()
+{
+    if (m_state != State::Interrupted && m_state != State::Cancelled)
+        return;
+    if (!m_hooks.retryRequest)
+        return;
+    m_hooks.retryRequest(this);
+}
+
 void MobileWebViewDownload::setInProgress()
 {
     if (m_state == State::InProgress)
         return;
     m_state = State::InProgress;
+    emit stateChanged();
+}
+
+void MobileWebViewDownload::setPaused()
+{
+    if (m_state == State::Paused)
+        return;
+    m_state = State::Paused;
     emit stateChanged();
 }
 

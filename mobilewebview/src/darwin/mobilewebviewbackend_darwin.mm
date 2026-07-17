@@ -223,6 +223,8 @@ public:
     void startDownloadImpl(quint64 downloadId, const QUrl &url,
                            const QString &destinationPath) override;
     void cancelDownloadImpl(quint64 downloadId) override;
+    void pauseDownloadImpl(quint64 downloadId) override;
+    void resumeDownloadImpl(quint64 downloadId) override;
 
 private:
     WKWebView *m_webView = nullptr;
@@ -1007,6 +1009,31 @@ void DarwinWebViewPrivate::cancelDownloadImpl(quint64 downloadId)
     DownloadDelegate *delegate = m_downloadDelegate;
     runOnMainThread(^{
         [delegate cancelDownloadId:downloadId];
+    });
+}
+
+void DarwinWebViewPrivate::pauseDownloadImpl(quint64 downloadId)
+{
+    if (!m_downloadDelegate)
+        return;
+    DownloadDelegate *delegate = m_downloadDelegate;
+    runOnMainThread(^{
+        [delegate pauseDownloadId:downloadId];
+    });
+}
+
+void DarwinWebViewPrivate::resumeDownloadImpl(quint64 downloadId)
+{
+    if (!m_downloadDelegate) {
+        QMetaObject::invokeMethod(q_ptr, [this, downloadId]() {
+            onDownloadFinished(downloadId, false, QStringLiteral("Resume data unavailable"));
+        }, Qt::QueuedConnection);
+        return;
+    }
+    DownloadDelegate *delegate = m_downloadDelegate;
+    WKWebView *webView = m_webView;
+    runOnMainThread(^{
+        [delegate resumeDownloadId:downloadId webView:webView];
     });
 }
 

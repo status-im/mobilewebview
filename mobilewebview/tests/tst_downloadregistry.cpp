@@ -3,8 +3,10 @@
 #include "downloadregistry.h"
 #include "MobileWebView/mobilewebviewdownload.h"
 
+#include <QFile>
 #include <QPointer>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <vector>
 
 class DownloadRegistryTest : public QObject
@@ -17,6 +19,10 @@ private slots:
     void progressUpdatesDownload();
     void finishRemovesAndDeleteLater();
     void cancelAllInvokesPlatformAndMarksCancelled();
+    void inlineAcceptWritesPayload();
+    void pauseResumeTransitions();
+    void cancelAllCancelsPaused();
+    void retryHookInvokedFromInterrupted();
 };
 
 void DownloadRegistryTest::createRejectsUnsupportedSchemes()
@@ -172,6 +178,140 @@ void DownloadRegistryTest::cancelAllInvokesPlatformAndMarksCancelled()
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     QVERIFY(g1.isNull());
     QVERIFY(g2.isNull());
+}
+
+void DownloadRegistryTest::inlineAcceptWritesPayload()
+{
+    QObject parent;
+    bool startCalled = false;
+    DownloadRegistry registry(
+        &parent,
+        {},
+        [&](quint64, const QUrl &, const QString &) { startCalled = true; },
+        {});
+
+    const QByteArray payload("hello-inline");
+    auto *download = registry.createInline(
+        QUrl(QStringLiteral("blob:https://example.com/uuid")),
+        QStringLiteral("hello.txt"),
+        QStringLiteral("text/plain"),
+        payload);
+    QVERIFY(download);
+    QVERIFY(download->hasInlinePayload());
+    QCOMPARE(download->totalBytes(), payload.size());
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("out.txt"));
+
+    QSignalSpy finishedSpy(download, &MobileWebViewDownload::finished);
+    download->accept(path);
+
+    QCOMPARE(startCalled, false);
+    QCOMPARE(finishedSpy.count(), 1);
+    QCOMPARE(download->state(), MobileWebViewDownload::State::Completed);
+    QCOMPARE(download->receivedBytes(), payload.size());
+    QVERIFY(registry.downloadById(download->downloadId()) == nullptr);
+
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), payload);
+}
+
+void DownloadRegistryTest::pauseResumeTransitions()
+{
+    QObject parent;
+    std::vector<quint64> paused;
+    std::vector<quint64> resumed;
+    DownloadRegistry registry(
+        &parent,
+        {},
+        [](quint64, const QUrl &, const QString &) {},
+        {},
+        [&](quint64 id) { paused.push_back(id); },
+        [&](quint64 id) { resumed.push_back(id); });
+
+    auto *download = registry.create(
+        QUrl(QStringLiteral("https://example.com/a.bin")),
+        QStringLiteral("a.bin"),
+        QString(),
+        QStringLiteral("application/octet-stream"),
+        100);
+    QVERIFY(download);
+    download->accept(QStringLiteral("/tmp/a.bin"));
+    QCOMPARE(download->state(), MobileWebViewDownload::State::InProgress);
+    QVERIFY(!download->isPaused());
+
+    download->pause();
+    QCOMPARE(download->state(), MobileWebViewDownload::State::Paused);
+    QVERIFY(download->isPaused());
+    QCOMPARE(paused.size(), size_t(1));
+    QCOMPARE(paused[0], download->downloadId());
+    // Paused stays in the active map.
+    QCOMPARE(registry.downloadById(download->downloadId()), download);
+
+    download->resume();
+    QCOMPARE(download->state(), MobileWebViewDownload::State::InProgress);
+    QVERIFY(!download->isPaused());
+    QCOMPARE(resumed.size(), size_t(1));
+    QCOMPARE(resumed[0], download->downloadId());
+}
+
+void DownloadRegistryTest::cancelAllCancelsPaused()
+{
+    QObject parent;
+    std::vector<quint64> cancelled;
+    DownloadRegistry registry(
+        &parent,
+        {},
+        [](quint64, const QUrl &, const QString &) {},
+        [&](quint64 id) { cancelled.push_back(id); },
+        [](quint64) {},
+        {});
+
+    auto *download = registry.create(
+        QUrl(QStringLiteral("https://example.com/a.bin")),
+        QStringLiteral("a.bin"),
+        QString(),
+        QStringLiteral("application/octet-stream"),
+        100);
+    QVERIFY(download);
+    download->accept(QStringLiteral("/tmp/a.bin"));
+    download->pause();
+    QCOMPARE(download->state(), MobileWebViewDownload::State::Paused);
+
+    registry.cancelAll();
+    QCOMPARE(cancelled.size(), size_t(1));
+    QCOMPARE(download->state(), MobileWebViewDownload::State::Cancelled);
+}
+
+void DownloadRegistryTest::retryHookInvokedFromInterrupted()
+{
+    QObject parent;
+    MobileWebViewDownload *retried = nullptr;
+    DownloadRegistry registry(
+        &parent,
+        {},
+        [](quint64, const QUrl &, const QString &) {},
+        {},
+        {},
+        {},
+        [&](MobileWebViewDownload *d) { retried = d; });
+
+    auto *download = registry.create(
+        QUrl(QStringLiteral("https://example.com/a.bin")),
+        QStringLiteral("a.bin"),
+        QString(),
+        QStringLiteral("application/octet-stream"),
+        100);
+    QVERIFY(download);
+    const quint64 id = download->downloadId();
+    download->accept(QStringLiteral("/tmp/a.bin"));
+    registry.onFinished(id, false, QStringLiteral("network"));
+
+    QCOMPARE(download->state(), MobileWebViewDownload::State::Interrupted);
+    download->retry();
+    QCOMPARE(retried, download);
 }
 
 QTEST_MAIN(DownloadRegistryTest)

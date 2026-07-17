@@ -18,6 +18,10 @@
         if (navigationAction.shouldPerformDownload) {
             NSURL *url = navigationAction.request.URL;
             NSString *scheme = url.scheme.lowercaseString;
+            // blob:/data: navigation downloads are owned by inline_download_interceptor.js
+            // (FileReader → beginInlineDownload). Do not enable WKDownload for these —
+            // WKDownload blob support is uneven and would diverge from the Android
+            // script path (ADR 0005 Inline Download parity).
             if ([scheme isEqualToString:@"blob"] || [scheme isEqualToString:@"data"]) {
                 decisionHandler(WKNavigationActionPolicyCancel);
                 return;
@@ -35,6 +39,7 @@
 {
     NSURL *url = navigationResponse.response.URL;
     NSString *scheme = url.scheme.lowercaseString;
+    // Same as navigationAction: script owns blob:/data: Inline Downloads.
     if ([scheme isEqualToString:@"blob"] || [scheme isEqualToString:@"data"]) {
         decisionHandler(WKNavigationResponsePolicyCancel);
         return;

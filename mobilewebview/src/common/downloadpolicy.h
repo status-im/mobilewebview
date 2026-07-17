@@ -10,8 +10,12 @@
 namespace MobileWebView {
 namespace DownloadPolicy {
 
+/// Network self-fetch / WKDownload path: http(s) only.
 /// false for blob:/data:/empty/invalid URLs.
 bool isSupportedUrl(const QUrl &url);
+
+/// Inline (JS-bridge) path: blob: or data: with a payload held by the library.
+bool isInlineUrl(const QUrl &url);
 
 /// Priority: non-empty platformSuggestion (sanitized) → Content-Disposition →
 /// URL path → MIME extension → "download".
