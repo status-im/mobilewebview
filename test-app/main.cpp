@@ -7,6 +7,8 @@
 #include <qqml.h>
 
 #include "MobileWebView/mobilewebviewbackend.h"
+#include "MobileWebView/mobilewebviewdownload.h"
+#include "downloadtestsupport.h"
 
 static QString loadTextResource(const QString &path)
 {
@@ -21,8 +23,13 @@ int main(int argc, char *argv[])
 {
     QGuiApplication app(argc, argv);
     qmlRegisterType<MobileWebViewBackend>("MobileWebView", 1, 0, "MobileWebViewBackend");
+    qmlRegisterUncreatableType<MobileWebViewDownload>(
+        "MobileWebView", 1, 0, "MobileWebViewDownload",
+        QStringLiteral("Created by MobileWebViewBackend via downloadRequested"));
     qmlRegisterUncreatableType<QWebChannel>("QtWebChannel", 1, 0, "QWebChannel",
                                             "QWebChannel is provided via WebChannel QML type");
+
+    DownloadTestSupport downloadTestSupport;
 
     QQmlApplicationEngine engine;
     engine.addImportPath(QStringLiteral("qrc:/"));
@@ -32,6 +39,8 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(
         QStringLiteral("_webChannelTestPageHtml"),
         loadTextResource(QStringLiteral(":/MobileWebViewTest/web/test_webchannel.html")));
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("_downloadTest"), &downloadTestSupport);
 
     engine.load(QUrl(QStringLiteral("qrc:/MobileWebViewTest/qml/main.qml")));
 

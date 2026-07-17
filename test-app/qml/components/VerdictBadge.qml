@@ -15,6 +15,8 @@ Rectangle {
             return Theme.successSurface
         if (verdict === "shared" || verdict === "fail")
             return Theme.dangerSurface
+        if (verdict === "skip")
+            return Theme.warningSurface
         if (verdict === "inconclusive")
             return Theme.accentSurface
         return Theme.accentSurface
@@ -24,6 +26,8 @@ Rectangle {
             return Theme.success
         if (verdict === "shared" || verdict === "fail")
             return Theme.danger
+        if (verdict === "skip")
+            return Theme.warning
         if (verdict === "inconclusive")
             return Theme.accent
         return Theme.accent
