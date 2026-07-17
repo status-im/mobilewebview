@@ -64,10 +64,10 @@ contract.
 _Avoid_: busy, in-flight clear, clear in progress.
 
 ### Download
-A file transfer originating from page content that the WebView will not render
-inline (a response marked as an attachment, an unrenderable MIME type, or an
-`<a download>` link). The library performs and tracks the transfer itself; it is
-not a navigation.
+A file transfer the library performs and tracks on the host's behalf; it is not a
+navigation. Triggered either by page content the WebView will not render inline
+(a response marked as an attachment, an unrenderable MIME type, an `<a download>`
+link) or explicitly by the host (e.g. "save link").
 _Avoid_: save, export, fetch.
 
 ### Download Request

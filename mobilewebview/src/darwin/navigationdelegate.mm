@@ -3,11 +3,82 @@
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
 
 #include "navigationdelegate.h"
+#include "downloaddelegate.h"
 #include "dispatch_utils.h"
 
 #import <dispatch/dispatch.h>
 
 @implementation NavigationDelegate
+
+- (void)webView:(WKWebView *)webView
+    decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction
+                    decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler
+{
+    if (@available(macOS 11.3, iOS 14.5, *)) {
+        if (navigationAction.shouldPerformDownload) {
+            NSURL *url = navigationAction.request.URL;
+            NSString *scheme = url.scheme.lowercaseString;
+            if ([scheme isEqualToString:@"blob"] || [scheme isEqualToString:@"data"]) {
+                decisionHandler(WKNavigationActionPolicyCancel);
+                return;
+            }
+            decisionHandler(WKNavigationActionPolicyDownload);
+            return;
+        }
+    }
+    decisionHandler(WKNavigationActionPolicyAllow);
+}
+
+- (void)webView:(WKWebView *)webView
+    decidePolicyForNavigationResponse:(WKNavigationResponse *)navigationResponse
+                      decisionHandler:(void (^)(WKNavigationResponsePolicy))decisionHandler
+{
+    NSURL *url = navigationResponse.response.URL;
+    NSString *scheme = url.scheme.lowercaseString;
+    if ([scheme isEqualToString:@"blob"] || [scheme isEqualToString:@"data"]) {
+        decisionHandler(WKNavigationResponsePolicyCancel);
+        return;
+    }
+
+    if (@available(macOS 11.3, iOS 14.5, *)) {
+        // Only main-frame responses become downloads. Subframe / subresource
+        // responses must keep loading (or the WebView can fault).
+        if (navigationResponse.forMainFrame) {
+            BOOL attachment = NO;
+            if ([navigationResponse.response isKindOfClass:[NSHTTPURLResponse class]]) {
+                NSHTTPURLResponse *http = (NSHTTPURLResponse *)navigationResponse.response;
+                NSString *disposition =
+                    [http.allHeaderFields[@"Content-Disposition"] description].lowercaseString;
+                attachment = [disposition containsString:@"attachment"];
+            }
+            if (attachment || !navigationResponse.canShowMIMEType) {
+                decisionHandler(WKNavigationResponsePolicyDownload);
+                return;
+            }
+        }
+    }
+    decisionHandler(WKNavigationResponsePolicyAllow);
+}
+
+- (void)webView:(WKWebView *)webView
+    navigationAction:(WKNavigationAction *)navigationAction
+    didBecomeDownload:(WKDownload *)download
+API_AVAILABLE(macos(11.3), ios(14.5))
+{
+    Q_UNUSED(webView);
+    Q_UNUSED(navigationAction);
+    [self.downloadDelegate attachDownload:download];
+}
+
+- (void)webView:(WKWebView *)webView
+    navigationResponse:(WKNavigationResponse *)navigationResponse
+    didBecomeDownload:(WKDownload *)download
+API_AVAILABLE(macos(11.3), ios(14.5))
+{
+    Q_UNUSED(webView);
+    Q_UNUSED(navigationResponse);
+    [self.downloadDelegate attachDownload:download];
+}
 
 - (void)webView:(WKWebView *)webView didStartProvisionalNavigation:(WKNavigation *)navigation {
     if (self.owner) {

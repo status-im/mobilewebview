@@ -1,4 +1,5 @@
 #include "MobileWebView/mobilewebviewbackend.h"
+#include "MobileWebView/mobilewebviewdownload.h"
 #include "mobilewebviewbackend_p.h"
 #include "snapshotimageprovider.h"
 #include "snapshotitem.h"
@@ -28,6 +29,23 @@ constexpr int kFreezeOverlayFrameDelayMs = 48;
 QString snapshotImageProviderKey(const MobileWebViewBackend *backend)
 {
     return QStringLiteral("mwv") + QString::number(reinterpret_cast<quintptr>(backend), 16);
+}
+
+bool isUnsupportedDownloadScheme(const QUrl &url)
+{
+    // ADR 0005: blob:/data: downloads are out of scope for v1.
+    const QString scheme = url.scheme().toLower();
+    return scheme == QLatin1String("blob") || scheme == QLatin1String("data");
+}
+
+QString suggestedFileNameFromUrl(const QUrl &url, const QString &suggestedFileName)
+{
+    if (!suggestedFileName.isEmpty())
+        return suggestedFileName;
+    const QString fileName = url.fileName();
+    if (!fileName.isEmpty())
+        return fileName;
+    return QStringLiteral("download");
 }
 
 void ensureSnapshotImageProviderRegistered(QQmlEngine *engine)
@@ -400,6 +418,7 @@ void MobileWebViewBackendPrivate::recreateNativeViewForStore()
     const QUrl urlToReload = m_url;
 
     clearFreezeState();
+    cancelAllDownloads();
     m_bridgeInstalled = false;
 
     destroyNativeView();
@@ -425,6 +444,93 @@ void MobileWebViewBackendPrivate::recreateNativeViewForStore()
     } else if (urlToReload.isValid() && !urlToReload.isEmpty()) {
         loadUrlImpl(urlToReload);
     }
+}
+
+MobileWebViewDownload *MobileWebViewBackendPrivate::createDownload(
+    const QUrl &url,
+    const QString &suggestedFileName,
+    const QString &mimeType,
+    qint64 totalBytes)
+{
+    if (!url.isValid() || url.isEmpty() || isUnsupportedDownloadScheme(url))
+        return nullptr;
+
+    const quint64 id = ++m_nextDownloadId;
+    auto *download = new MobileWebViewDownload(
+        id,
+        url,
+        suggestedFileNameFromUrl(url, suggestedFileName),
+        mimeType,
+        totalBytes,
+        q_ptr);
+    download->bindBackend(this);
+    m_downloads.insert(id, download);
+    return download;
+}
+
+void MobileWebViewBackendPrivate::emitDownloadRequested(MobileWebViewDownload *download)
+{
+    if (!download)
+        return;
+    emit q_ptr->downloadRequested(download);
+}
+
+MobileWebViewDownload *MobileWebViewBackendPrivate::onDownloadDetected(
+    const QUrl &url,
+    const QString &suggestedFileName,
+    const QString &mimeType,
+    qint64 totalBytes)
+{
+    MobileWebViewDownload *download = createDownload(url, suggestedFileName, mimeType, totalBytes);
+    emitDownloadRequested(download);
+    return download;
+}
+
+void MobileWebViewBackendPrivate::onDownloadProgress(quint64 downloadId,
+                                                     qint64 receivedBytes,
+                                                     qint64 totalBytes)
+{
+    if (auto *download = m_downloads.value(downloadId, nullptr))
+        download->setProgress(receivedBytes, totalBytes);
+}
+
+void MobileWebViewBackendPrivate::onDownloadFinished(quint64 downloadId,
+                                                     bool ok,
+                                                     const QString &error)
+{
+    auto *download = m_downloads.take(downloadId);
+    if (!download)
+        return;
+
+    if (ok)
+        download->setCompleted();
+    else
+        download->setInterrupted(error);
+    download->deleteLater();
+}
+
+void MobileWebViewBackendPrivate::forgetDownload(quint64 downloadId)
+{
+    m_downloads.remove(downloadId);
+}
+
+void MobileWebViewBackendPrivate::cancelAllDownloads()
+{
+    const auto active = m_downloads;
+    m_downloads.clear();
+    for (auto it = active.cbegin(); it != active.cend(); ++it) {
+        MobileWebViewDownload *download = it.value();
+        if (!download)
+            continue;
+        cancelDownloadImpl(download->downloadId());
+        download->setCancelled();
+        download->deleteLater();
+    }
+}
+
+MobileWebViewDownload *MobileWebViewBackendPrivate::downloadById(quint64 downloadId) const
+{
+    return m_downloads.value(downloadId, nullptr);
 }
 
 void MobileWebViewBackendPrivate::beginClear()
@@ -463,6 +569,7 @@ MobileWebViewBackend::~MobileWebViewBackend()
     Q_D(MobileWebViewBackend);
     MobileWebViewSnapshotImageProvider::releaseImage(snapshotImageProviderKey(this));
     d->clearFreezeState();
+    d->cancelAllDownloads();
 }
 
 void MobileWebViewBackend::requestSnapshot(const QSize &targetSize)
@@ -656,6 +763,52 @@ void MobileWebViewBackend::setHistoryState(const QVariantList &historyItems, int
 void MobileWebViewBackend::emitNewWindowRequested(const QUrl &url, bool userInitiated)
 {
     emit newWindowRequested(url, userInitiated);
+}
+
+MobileWebViewDownload *MobileWebViewBackend::beginDownload(const QUrl &url,
+                                                          const QString &suggestedFileName,
+                                                          const QString &mimeType,
+                                                          qint64 totalBytes)
+{
+    Q_D(MobileWebViewBackend);
+    return d->onDownloadDetected(url, suggestedFileName, mimeType, totalBytes);
+}
+
+MobileWebViewDownload *MobileWebViewBackend::createDownload(const QUrl &url,
+                                                            const QString &suggestedFileName,
+                                                            const QString &mimeType,
+                                                            qint64 totalBytes)
+{
+    Q_D(MobileWebViewBackend);
+    return d->createDownload(url, suggestedFileName, mimeType, totalBytes);
+}
+
+void MobileWebViewBackend::emitDownloadRequested(MobileWebViewDownload *download)
+{
+    Q_D(MobileWebViewBackend);
+    d->emitDownloadRequested(download);
+}
+
+void MobileWebViewBackend::reportDownloadProgress(quint64 downloadId,
+                                                  qint64 receivedBytes,
+                                                  qint64 totalBytes)
+{
+    Q_D(MobileWebViewBackend);
+    d->onDownloadProgress(downloadId, receivedBytes, totalBytes);
+}
+
+void MobileWebViewBackend::reportDownloadFinished(quint64 downloadId,
+                                                  bool ok,
+                                                  const QString &error)
+{
+    Q_D(MobileWebViewBackend);
+    d->onDownloadFinished(downloadId, ok, error);
+}
+
+void MobileWebViewBackend::downloadUrl(const QUrl &url, const QString &suggestedFileName)
+{
+    Q_D(MobileWebViewBackend);
+    d->onDownloadDetected(url, suggestedFileName, QString(), -1);
 }
 
 bool MobileWebViewBackend::interactionEnabled() const

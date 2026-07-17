@@ -7,6 +7,8 @@
 #include <QVariantList>
 #include <QWebChannel>
 
+#include "MobileWebView/mobilewebviewdownload.h"
+
 #if defined(Q_OS_ANDROID) || defined(Q_OS_MACOS) || defined(Q_OS_IOS)
 
 class MobileWebViewBackendPrivate;
@@ -99,6 +101,20 @@ public:
     void setFavicon(const QString &favicon);
     void emitNewWindowRequested(const QUrl &url, bool userInitiated);
 
+    // Platform → common download bridge (Qt thread)
+    MobileWebViewDownload *beginDownload(const QUrl &url,
+                                         const QString &suggestedFileName,
+                                         const QString &mimeType,
+                                         qint64 totalBytes);
+    /// Create without emitting; pair with emitDownloadRequested after platform registration.
+    MobileWebViewDownload *createDownload(const QUrl &url,
+                                          const QString &suggestedFileName,
+                                          const QString &mimeType,
+                                          qint64 totalBytes);
+    void emitDownloadRequested(MobileWebViewDownload *download);
+    void reportDownloadProgress(quint64 downloadId, qint64 receivedBytes, qint64 totalBytes);
+    void reportDownloadFinished(quint64 downloadId, bool ok, const QString &error = QString());
+
 public slots:
     void loadUrl(const QUrl &url);
     void loadHtml(const QString &html, const QUrl &baseUrl = QUrl());
@@ -114,6 +130,9 @@ public slots:
     void clearDomStorage();
     void clearSiteData();
     void clearProfileData();
+
+    /// Explicit download trigger ("save link", host-side retry). Emits downloadRequested.
+    void downloadUrl(const QUrl &url, const QString &suggestedFileName = QString());
 
     // Install WebChannel bridge; must be called BEFORE loadUrl/loadHtml
     bool installMessageBridge(const QString &ns,
@@ -168,6 +187,10 @@ signals:
     // Emitted when a message is received from JavaScript
     void webMessageReceived(const QString &message, const QString &origin, bool isMainFrame);
     void newWindowRequested(const QUrl &url, bool userInitiated);
+
+    /// Emitted when a Download is detected (page-initiated or downloadUrl).
+    /// Host must accept(destination) or cancel(); no accept ⇒ cancelled on destroy/profile switch.
+    void downloadRequested(MobileWebViewDownload *download);
 
     // Emitted when JavaScript execution completes
     void javaScriptResult(const QVariant &result, const QString &error);
