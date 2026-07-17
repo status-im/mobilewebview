@@ -58,9 +58,8 @@ bool isUnsupportedScheme(NSURL *url)
         self.destinationHandler = nil;
     }
     self.pendingPath = nil;
-    self.pausing = NO;
-    // Keep resumeWhenReady / pendingResumeWebView / resumeData across detach so a
-    // resume() that raced the pause cancel callback can still complete.
+    // Keep pausing / resumeWhenReady / resumeData — pause finalizer clears them
+    // after WK cancel + didFailWithError have had a chance to deliver resumeData.
 }
 
 - (void)destroy
@@ -140,8 +139,15 @@ bool isUnsupportedScheme(NSURL *url)
     MWVDownloadEntry *entry = self.entriesById[key];
     if (!entry)
         return;
-    if (entry.download)
-        [self.idsByDownload removeObjectForKey:entry.download];
+    entry.download = nil;
+    // NSMapTable weak keys: never call removeObjectForKey: with a possibly
+    // dangling WKDownload*. Remove by matching downloadId among live keys.
+    NSArray *mapKeys = self.idsByDownload.keyEnumerator.allObjects;
+    for (WKDownload *dl in mapKeys) {
+        NSNumber *mapped = [self.idsByDownload objectForKey:dl];
+        if (mapped && mapped.unsignedLongLongValue == downloadId)
+            [self.idsByDownload removeObjectForKey:dl];
+    }
     [entry detachActive];
 }
 
@@ -326,29 +332,38 @@ bool isUnsupportedScheme(NSURL *url)
             return;
         if (resumeData)
             paused.resumeData = resumeData;
-        const BOOL wantResume = paused.resumeWhenReady;
-        WKWebView *resumeWebView = paused.pendingResumeWebView;
-        paused.resumeWhenReady = NO;
-        paused.pendingResumeWebView = nil;
-        [blockSelf detachActiveForId:downloadId];
-        if (wantResume) {
-            [blockSelf resumeDownloadId:downloadId webView:resumeWebView];
-            return;
-        }
-        // Host already saw Paused (sync pause()); without resumeData we cannot
-        // honor resume() — interrupt so state is not stuck in Paused forever.
-        if (!paused.resumeData) {
-            MobileWebViewBackend *owner = blockSelf.owner;
-            if (!owner)
+
+        // Do NOT detach yet — didFailWithError:resumeData: looks up the WKDownload
+        // in idsByDownload and is where resumeData usually arrives.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            MWVDownloadEntry *entry = blockSelf.entriesById[key];
+            if (!entry || !entry.pausing)
                 return;
-            QPointer<MobileWebViewBackend> guard(owner);
-            QMetaObject::invokeMethod(owner, [guard, downloadId]() {
-                if (guard)
-                    guard->reportDownloadFinished(
-                        downloadId, false,
-                        QStringLiteral("Pause not supported (no resume data)"));
-            }, Qt::QueuedConnection);
-        }
+            const BOOL wantResume = entry.resumeWhenReady;
+            WKWebView *resumeWebView = entry.pendingResumeWebView;
+            entry.resumeWhenReady = NO;
+            entry.pendingResumeWebView = nil;
+            entry.pausing = NO;
+            if (entry.download)
+                [blockSelf detachActiveForId:downloadId];
+            if (wantResume) {
+                [blockSelf resumeDownloadId:downloadId webView:resumeWebView];
+                return;
+            }
+            if (!entry.resumeData) {
+                MobileWebViewBackend *owner = blockSelf.owner;
+                if (!owner)
+                    return;
+                QPointer<MobileWebViewBackend> guard(owner);
+                QMetaObject::invokeMethod(owner, [guard, downloadId]() {
+                    if (guard)
+                        guard->reportDownloadFinished(
+                            downloadId, false,
+                            QStringLiteral("Pause not supported (no resume data)"));
+                }, Qt::QueuedConnection);
+            }
+        });
     }];
 }
 
@@ -539,11 +554,17 @@ API_AVAILABLE(macos(11.3), ios(14.5))
     if (!entry)
         return;
 
-    // Pause cancels with resumeData; ignore the failure callback for that path.
-    if (entry.pausing || entry.resumeData) {
+    // Pause path: WK often delivers resumeData here (not in cancel's completion).
+    // Detach while \a download is still a live map key; pause finalizer keeps the entry.
+    if (entry.pausing) {
         if (resumeData && !entry.resumeData)
             entry.resumeData = resumeData;
         [self detachActiveForId:downloadId];
+        entry.pausing = YES;
+        return;
+    }
+    if (entry.resumeData) {
+        // Already paused with data; ignore late failure.
         return;
     }
 

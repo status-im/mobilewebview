@@ -23,9 +23,9 @@ ScreenScaffold {
     readonly property string pageNetworkUrl:
         "https://www.learningcontainer.com/wp-content/uploads/2020/05/sample-zip-file.zip"
     // Larger payload so pause can fire before Completed.
-    // file-examples.com/…/file_example_MP4_1920_18MG.mp4 is behind Cloudflare
-    // (HTTP 403 challenge HTML ≈5KB) — WK "completes" instantly, pause never arms.
-    readonly property string largeUrl:
+    // file-examples.com MP4s are often behind Cloudflare 403 challenge HTML.
+    // Overridable via agent set_prop for local Range-capable servers.
+    property string largeUrl:
         "https://proof.ovh.net/files/10Mb.dat"
     readonly property string inlinePayload: "hello-mwv-inline"
     readonly property string inlineFileName: "inline-hello.txt"
@@ -58,6 +58,69 @@ ScreenScaffold {
     property var _pauseWatch: null
     property var _retryWatch: null
 
+    function latestEntry() {
+        if (root.downloads.length === 0)
+            return null
+        return root.downloads[root.downloads.length - 1]
+    }
+
+    function agentAcceptLatest() {
+        var entry = latestEntry()
+        if (!entry || !entry.download)
+            return { ok: false, error: "no download" }
+        if (entry.download.state !== MobileWebViewDownload.Requested)
+            return { ok: false, error: "not Requested: " + stateName(entry.download.state) }
+        acceptDownload(entry)
+        return { ok: true, downloadId: entry.downloadId }
+    }
+
+    function agentCancelLatest() {
+        var entry = latestEntry()
+        if (!entry || !entry.download)
+            return { ok: false, error: "no download" }
+        entry.download.cancel()
+        return { ok: true, downloadId: entry.downloadId }
+    }
+
+    function agentPauseLatest() {
+        var entry = latestEntry()
+        if (!entry || !entry.download)
+            return { ok: false, error: "no download" }
+        if (entry.download.state !== MobileWebViewDownload.InProgress)
+            return { ok: false, error: "not InProgress: " + stateName(entry.download.state) }
+        entry.download.pause()
+        return { ok: true, downloadId: entry.downloadId }
+    }
+
+    function agentResumeLatest() {
+        var entry = latestEntry()
+        if (!entry || !entry.download)
+            return { ok: false, error: "no download" }
+        if (entry.download.state !== MobileWebViewDownload.Paused)
+            return { ok: false, error: "not Paused: " + stateName(entry.download.state) }
+        entry.download.resume()
+        return { ok: true, downloadId: entry.downloadId }
+    }
+
+    function agentRetryLatest() {
+        var entry = latestEntry()
+        if (!entry || !entry.download)
+            return { ok: false, error: "no download" }
+        root._retryWatch = entry
+        entry.download.retry()
+        return { ok: true, downloadId: entry.downloadId }
+    }
+
+    function startLargeNoAutoPause() {
+        // Large transfer without the auto pause/resume scenario hooks.
+        // Prefer main-frame navigation so WK creates a page-initiated WKDownload
+        // (resumeData is more reliable than startDownloadUsingRequest for pause).
+        if (!root.webView)
+            return
+        pendingScenario = "stress"
+        root.webView.loadUrl(root.largeUrl)
+    }
+
     readonly property var agentActions: ({
         "url_small": function() { root.startUrlSmall() },
         "page": function() { root.startPageNetwork() },
@@ -66,10 +129,18 @@ ScreenScaffold {
         "pause": function() { root.startUrlLargePause() },
         "retry": function() { root.startRetry() },
         "profile_cancel": function() { root.startProfileCancel() },
+        "download_large": function() { root.startLargeNoAutoPause() },
         "clear_list": function() { root.clearList() },
         "accept_mode_auto": function() { root.acceptMode = "auto" },
         "accept_mode_manual": function() { root.acceptMode = "manual" },
-        "toggle_incognito": function() { root.offTheRecord = !root.offTheRecord }
+        "toggle_incognito": function() { root.offTheRecord = !root.offTheRecord },
+        "set_incognito": function() { root.offTheRecord = true },
+        "set_standard": function() { root.offTheRecord = false },
+        "accept_latest": function() { root.agentAcceptLatest() },
+        "cancel_latest": function() { root.agentCancelLatest() },
+        "pause_latest": function() { root.agentPauseLatest() },
+        "resume_latest": function() { root.agentResumeLatest() },
+        "retry_latest": function() { root.agentRetryLatest() }
     })
 
     function agentState() {
@@ -122,25 +193,25 @@ ScreenScaffold {
             _downloadTest.ensureDownloadsDir()
     }
 
+    onOffTheRecordChanged: root._bridgeReady = false
+    onStorageNameChanged: root._bridgeReady = false
+
     function ensureBridge() {
-        if (!root.webView || root._bridgeReady)
+        if (!root.webView)
             return
+        // Always re-install after profile recreate (offTheRecord / storageName).
         // Inline blob downloads need the document-start interceptor + qtbridge handler
         // (installed only via installMessageBridge today).
         root.webView.installMessageBridge(
             "qt",
-            [root.harnessOrigin, root.harnessOrigin + "/"],
+            [root.harnessOrigin, root.harnessOrigin + "/", "*"],
             "qtInvoke")
         root._bridgeReady = true
     }
 
-    function runAfterLoaded(fn) {
-        if (!root.webView)
-            return
-        if (root.webView.loaded && !root.webView.loading) {
-            fn()
-            return
-        }
+    function runAfterNextLoad(fn) {
+        // Always wait for the next loaded=true after a loadHtml/loadUrl kickoff.
+        // Calling immediately when the previous page is already loaded races the new load.
         root._afterLoad = fn
     }
 
@@ -148,6 +219,15 @@ ScreenScaffold {
         target: root.webView
         function onLoadedChanged() {
             if (root.webView && root.webView.loaded && root._afterLoad) {
+                var fn = root._afterLoad
+                root._afterLoad = null
+                Qt.callLater(fn)
+            }
+        }
+        function onLoadingChanged() {
+            // Some loads flip loaded false→true without a useful edge; also catch
+            // loading false after a loadHtml of a trivial document.
+            if (root.webView && !root.webView.loading && root.webView.loaded && root._afterLoad) {
                 var fn = root._afterLoad
                 root._afterLoad = null
                 Qt.callLater(fn)
@@ -373,11 +453,11 @@ ScreenScaffold {
             + "var b=new Blob([" + JSON.stringify(root.inlinePayload) + "],{type:'text/plain'});"
             + "document.getElementById('inlineDl').href=URL.createObjectURL(b);"
             + "})();</script></body></html>"
-        root.webView.loadHtml(html, root.harnessOrigin + "/")
-        runAfterLoaded(function() {
+        runAfterNextLoad(function() {
             if (root.webView)
                 root.webView.runJavaScript("document.getElementById('inlineDl').click()")
         })
+        root.webView.loadHtml(html, root.harnessOrigin + "/")
     }
 
     function startCancel() {
@@ -480,7 +560,7 @@ ScreenScaffold {
     property var _pauseArmEntry: null
     Timer {
         id: pauseArmTimer
-        interval: 400
+        interval: 800
         repeat: false
         onTriggered: {
             var entry = root._pauseArmEntry
