@@ -142,6 +142,11 @@ public:
 
     void updateInteractionEnabled(bool) override {}
     void setZoomFactorImpl(qreal) override {}
+    void setHttpUserAgentImpl(const QString &userAgent) override
+    {
+        ++setHttpUserAgentCalls;
+        lastHttpUserAgent = userAgent;
+    }
     void findTextImpl(const QString &, int) override {}
     void stopFindImpl() override {}
     bool findSupportedImpl() const override { return true; }
@@ -180,6 +185,7 @@ public:
     int freezeCaptureCalls = 0;
     int initNativeViewCalls = 0;
     int destroyNativeViewCalls = 0;
+    int setHttpUserAgentCalls = 0;
     quint64 lastFreezeCaptureRequestId = 0;
 
     bool lastVisible = false;
@@ -187,6 +193,7 @@ public:
     int lastGoBackOrForwardOffset = 0;
     QString lastHtml;
     QString lastScript;
+    QString lastHttpUserAgent;
     QString lastBridgeNs;
     QString lastBridgeInvokeKey;
     QString lastBridgeScriptPath;
@@ -240,6 +247,8 @@ private slots:
     void storageNameChangeRecreatesNativeViewInStandardMode();
     void storageNameChangeIgnoredInIncognitoMode();
     void recreateReinstallsBridgeAndPreservesUserScripts();
+    void httpUserAgentDefaultsEmptyAndAppliesWithoutRecreate();
+    void httpUserAgentSurvivesStoreRecreate();
 };
 
 void MobileWebViewBackendCommonTest::forwardsCallsAndStateChanges()
@@ -1064,6 +1073,61 @@ void MobileWebViewBackendCommonTest::recreateReinstallsBridgeAndPreservesUserScr
     QCOMPARE(backend.userScripts(), scripts);
     QCOMPARE(d->installBridgeCalls, bridgeCallsBefore + 1);
     QVERIFY(d->m_bridgeInstalled);
+}
+
+void MobileWebViewBackendCommonTest::httpUserAgentDefaultsEmptyAndAppliesWithoutRecreate()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+    auto *d = g_lastCreatedPrivate;
+
+    QCOMPARE(backend.httpUserAgent(), QString());
+
+    d->m_nativeViewSetup = true;
+    const int destroyBefore = d->destroyNativeViewCalls;
+    const int initBefore = d->initNativeViewCalls;
+    const int applyBefore = d->setHttpUserAgentCalls;
+
+    QSignalSpy spy(&backend, &MobileWebViewBackend::httpUserAgentChanged);
+    const QString ua = QStringLiteral("StatusMobile/1.0");
+    backend.setHttpUserAgent(ua);
+
+    QCOMPARE(backend.httpUserAgent(), ua);
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(d->setHttpUserAgentCalls, applyBefore + 1);
+    QCOMPARE(d->lastHttpUserAgent, ua);
+    QCOMPARE(d->destroyNativeViewCalls, destroyBefore);
+    QCOMPARE(d->initNativeViewCalls, initBefore);
+
+    backend.setHttpUserAgent(ua);
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(d->setHttpUserAgentCalls, applyBefore + 1);
+
+    backend.setHttpUserAgent(QString());
+    QCOMPARE(backend.httpUserAgent(), QString());
+    QCOMPARE(spy.count(), 2);
+    QCOMPARE(d->lastHttpUserAgent, QString());
+}
+
+void MobileWebViewBackendCommonTest::httpUserAgentSurvivesStoreRecreate()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+    auto *d = g_lastCreatedPrivate;
+
+    const QString ua = QStringLiteral("StatusMobile/1.0");
+    backend.setHttpUserAgent(ua);
+    backend.setUrl(QUrl(QStringLiteral("https://example.com/page")));
+    d->m_nativeViewSetup = true;
+
+    const int applyBefore = d->setHttpUserAgentCalls;
+    backend.setOffTheRecord(true);
+
+    QCOMPARE(backend.httpUserAgent(), ua);
+    QCOMPARE(d->setHttpUserAgentCalls, applyBefore + 1);
+    QCOMPARE(d->lastHttpUserAgent, ua);
 }
 
 QTEST_MAIN(MobileWebViewBackendCommonTest)

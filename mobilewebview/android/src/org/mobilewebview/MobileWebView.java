@@ -409,6 +409,22 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         });
     }
 
+    /**
+     * Override the HTTP User-Agent for this WebView.
+     * Null or empty restores the platform default.
+     */
+    public void setHttpUserAgent(String userAgent) {
+        runOnMainThread(() -> {
+            if (mWebView == null) return;
+            WebSettings settings = mWebView.getSettings();
+            if (userAgent == null || userAgent.isEmpty()) {
+                settings.setUserAgentString(null);
+            } else {
+                settings.setUserAgentString(userAgent);
+            }
+        });
+    }
+
     private String mCurrentFindQuery = null;
 
     /**
