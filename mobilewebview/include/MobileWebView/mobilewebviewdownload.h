@@ -23,6 +23,7 @@ class MobileWebViewDownload : public QObject
     Q_PROPERTY(qint64 receivedBytes READ receivedBytes NOTIFY receivedBytesChanged)
     Q_PROPERTY(State state READ state NOTIFY stateChanged)
     Q_PROPERTY(bool isPaused READ isPaused NOTIFY stateChanged)
+    Q_PROPERTY(bool isInline READ isInline CONSTANT)
     Q_PROPERTY(QString destinationPath READ destinationPath NOTIFY destinationPathChanged)
     Q_PROPERTY(QString errorString READ errorString NOTIFY errorStringChanged)
 

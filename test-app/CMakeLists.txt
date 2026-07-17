@@ -26,6 +26,8 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../mobilewebview
 
 qt_add_executable(MobileWebViewTest
     main.cpp
+    downloadtestsupport.h
+    downloadtestsupport.cpp
 )
 
 qt_add_qml_module(MobileWebViewTest
@@ -53,6 +55,7 @@ qt_add_qml_module(MobileWebViewTest
         qml/screens/OriginScreen.qml
         qml/screens/ScriptsScreen.qml
         qml/screens/RenderingScreen.qml
+        qml/screens/DownloadsScreen.qml
     RESOURCES
         web/test_webchannel.html
         web/storage_profile_test.html

@@ -58,6 +58,11 @@ Item {
             title: "Snapshot & Freeze",
             subtitle: "requestSnapshot preview and freeze mode",
             screen: Qt.resolvedUrl("screens/RenderingScreen.qml")
+        },
+        {
+            title: "Downloads",
+            subtitle: "downloadUrl, page/inline, pause/resume, retry, profiles",
+            screen: Qt.resolvedUrl("screens/DownloadsScreen.qml")
         }
     ]
 

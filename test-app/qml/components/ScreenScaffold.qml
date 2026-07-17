@@ -15,6 +15,8 @@ Item {
     property var userScripts: []
     property var webChannel: null
     property bool freeze: false
+    property string storageName: "Profile_A"
+    property bool offTheRecord: false
     property int webViewHeight: 420
     property bool contentFillsViewport: false
     readonly property int webViewMinimumHeight: root.hasWebView ? Math.min(root.webViewHeight, 160) : 0
@@ -223,6 +225,8 @@ Item {
                         userScripts: root.userScripts
                         webChannel: root.webChannel
                         freeze: root.freeze
+                        storageName: root.storageName
+                        offTheRecord: root.offTheRecord
                         inputFocused: root.addressFocused || root.contentInputFocused
                     }
                 }
