@@ -14,6 +14,7 @@
 #include <memory>
 
 #include "downloadregistry.h"
+#include "downloadtransfer.h"
 #include "freezecontroller.h"
 
 class MobileWebViewBackend;
@@ -27,6 +28,40 @@ class MobileWebViewBackendPrivate
 {
 public:
     using FreezeState = FreezeController::State;
+
+    /// Forwards DownloadTransfer ops to the platform virtuals on this private.
+    class BackendDownloadTransfer final : public DownloadTransfer
+    {
+    public:
+        explicit BackendDownloadTransfer(MobileWebViewBackendPrivate *owner)
+            : m_owner(owner)
+        {
+        }
+
+        void start(quint64 id, const QUrl &url, const QString &path) override
+        {
+            if (m_owner)
+                m_owner->startDownloadImpl(id, url, path);
+        }
+        void cancel(quint64 id) override
+        {
+            if (m_owner)
+                m_owner->cancelDownloadImpl(id);
+        }
+        void pause(quint64 id) override
+        {
+            if (m_owner)
+                m_owner->pauseDownloadImpl(id);
+        }
+        void resume(quint64 id) override
+        {
+            if (m_owner)
+                m_owner->resumeDownloadImpl(id);
+        }
+
+    private:
+        MobileWebViewBackendPrivate *m_owner = nullptr;
+    };
 
     explicit MobileWebViewBackendPrivate(MobileWebViewBackend *q);
     virtual ~MobileWebViewBackendPrivate();
@@ -135,7 +170,6 @@ public:
     void forgetDownload(quint64 downloadId);
     void cancelAllDownloads();
     MobileWebViewDownload *downloadById(quint64 downloadId) const;
-    void retryDownloadRequest(MobileWebViewDownload *download);
 
     void clearFreezeState();
     void applyFreezeOverlaySizeFromImage(const QImage &image);
@@ -229,6 +263,7 @@ public:
     QMetaObject::Connection m_afterAnimatingConnection;
 
     // Active (non-terminal) downloads owned by this backend.
+    BackendDownloadTransfer m_downloadTransfer{this};
     std::unique_ptr<DownloadRegistry> m_downloadRegistry;
 };
 

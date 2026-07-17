@@ -3,6 +3,7 @@
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
 
 #include "userscripts.h"
+#include "../common/inlinedownloadcodec.h"
 #include "../common/inlinedownloadmessage.h"
 #include "../common/origin_utils.h"
 #include "../common/userscript_utils.h"
@@ -317,6 +318,9 @@ bool UserScriptsManager::installMessageBridge(const QString &ns,
         qWarning() << "[UserScriptsManager] Failed to load inline_download_interceptor.js";
         return false;
     }
+    inlineDownloadSource.replace(
+        QStringLiteral("%MAX_INLINE_BYTES%"),
+        QString::number(MobileWebView::InlineDownloadCodec::kMaxDecodedBytes));
     injectScript(inlineDownloadSource, true, false);  // pageWorld
 
     // Inject bootstrap_bridge.js in isolated world if available

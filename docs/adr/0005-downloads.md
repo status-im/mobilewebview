@@ -45,8 +45,12 @@ not handing off to the OS download UI), exposing a per-transfer model to QML.
 - **Inline Downloads (`blob:` / `data:`):** page-generated files
   (`URL.createObjectURL` + `<a download>`) are supported via a library-owned
   user-script + bridge path (FileReader → base64 → native bridge → decode → write
-  on accept). Network self-fetch still rejects bare blob/data URLs without a
-  payload. Cross-platform parity uses the script path on both Apple and Android
+  on accept). Decoded bytes live in an **Inline Download Writer** (not on the
+  QML-facing Download object); they are freed after a successful write and kept
+  on failure so `retry()` can re-emit a new Download Request. The JS size cap is
+  injected from `InlineDownloadCodec::kMaxDecodedBytes` (single source of truth).
+  Network self-fetch still rejects bare blob/data URLs without a payload.
+  Cross-platform parity uses the script path on both Apple and Android
   (not WKDownload-only for blobs).
 - **Async accept model:** when a Download is detected the backend emits
   `downloadRequested(MobileWebViewDownload* download)` carrying metadata only
@@ -70,12 +74,14 @@ not handing off to the OS download UI), exposing a per-transfer model to QML.
 - **Lifecycle ops:** cancel, pause/resume (non-terminal **Paused** state;
   `isPaused` for WebEngine-shaped bindings), and `retry()` on a terminal
   Interrupted/Cancelled Download which emits a **new** Download Request (new id)
-  rather than reviving the dead object. Pause/resume: `WKDownload` resume data on
-  Apple; HTTP `Range` with append to the host Download Target on Android
-  self-fetch (partial bytes kept at the destination across pause; cancel deletes
-  them) — **not** the system `DownloadManager`. Inline Downloads: pause/resume
-  are not applicable (bytes are written on accept). Process-death survival /
-  foreground service remains future work.
+  rather than reviving the dead object. Platform byte movement goes through a
+  **Download Transfer** adapter (start/cancel/pause/resume); the registry owns
+  ids/map/retry. Pause/resume: `WKDownload` resume data on Apple; HTTP `Range`
+  with append to the host Download Target on Android self-fetch (partial bytes
+  kept at the destination across pause; cancel deletes them) — **not** the
+  system `DownloadManager`. Inline Downloads: pause/resume are not applicable
+  (bytes are written on accept). Process-death survival / foreground service
+  remains future work.
 - **Download Request policy** (scheme support + filename guessing, including
   Content-Disposition) lives in common C++ (`DownloadPolicy`). Platforms pass raw
   inputs (URL, optional platform suggestion such as WKDownload `suggestedFilename`,

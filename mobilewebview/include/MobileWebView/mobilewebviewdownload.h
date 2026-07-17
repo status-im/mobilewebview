@@ -1,6 +1,5 @@
 #pragma once
 
-#include <QByteArray>
 #include <QObject>
 #include <QUrl>
 #include <QtQml/qqmlregistration.h>
@@ -67,14 +66,14 @@ public:
             || m_state == State::Interrupted;
     }
 
-    bool hasInlinePayload() const { return !m_inlinePayload.isEmpty(); }
-    QByteArray inlinePayload() const { return m_inlinePayload; }
+    /// True for blob:/data: Downloads whose bytes are written locally on accept.
+    bool isInline() const { return m_inline; }
 
     Q_INVOKABLE void accept(const QString &destinationPath);
     Q_INVOKABLE void cancel();
     Q_INVOKABLE void pause();
     Q_INVOKABLE void resume();
-    /// From Interrupted/Cancelled only: asks the backend to emit a new Download Request.
+    /// From Interrupted/Cancelled only: asks the registry to emit a new Download Request.
     Q_INVOKABLE void retry();
 
 signals:
@@ -93,10 +92,10 @@ private:
                                    const QString &suggestedFileName,
                                    const QString &mimeType,
                                    qint64 totalBytes,
+                                   bool isInline,
                                    QObject *parent = nullptr);
 
     void bindTransferHooks(TransferHooks hooks);
-    void setInlinePayload(QByteArray payload);
     void setInProgress();
     void setPaused();
     void setProgress(qint64 receivedBytes, qint64 totalBytes);
@@ -113,7 +112,7 @@ private:
     State m_state = State::Requested;
     QString m_destinationPath;
     QString m_errorString;
-    QByteArray m_inlinePayload;
+    bool m_inline = false;
     TransferHooks m_hooks;
 };
 

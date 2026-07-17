@@ -40,6 +40,32 @@ target_link_libraries(tst_inlinedownloadcodec PRIVATE
 )
 add_test(NAME tst_inlinedownloadcodec COMMAND tst_inlinedownloadcodec)
 
+add_executable(tst_inlinedownloadwriter
+    tst_inlinedownloadwriter.cpp
+    ../src/common/inlinedownloadwriter.cpp
+)
+target_include_directories(tst_inlinedownloadwriter PRIVATE
+    ../src/common
+)
+target_link_libraries(tst_inlinedownloadwriter PRIVATE
+    Qt::Core
+    Qt::Test
+)
+add_test(NAME tst_inlinedownloadwriter COMMAND tst_inlinedownloadwriter)
+
+add_executable(tst_inlinedownloadmessage
+    tst_inlinedownloadmessage.cpp
+    ../src/common/inlinedownloadmessage.cpp
+)
+target_include_directories(tst_inlinedownloadmessage PRIVATE
+    ../src/common
+)
+target_link_libraries(tst_inlinedownloadmessage PRIVATE
+    Qt::Core
+    Qt::Test
+)
+add_test(NAME tst_inlinedownloadmessage COMMAND tst_inlinedownloadmessage)
+
 add_executable(tst_freezecontroller
     tst_freezecontroller.cpp
     ../src/common/freezecontroller.cpp
@@ -62,6 +88,7 @@ if(APPLE)
         ../src/common/downloadpolicy.cpp
         ../src/common/mobilewebviewdownload.cpp
         ../src/common/inlinedownloadcodec.cpp
+        ../src/common/inlinedownloadwriter.cpp
     )
     target_include_directories(tst_downloadregistry PRIVATE
         ../include
@@ -237,6 +264,8 @@ if(APPLE)
         ../src/common/downloadpolicy.cpp
         ../src/common/downloadregistry.cpp
         ../src/common/inlinedownloadcodec.cpp
+        ../src/common/inlinedownloadwriter.cpp
+        ../src/common/inlinedownloadmessage.cpp
         ../src/common/freezecontroller.cpp
         ../src/common/userscript_utils.cpp
         ../src/common/webchanneltransport.cpp

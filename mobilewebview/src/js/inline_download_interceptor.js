@@ -4,8 +4,8 @@
   'use strict';
 
   var TAG = '[MwvInlineDownload]';
-  // Match C++ InlineDownloadCodec::kMaxDecodedBytes (32 MiB); base64 is ~4/3 larger.
-  var MAX_DECODED_BYTES = 32 * 1024 * 1024;
+  // Substituted at injection from InlineDownloadCodec::kMaxDecodedBytes.
+  var MAX_DECODED_BYTES = %MAX_INLINE_BYTES%;
   var MAX_BASE64_CHARS = Math.floor(MAX_DECODED_BYTES * 4 / 3) + 4;
 
   function postNative(packet) {

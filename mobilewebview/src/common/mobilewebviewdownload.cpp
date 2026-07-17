@@ -7,6 +7,7 @@ MobileWebViewDownload::MobileWebViewDownload(quint64 id,
                                              const QString &suggestedFileName,
                                              const QString &mimeType,
                                              qint64 totalBytes,
+                                             bool isInline,
                                              QObject *parent)
     : QObject(parent)
     , m_id(id)
@@ -14,19 +15,13 @@ MobileWebViewDownload::MobileWebViewDownload(quint64 id,
     , m_suggestedFileName(suggestedFileName)
     , m_mimeType(mimeType)
     , m_totalBytes(totalBytes)
+    , m_inline(isInline)
 {
 }
 
 void MobileWebViewDownload::bindTransferHooks(TransferHooks hooks)
 {
     m_hooks = std::move(hooks);
-}
-
-void MobileWebViewDownload::setInlinePayload(QByteArray payload)
-{
-    m_inlinePayload = std::move(payload);
-    if (m_totalBytes < 0)
-        m_totalBytes = m_inlinePayload.size();
 }
 
 void MobileWebViewDownload::accept(const QString &destinationPath)
@@ -57,7 +52,7 @@ void MobileWebViewDownload::cancel()
 void MobileWebViewDownload::pause()
 {
     // Inline Downloads write on accept; pause/resume are not applicable.
-    if (hasInlinePayload())
+    if (m_inline)
         return;
     if (m_state != State::InProgress || !m_hooks.pause)
         return;
@@ -68,7 +63,7 @@ void MobileWebViewDownload::pause()
 
 void MobileWebViewDownload::resume()
 {
-    if (hasInlinePayload())
+    if (m_inline)
         return;
     if (m_state != State::Paused || !m_hooks.resume)
         return;

@@ -1,5 +1,8 @@
 #pragma once
 
+#include "downloadtransfer.h"
+#include "inlinedownloadwriter.h"
+
 #include <QByteArray>
 #include <QHash>
 #include <QObject>
@@ -10,36 +13,24 @@
 class MobileWebViewDownload;
 
 /// Owns active Download objects for one backend: ids, map, lifecycle transitions.
-/// Platform transfer/cancel/pause/resume and QML emit are injected callbacks (narrow seam).
+/// Platform transfer is a DownloadTransfer adapter; inline bytes live in the writer.
 class DownloadRegistry
 {
 public:
     using EmitRequested = std::function<void(MobileWebViewDownload *)>;
-    using StartTransfer = std::function<void(quint64 id, const QUrl &url, const QString &path)>;
-    using CancelPlatform = std::function<void(quint64)>;
-    using PausePlatform = std::function<void(quint64)>;
-    using ResumePlatform = std::function<void(quint64)>;
-    using RetryRequest = std::function<void(MobileWebViewDownload *)>;
 
     DownloadRegistry(QObject *parent,
                      EmitRequested emitRequested,
-                     StartTransfer startTransfer,
-                     CancelPlatform cancelPlatform,
-                     PausePlatform pausePlatform = {},
-                     ResumePlatform resumePlatform = {},
-                     RetryRequest retryRequest = {});
+                     DownloadTransfer *transfer);
 
+    /// Network or inline create. Non-empty \a payload selects the inline path
+    /// (requires an inline URL scheme); empty payload requires a fetchable URL.
     MobileWebViewDownload *create(const QUrl &url,
                                   const QString &platformSuggestion,
                                   const QString &contentDisposition,
                                   const QString &mimeType,
-                                  qint64 totalBytes);
-
-    /// Inline (blob:/data:) Download with decoded payload written on accept.
-    MobileWebViewDownload *createInline(const QUrl &url,
-                                        const QString &platformSuggestion,
-                                        const QString &mimeType,
-                                        QByteArray payload);
+                                  qint64 totalBytes,
+                                  QByteArray payload = {});
 
     void emitRequested(MobileWebViewDownload *download);
 
@@ -47,12 +38,8 @@ public:
                                       const QString &platformSuggestion,
                                       const QString &contentDisposition,
                                       const QString &mimeType,
-                                      qint64 totalBytes);
-
-    MobileWebViewDownload *onInlineDetected(const QUrl &url,
-                                            const QString &platformSuggestion,
-                                            const QString &mimeType,
-                                            QByteArray payload);
+                                      qint64 totalBytes,
+                                      QByteArray payload = {});
 
     void onProgress(quint64 downloadId, qint64 receivedBytes, qint64 totalBytes);
     void onFinished(quint64 downloadId, bool ok, const QString &error);
@@ -60,17 +47,18 @@ public:
     void cancelAll();
     MobileWebViewDownload *downloadById(quint64 downloadId) const;
 
+    /// From Interrupted/Cancelled: emit a new Download Request (does not revive).
+    void retry(MobileWebViewDownload *download);
+
+    InlineDownloadWriter &inlineWriter() { return m_inlineWriter; }
+
 private:
     void bindHooks(MobileWebViewDownload *download);
-    void writeInlinePayload(MobileWebViewDownload *download, const QString &path);
 
     QObject *m_parent = nullptr;
     EmitRequested m_emitRequested;
-    StartTransfer m_startTransfer;
-    CancelPlatform m_cancelPlatform;
-    PausePlatform m_pausePlatform;
-    ResumePlatform m_resumePlatform;
-    RetryRequest m_retryRequest;
+    DownloadTransfer *m_transfer = nullptr;
+    InlineDownloadWriter m_inlineWriter;
     quint64 m_nextDownloadId = 0;
     QHash<quint64, MobileWebViewDownload *> m_downloads;
 };

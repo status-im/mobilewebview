@@ -106,3 +106,15 @@ A Download whose bytes are already held by the library (typically from a page
 `blob:` or `data:` URL read via a user-script bridge) and written to the Download
 Target on accept without an HTTP transfer.
 _Avoid_: blob download, data URL download.
+
+### Inline Download Writer
+The module that owns decoded Inline Download payload bytes and writes them to the
+Download Target on accept. Payload is freed after a successful write; retained on
+failure so retry can emit a new Download Request.
+_Avoid_: payload store, inline buffer.
+
+### Download Transfer
+The seam through which a Download moves bytes (start / cancel / pause / resume).
+Platform adapters implement it; the Download registry owns lifecycle and does not
+perform the transfer itself.
+_Avoid_: download hooks, transfer callbacks.

@@ -34,20 +34,6 @@
     }
   });
 
-  // Inline Download envelope — forward as-is (no WebChannel invokeKey).
-  // Primary path posts via NativeBridge from the interceptor; this is a fallback.
-  document.addEventListener('__mwv_download__', function(e) {
-    if (typeof e.detail !== 'string') {
-      console.error(TAG, 'Expected string __mwv_download__ detail, got:', typeof e.detail);
-      return;
-    }
-    try {
-      NativeBridge.postMessage(e.detail);
-    } catch (error) {
-      console.error(TAG, 'Failed to post inline download:', error);
-    }
-  });
-  
   // document.documentElement may be null during very early injection (onPageStarted)
   (function poll(n) {
     var el = document.documentElement || document.querySelector('html');
