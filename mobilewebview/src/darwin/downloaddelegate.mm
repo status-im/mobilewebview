@@ -24,13 +24,57 @@ bool isUnsupportedScheme(NSURL *url)
 
 } // namespace
 
+/// Per-download state: active WKDownload, destination handoff, pause resumeData.
+@interface MWVDownloadEntry : NSObject
+@property (nonatomic, assign) WKDownload *download;
+@property (nonatomic, copy) void (^destinationHandler)(NSURL *_Nullable);
+@property (nonatomic, copy) NSString *pendingPath;
+@property (nonatomic, copy) NSData *resumeData;
+@property (nonatomic, assign) BOOL pausing;
+@property (nonatomic, assign) BOOL observingProgress;
+@property (nonatomic, assign) DownloadDelegate *observer;
+
+- (void)detachActive; // drop WKDownload + handler + pending; keep resumeData
+- (void)destroy;      // detachActive + wipe resumeData
+@end
+
+@implementation MWVDownloadEntry
+
+- (void)detachActive
+{
+    if (self.download && self.observingProgress && self.observer) {
+        @try {
+            [self.download.progress removeObserver:self.observer
+                                        forKeyPath:@"completedUnitCount"];
+        } @catch (NSException *) {
+        }
+        self.observingProgress = NO;
+    }
+    self.download = nil;
+    if (self.destinationHandler) {
+        self.destinationHandler = nil;
+    }
+    self.pendingPath = nil;
+    self.pausing = NO;
+}
+
+- (void)destroy
+{
+    [self detachActive];
+    self.resumeData = nil;
+}
+
+- (void)dealloc
+{
+    [self destroy];
+    [super dealloc];
+}
+
+@end
+
 @interface DownloadDelegate ()
-@property (nonatomic, strong) NSMutableDictionary<NSNumber *, WKDownload *> *downloadsById;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, MWVDownloadEntry *> *entriesById;
 @property (nonatomic, strong) NSMapTable<WKDownload *, NSNumber *> *idsByDownload;
-@property (nonatomic, strong) NSMutableDictionary<NSNumber *, id> *destinationHandlersById;
-@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSString *> *pendingDestinationsById;
-@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSData *> *resumeDataById;
-@property (nonatomic, strong) NSMutableSet<NSNumber *> *pausingIds;
 @end
 
 @implementation DownloadDelegate
@@ -39,14 +83,10 @@ bool isUnsupportedScheme(NSURL *url)
 {
     self = [super init];
     if (self) {
-        _downloadsById = [[NSMutableDictionary alloc] init];
+        _entriesById = [[NSMutableDictionary alloc] init];
         _idsByDownload = [[NSMapTable alloc] initWithKeyOptions:NSPointerFunctionsWeakMemory
                                                    valueOptions:NSPointerFunctionsStrongMemory
                                                        capacity:0];
-        _destinationHandlersById = [[NSMutableDictionary alloc] init];
-        _pendingDestinationsById = [[NSMutableDictionary alloc] init];
-        _resumeDataById = [[NSMutableDictionary alloc] init];
-        _pausingIds = [[NSMutableSet alloc] init];
     }
     return self;
 }
@@ -54,52 +94,67 @@ bool isUnsupportedScheme(NSURL *url)
 - (void)dealloc
 {
     [self cancelAll];
-    [_downloadsById release];
-    _downloadsById = nil;
+    [_entriesById release];
+    _entriesById = nil;
     [_idsByDownload release];
     _idsByDownload = nil;
-    [_destinationHandlersById release];
-    _destinationHandlersById = nil;
-    [_pendingDestinationsById release];
-    _pendingDestinationsById = nil;
-    [_resumeDataById release];
-    _resumeDataById = nil;
-    [_pausingIds release];
-    _pausingIds = nil;
     [super dealloc];
+}
+
+- (MWVDownloadEntry *)entryForId:(uint64_t)downloadId create:(BOOL)create
+{
+    NSNumber *key = @(downloadId);
+    MWVDownloadEntry *entry = self.entriesById[key];
+    if (!entry && create) {
+        entry = [[MWVDownloadEntry alloc] init];
+        entry.observer = self;
+        self.entriesById[key] = entry;
+        [entry release];
+        entry = self.entriesById[key];
+    }
+    return entry;
+}
+
+- (void)destroyEntryId:(uint64_t)downloadId
+{
+    NSNumber *key = @(downloadId);
+    MWVDownloadEntry *entry = self.entriesById[key];
+    if (!entry)
+        return;
+    if (entry.download)
+        [self.idsByDownload removeObjectForKey:entry.download];
+    [entry destroy];
+    [self.entriesById removeObjectForKey:key];
+}
+
+- (void)detachActiveForId:(uint64_t)downloadId
+{
+    NSNumber *key = @(downloadId);
+    MWVDownloadEntry *entry = self.entriesById[key];
+    if (!entry)
+        return;
+    if (entry.download)
+        [self.idsByDownload removeObjectForKey:entry.download];
+    [entry detachActive];
 }
 
 - (void)forgetDownloadId:(uint64_t)downloadId
 {
-    NSNumber *key = @(downloadId);
-    WKDownload *download = self.downloadsById[key];
-    if (download) {
-        @try {
-            [download.progress removeObserver:self forKeyPath:@"completedUnitCount"];
-        } @catch (NSException *) {
-        }
-        [self.idsByDownload removeObjectForKey:download];
-    }
-    [self.downloadsById removeObjectForKey:key];
-
-    id handler = self.destinationHandlersById[key];
-    if (handler)
-        [handler release];
-    [self.destinationHandlersById removeObjectForKey:key];
-    [self.pendingDestinationsById removeObjectForKey:key];
-    [self.resumeDataById removeObjectForKey:key];
-    [self.pausingIds removeObject:key];
+    [self destroyEntryId:downloadId];
 }
 
 - (void)observeProgressForDownload:(WKDownload *)download downloadId:(uint64_t)downloadId
 {
-    Q_UNUSED(downloadId);
     if (!download.progress)
+        return;
+    MWVDownloadEntry *entry = [self entryForId:downloadId create:NO];
+    if (!entry)
         return;
     [download.progress addObserver:self
                         forKeyPath:@"completedUnitCount"
                            options:NSKeyValueObservingOptionNew
                            context:(void *)(uintptr_t)downloadId];
+    entry.observingProgress = YES;
 }
 
 - (void)observeValueForKeyPath:(NSString *)keyPath
@@ -130,19 +185,18 @@ bool isUnsupportedScheme(NSURL *url)
 
 - (void)registerDownload:(WKDownload *)download downloadId:(uint64_t)downloadId
 {
-    NSNumber *key = @(downloadId);
-    self.downloadsById[key] = download;
-    [self.idsByDownload setObject:key forKey:download];
+    MWVDownloadEntry *entry = [self entryForId:downloadId create:YES];
+    entry.download = download;
+    [self.idsByDownload setObject:@(downloadId) forKey:download];
     [self observeProgressForDownload:download downloadId:downloadId];
 
-    NSString *pending = self.pendingDestinationsById[key];
-    id handler = self.destinationHandlersById[key];
-    if (pending.length > 0 && handler) {
-        void (^completion)(NSURL *) = handler;
+    if (entry.pendingPath.length > 0 && entry.destinationHandler) {
+        void (^completion)(NSURL *) = [entry.destinationHandler retain];
+        entry.destinationHandler = nil;
+        NSString *pending = [[entry.pendingPath retain] autorelease];
+        entry.pendingPath = nil;
         completion([NSURL fileURLWithPath:pending]);
-        [handler release];
-        [self.destinationHandlersById removeObjectForKey:key];
-        [self.pendingDestinationsById removeObjectForKey:key];
+        [completion release];
     }
 }
 
@@ -166,23 +220,22 @@ bool isUnsupportedScheme(NSURL *url)
     if (path.length == 0)
         return NO;
 
-    NSNumber *key = @(downloadId);
-    if (!self.downloadsById[key] && !self.destinationHandlersById[key]) {
+    MWVDownloadEntry *entry = [self entryForId:downloadId create:NO];
+    if (!entry || (!entry.download && !entry.destinationHandler)) {
         // Unknown id — caller should start an explicit WKDownload (downloadUrl).
         return NO;
     }
 
-    id handler = self.destinationHandlersById[key];
-    if (handler) {
-        void (^completion)(NSURL *) = handler;
+    if (entry.destinationHandler) {
+        void (^completion)(NSURL *) = [entry.destinationHandler retain];
+        entry.destinationHandler = nil;
+        entry.pendingPath = nil;
         completion([NSURL fileURLWithPath:path]);
-        [handler release];
-        [self.destinationHandlersById removeObjectForKey:key];
-        [self.pendingDestinationsById removeObjectForKey:key];
+        [completion release];
         return YES;
     }
 
-    self.pendingDestinationsById[key] = [[path copy] autorelease];
+    entry.pendingPath = path;
     return YES;
 }
 
@@ -207,8 +260,8 @@ bool isUnsupportedScheme(NSURL *url)
         return;
     }
 
-    NSNumber *key = @(downloadId);
-    self.pendingDestinationsById[key] = [[path copy] autorelease];
+    MWVDownloadEntry *entry = [self entryForId:downloadId create:YES];
+    entry.pendingPath = path;
 
     NSURLRequest *request = [NSURLRequest requestWithURL:url];
     __block DownloadDelegate *blockSelf = self;
@@ -224,60 +277,56 @@ bool isUnsupportedScheme(NSURL *url)
 
 - (void)cancelDownloadId:(uint64_t)downloadId
 {
-    NSNumber *key = @(downloadId);
-    id handler = self.destinationHandlersById[key];
-    if (handler) {
-        void (^completion)(NSURL *) = handler;
-        completion(nil);
-        [handler release];
-        [self.destinationHandlersById removeObjectForKey:key];
+    MWVDownloadEntry *entry = [self entryForId:downloadId create:NO];
+    if (!entry) {
+        [self destroyEntryId:downloadId];
+        return;
     }
-    WKDownload *download = self.downloadsById[key];
+
+    if (entry.destinationHandler) {
+        void (^completion)(NSURL *) = [entry.destinationHandler retain];
+        entry.destinationHandler = nil;
+        completion(nil);
+        [completion release];
+    }
+    WKDownload *download = entry.download;
     if (download)
         [download cancel:^(NSData *) {}];
-    [self forgetDownloadId:downloadId];
+    [self destroyEntryId:downloadId];
 }
 
 - (void)pauseDownloadId:(uint64_t)downloadId
 {
     NSNumber *key = @(downloadId);
-    WKDownload *download = self.downloadsById[key];
-    if (!download) {
+    MWVDownloadEntry *entry = self.entriesById[key];
+    if (!entry || !entry.download) {
         // Still Requested (destination handler pending) — release like cancel.
-        id handler = self.destinationHandlersById[key];
-        if (handler) {
-            void (^completion)(NSURL *) = handler;
+        if (entry && entry.destinationHandler) {
+            void (^completion)(NSURL *) = [entry.destinationHandler retain];
+            entry.destinationHandler = nil;
             completion(nil);
-            [handler release];
-            [self.destinationHandlersById removeObjectForKey:key];
+            [completion release];
         }
         return;
     }
 
-    [self.pausingIds addObject:key];
+    entry.pausing = YES;
+    WKDownload *download = entry.download;
     __block DownloadDelegate *blockSelf = self;
     [download cancel:^(NSData *resumeData) {
+        MWVDownloadEntry *paused = blockSelf.entriesById[key];
+        if (!paused)
+            return;
         if (resumeData)
-            blockSelf.resumeDataById[key] = [[resumeData copy] autorelease];
-        [blockSelf.pausingIds removeObject:key];
-        // Drop active WKDownload mapping; keep resumeData for resumeDownloadId:.
-        WKDownload *active = blockSelf.downloadsById[key];
-        if (active) {
-            @try {
-                [active.progress removeObserver:blockSelf forKeyPath:@"completedUnitCount"];
-            } @catch (NSException *) {
-            }
-            [blockSelf.idsByDownload removeObjectForKey:active];
-        }
-        [blockSelf.downloadsById removeObjectForKey:key];
-        [blockSelf.pendingDestinationsById removeObjectForKey:key];
+            paused.resumeData = resumeData;
+        [blockSelf detachActiveForId:downloadId];
     }];
 }
 
 - (void)resumeDownloadId:(uint64_t)downloadId webView:(WKWebView *)webView
 {
     NSNumber *key = @(downloadId);
-    NSData *resumeData = self.resumeDataById[key];
+    MWVDownloadEntry *entry = self.entriesById[key];
     auto fail = ^(MobileWebViewBackend *owner, const QString &message) {
         if (!owner)
             return;
@@ -288,12 +337,13 @@ bool isUnsupportedScheme(NSURL *url)
         }, Qt::QueuedConnection);
     };
 
-    if (!webView || !resumeData) {
+    if (!webView || !entry || !entry.resumeData) {
         fail(self.owner, QStringLiteral("Resume data unavailable"));
         return;
     }
 
-    [self.resumeDataById removeObjectForKey:key];
+    NSData *resumeData = [[entry.resumeData retain] autorelease];
+    entry.resumeData = nil;
     __block DownloadDelegate *blockSelf = self;
     [webView resumeDownloadFromResumeData:resumeData completionHandler:^(WKDownload *download) {
         if (!download) {
@@ -307,22 +357,23 @@ bool isUnsupportedScheme(NSURL *url)
 
 - (void)cancelAll
 {
-    NSArray<NSNumber *> *keys = [self.downloadsById.allKeys copy];
+    NSArray<NSNumber *> *keys = [self.entriesById.allKeys copy];
     for (NSNumber *key in keys)
         [self cancelDownloadId:key.unsignedLongLongValue];
     [keys release];
 
-    for (NSNumber *key in self.destinationHandlersById.allKeys) {
-        void (^completion)(NSURL *) = self.destinationHandlersById[key];
-        if (completion) {
+    for (NSNumber *key in self.entriesById.allKeys) {
+        MWVDownloadEntry *entry = self.entriesById[key];
+        if (entry.destinationHandler) {
+            void (^completion)(NSURL *) = [entry.destinationHandler retain];
+            entry.destinationHandler = nil;
             completion(nil);
             [completion release];
         }
+        [entry destroy];
     }
-    [self.destinationHandlersById removeAllObjects];
-    [self.pendingDestinationsById removeAllObjects];
-    [self.resumeDataById removeAllObjects];
-    [self.pausingIds removeAllObjects];
+    [self.entriesById removeAllObjects];
+    [self.idsByDownload removeAllObjects];
 }
 
 - (void)download:(WKDownload *)download
@@ -346,14 +397,14 @@ API_AVAILABLE(macos(11.3), ios(14.5))
     NSNumber *existingId = [self.idsByDownload objectForKey:download];
     if (existingId) {
         const uint64_t downloadId = existingId.unsignedLongLongValue;
-        NSNumber *key = @(downloadId);
-        NSString *pending = self.pendingDestinationsById[key];
-        if (pending.length > 0) {
+        MWVDownloadEntry *entry = [self entryForId:downloadId create:NO];
+        if (entry.pendingPath.length > 0) {
+            NSString *pending = entry.pendingPath;
+            entry.pendingPath = nil;
             completionHandler([NSURL fileURLWithPath:pending]);
-            [self.pendingDestinationsById removeObjectForKey:key];
             return;
         }
-        self.destinationHandlersById[key] = [completionHandler copy];
+        entry.destinationHandler = completionHandler;
         return;
     }
 
@@ -391,21 +442,20 @@ API_AVAILABLE(macos(11.3), ios(14.5))
 
         const uint64_t downloadId = item->downloadId();
         [delegate registerDownload:download downloadId:downloadId];
-        delegate.destinationHandlersById[@(downloadId)] = handlerCopy;
+        MWVDownloadEntry *entry = [delegate entryForId:downloadId create:NO];
+        entry.destinationHandler = handlerCopy;
+        [handlerCopy release];
 
         // Host accept() during this emit can provideDestinationPath (known id).
         guard->emitDownloadRequested(item);
 
-        NSString *pending = delegate.pendingDestinationsById[@(downloadId)];
-        if (pending.length > 0) {
-            id handler = delegate.destinationHandlersById[@(downloadId)];
-            if (handler) {
-                void (^completion)(NSURL *) = handler;
-                completion([NSURL fileURLWithPath:pending]);
-                [handler release];
-                [delegate.destinationHandlersById removeObjectForKey:@(downloadId)];
-            }
-            [delegate.pendingDestinationsById removeObjectForKey:@(downloadId)];
+        if (entry.pendingPath.length > 0 && entry.destinationHandler) {
+            void (^completion)(NSURL *) = [entry.destinationHandler retain];
+            entry.destinationHandler = nil;
+            NSString *pending = [[entry.pendingPath retain] autorelease];
+            entry.pendingPath = nil;
+            completion([NSURL fileURLWithPath:pending]);
+            [completion release];
         }
     }, Qt::QueuedConnection);
 }
@@ -419,7 +469,7 @@ API_AVAILABLE(macos(11.3), ios(14.5))
 
     const uint64_t downloadId = idNumber.unsignedLongLongValue;
     MobileWebViewBackend *owner = self.owner;
-    [self forgetDownloadId:downloadId];
+    [self destroyEntryId:downloadId];
     if (!owner)
         return;
 
@@ -441,45 +491,25 @@ API_AVAILABLE(macos(11.3), ios(14.5))
 
     const uint64_t downloadId = idNumber.unsignedLongLongValue;
     NSNumber *key = @(downloadId);
+    MWVDownloadEntry *entry = self.entriesById[key];
+    if (!entry)
+        return;
 
     // Pause cancels with resumeData; ignore the failure callback for that path.
-    if ([self.pausingIds containsObject:key] || self.resumeDataById[key]) {
-        if (resumeData && !self.resumeDataById[key])
-            self.resumeDataById[key] = [[resumeData copy] autorelease];
-        WKDownload *active = self.downloadsById[key];
-        if (active) {
-            @try {
-                [active.progress removeObserver:self forKeyPath:@"completedUnitCount"];
-            } @catch (NSException *) {
-            }
-            [self.idsByDownload removeObjectForKey:active];
-        }
-        [self.downloadsById removeObjectForKey:key];
-        [self.pausingIds removeObject:key];
+    if (entry.pausing || entry.resumeData) {
+        if (resumeData && !entry.resumeData)
+            entry.resumeData = resumeData;
+        [self detachActiveForId:downloadId];
         return;
     }
 
     // Keep resumeData for a possible host retry path that reuses WK resume.
     if (resumeData)
-        self.resumeDataById[key] = [[resumeData copy] autorelease];
+        entry.resumeData = resumeData;
 
     const QString message = qStringFromNS(error.localizedDescription);
     MobileWebViewBackend *owner = self.owner;
-    // forget without wiping resumeData we just stored
-    WKDownload *active = self.downloadsById[key];
-    if (active) {
-        @try {
-            [active.progress removeObserver:self forKeyPath:@"completedUnitCount"];
-        } @catch (NSException *) {
-        }
-        [self.idsByDownload removeObjectForKey:active];
-    }
-    [self.downloadsById removeObjectForKey:key];
-    id handler = self.destinationHandlersById[key];
-    if (handler)
-        [handler release];
-    [self.destinationHandlersById removeObjectForKey:key];
-    [self.pendingDestinationsById removeObjectForKey:key];
+    [self detachActiveForId:downloadId];
 
     if (!owner)
         return;

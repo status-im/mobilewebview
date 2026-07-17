@@ -17,7 +17,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Self-fetch download worker (ADR 0005). Reuses WebView cookies + User-Agent.
@@ -34,11 +33,20 @@ final class DownloadFetcher {
         void onFinished(long downloadId, boolean ok, String error);
     }
 
+    private enum State {
+        RUNNING,
+        PAUSING,
+        CANCELLING
+    }
+
     private static final class Session {
         final String url;
         final String destination;
         volatile String userAgent;
         volatile boolean offTheRecord;
+        volatile State state = State.RUNNING;
+        volatile long offset = 0L;
+        volatile Future<?> future;
 
         Session(String url, String destination, String userAgent, boolean offTheRecord) {
             this.url = url;
@@ -46,12 +54,13 @@ final class DownloadFetcher {
             this.userAgent = userAgent;
             this.offTheRecord = offTheRecord;
         }
+
+        boolean shouldCleanupPartial() {
+            return state == State.CANCELLING;
+        }
     }
 
     private final ExecutorService mExecutor = Executors.newCachedThreadPool();
-    private final Map<Long, Future<?>> mActive = new ConcurrentHashMap<>();
-    private final Map<Long, AtomicBoolean> mCancelled = new ConcurrentHashMap<>();
-    private final Map<Long, AtomicBoolean> mPaused = new ConcurrentHashMap<>();
     private final Map<Long, Session> mSessions = new ConcurrentHashMap<>();
     private final Callbacks mCallbacks;
 
@@ -68,15 +77,17 @@ final class DownloadFetcher {
         cancel(downloadId);
         Session session = new Session(url, destination, userAgent, offTheRecord);
         mSessions.put(downloadId, session);
-        startFetch(downloadId, session, /*resumeOffset*/ 0L, context);
+        startFetch(downloadId, session, context);
     }
 
     void pause(long downloadId) {
-        AtomicBoolean paused = mPaused.get(downloadId);
-        if (paused != null) {
-            paused.set(true);
+        Session session = mSessions.get(downloadId);
+        if (session == null) {
+            return;
         }
-        Future<?> future = mActive.remove(downloadId);
+        session.state = State.PAUSING;
+        Future<?> future = session.future;
+        session.future = null;
         if (future != null) {
             future.cancel(true);
         }
@@ -98,77 +109,56 @@ final class DownloadFetcher {
         if (session.destination != null && !session.destination.startsWith("content:")) {
             offset = RangeFetchPolicy.existingFileLength(new File(session.destination));
         }
-        startFetch(downloadId, session, offset, context);
+        session.offset = offset;
+        startFetch(downloadId, session, context);
     }
 
     void cancel(long downloadId) {
-        AtomicBoolean flag = mCancelled.get(downloadId);
-        if (flag != null) {
-            flag.set(true);
+        Session session = mSessions.get(downloadId);
+        if (session == null) {
+            return;
         }
-        AtomicBoolean paused = mPaused.get(downloadId);
-        if (paused != null) {
-            paused.set(true);
-        }
-        Future<?> future = mActive.remove(downloadId);
+        session.state = State.CANCELLING;
+        Future<?> future = session.future;
+        session.future = null;
         if (future != null) {
             future.cancel(true);
         }
-        Session session = mSessions.remove(downloadId);
-        if (session != null) {
-            cleanupPartial(session.destination, null);
-        }
-        mCancelled.remove(downloadId);
-        mPaused.remove(downloadId);
+        mSessions.remove(downloadId);
+        cleanupPartial(session.destination, null);
     }
 
     void cancelAll() {
         for (Long id : mSessions.keySet()) {
             cancel(id);
         }
-        for (Long id : mActive.keySet()) {
-            cancel(id);
-        }
     }
 
-    private void startFetch(long downloadId, Session session, long resumeOffset, Context context) {
-        AtomicBoolean cancelled = new AtomicBoolean(false);
-        AtomicBoolean paused = new AtomicBoolean(false);
-        mCancelled.put(downloadId, cancelled);
-        mPaused.put(downloadId, paused);
-
+    private void startFetch(long downloadId, Session session, Context context) {
+        session.state = State.RUNNING;
         Future<?> future = mExecutor.submit(() -> {
             try {
-                fetch(downloadId, session, resumeOffset, context, cancelled, paused);
+                fetch(downloadId, session, context);
             } finally {
-                mActive.remove(downloadId);
-                mCancelled.remove(downloadId);
-                mPaused.remove(downloadId);
+                if (session.future != null) {
+                    session.future = null;
+                }
             }
         });
-        mActive.put(downloadId, future);
+        session.future = future;
     }
 
-    private void fetch(long downloadId,
-                       Session session,
-                       long resumeOffset,
-                       Context context,
-                       AtomicBoolean cancelled,
-                       AtomicBoolean paused) {
+    private void fetch(long downloadId, Session session, Context context) {
         HttpURLConnection conn = null;
         OutputStream out = null;
         try {
             URL current = new URL(session.url);
             int redirects = 0;
-            long offset = resumeOffset;
             while (true) {
-                if (cancelled.get() || Thread.interrupted()) {
-                    if (!paused.get()) {
+                if (session.state != State.RUNNING || Thread.interrupted()) {
+                    if (session.shouldCleanupPartial()) {
                         cleanupPartial(session.destination, context);
                     }
-                    return;
-                }
-                if (paused.get()) {
                     return;
                 }
 
@@ -183,7 +173,7 @@ final class DownloadFetcher {
                 if (cookies != null && !cookies.isEmpty()) {
                     conn.setRequestProperty("Cookie", cookies);
                 }
-                String range = RangeFetchPolicy.rangeHeader(offset);
+                String range = RangeFetchPolicy.rangeHeader(session.offset);
                 if (range != null) {
                     conn.setRequestProperty("Range", range);
                 }
@@ -200,10 +190,10 @@ final class DownloadFetcher {
                     current = new URL(current, location);
                     continue;
                 }
-                if (offset > 0 && code == 200) {
+                if (session.offset > 0 && code == 200) {
                     // Server ignored Range — discard partial and retry without Range.
                     conn.disconnect();
-                    offset = 0;
+                    session.offset = 0;
                     cleanupPartial(session.destination, context);
                     continue;
                 }
@@ -218,27 +208,26 @@ final class DownloadFetcher {
             long total = conn.getContentLengthLong();
             if (RangeFetchPolicy.isPartialContent(conn.getResponseCode())) {
                 total = RangeFetchPolicy.totalFromContentRange(
-                    conn.getHeaderField("Content-Range"), total >= 0 ? total + offset : -1);
+                    conn.getHeaderField("Content-Range"),
+                    total >= 0 ? total + session.offset : -1);
             }
 
-            out = openDestination(session.destination, context, offset);
+            out = openDestination(session.destination, context, session.offset);
             try (InputStream in = conn.getInputStream()) {
                 byte[] buf = new byte[BUFFER_SIZE];
-                long received = offset;
+                long received = session.offset;
                 long lastNotify = 0;
                 int n;
                 while ((n = in.read(buf)) != -1) {
-                    if (cancelled.get() || Thread.interrupted()) {
-                        if (!paused.get()) {
+                    if (session.state != State.RUNNING || Thread.interrupted()) {
+                        if (session.shouldCleanupPartial()) {
                             cleanupPartial(session.destination, context);
                         }
                         return;
                     }
-                    if (paused.get()) {
-                        return;
-                    }
                     out.write(buf, 0, n);
                     received += n;
+                    session.offset = received;
                     long now = System.currentTimeMillis();
                     if (now - lastNotify >= PROGRESS_THROTTLE_MS) {
                         mCallbacks.onProgress(downloadId, received, total);
@@ -254,10 +243,10 @@ final class DownloadFetcher {
             mSessions.remove(downloadId);
             mCallbacks.onFinished(downloadId, true, null);
         } catch (Exception e) {
-            if (paused.get()) {
+            if (session.state == State.PAUSING) {
                 return;
             }
-            if (cancelled.get() || Thread.interrupted()) {
+            if (session.state == State.CANCELLING || Thread.interrupted()) {
                 cleanupPartial(session.destination, context);
                 return;
             }

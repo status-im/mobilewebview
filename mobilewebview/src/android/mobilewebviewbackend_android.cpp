@@ -1,5 +1,6 @@
 #include "MobileWebView/mobilewebviewbackend.h"
 #include "../common/mobilewebviewbackend_p.h"
+#include "../common/inlinedownloadcodec.h"
 #include "../common/inlinedownloadmessage.h"
 #include "../common/origin_utils.h"
 #include "../common/userscript_utils.h"
@@ -757,6 +758,9 @@ bool AndroidWebViewPrivate::installBridgeImpl(const QString &ns, const QStringLi
     QString inlineDownloadScript;
     if (inlineDownloadFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
         inlineDownloadScript = QString::fromUtf8(inlineDownloadFile.readAll());
+        inlineDownloadScript.replace(
+            QStringLiteral("%MAX_INLINE_BYTES%"),
+            QString::number(MobileWebView::InlineDownloadCodec::kMaxDecodedBytes));
         inlineDownloadFile.close();
     } else {
         qWarning() << "AndroidWebViewPrivate: Failed to load inline_download_interceptor.js";

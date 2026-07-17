@@ -55,6 +55,9 @@ set(MOBILEWEBVIEW_COMMON_SOURCES
     src/common/inlinedownloadcodec.cpp
     src/common/inlinedownloadmessage.h
     src/common/inlinedownloadmessage.cpp
+    src/common/inlinedownloadwriter.h
+    src/common/inlinedownloadwriter.cpp
+    src/common/downloadtransfer.h
     src/common/downloadpolicy.h
     src/common/downloadpolicy.cpp
     src/common/downloadregistry.h

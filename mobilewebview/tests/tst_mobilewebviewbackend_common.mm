@@ -174,12 +174,20 @@ public:
 
     void pauseDownloadImpl(quint64 downloadId) override
     {
+        if (!pauseSupported) {
+            MobileWebViewBackendPrivate::pauseDownloadImpl(downloadId);
+            return;
+        }
         ++pauseDownloadCalls;
         lastPauseDownloadId = downloadId;
     }
 
     void resumeDownloadImpl(quint64 downloadId) override
     {
+        if (!pauseSupported) {
+            MobileWebViewBackendPrivate::resumeDownloadImpl(downloadId);
+            return;
+        }
         ++resumeDownloadCalls;
         lastResumeDownloadId = downloadId;
     }
@@ -214,6 +222,7 @@ public:
     int cancelDownloadCalls = 0;
     int pauseDownloadCalls = 0;
     int resumeDownloadCalls = 0;
+    bool pauseSupported = true;
     quint64 lastFreezeCaptureRequestId = 0;
     quint64 lastStartDownloadId = 0;
     quint64 lastCancelDownloadId = 0;
@@ -290,7 +299,9 @@ private slots:
     void downloadCancelledOnProfileSwitch();
     void beginInlineDownloadAcceptWritesFile();
     void downloadPauseResumeInvokesPlatform();
+    void downloadPauseUnsupportedInterrupts();
     void downloadRetryEmitsNewRequest();
+    void downloadRetryInlineEmitsNewRequest();
 };
 
 void MobileWebViewBackendCommonTest::forwardsCallsAndStateChanges()
@@ -1315,7 +1326,7 @@ void MobileWebViewBackendCommonTest::beginInlineDownloadAcceptWritesFile()
         QStringLiteral("aGVsbG8="));
     QVERIFY(download);
     QCOMPARE(requestedSpy.count(), 1);
-    QVERIFY(download->hasInlinePayload());
+    QVERIFY(download->isInline());
 
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -1371,6 +1382,33 @@ void MobileWebViewBackendCommonTest::downloadPauseResumeInvokesPlatform()
     QCOMPARE(d->lastResumeDownloadId, download->downloadId());
 }
 
+void MobileWebViewBackendCommonTest::downloadPauseUnsupportedInterrupts()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    d->pauseSupported = false;
+
+    QSignalSpy requestedSpy(&backend, &MobileWebViewBackend::downloadRequested);
+    backend.downloadUrl(QUrl(QStringLiteral("https://example.com/u.bin")),
+                        QStringLiteral("u.bin"));
+    auto *download = qvariant_cast<MobileWebViewDownload *>(requestedSpy.at(0).at(0));
+    QVERIFY(download);
+    download->accept(QStringLiteral("/tmp/u.bin"));
+    QCOMPARE(download->state(), MobileWebViewDownload::State::InProgress);
+
+    // Capture at finished emit — deleteLater may flush during QTRY event processing.
+    auto terminal = MobileWebViewDownload::State::Requested;
+    QString error;
+    QObject::connect(download, &MobileWebViewDownload::finished, download, [&]() {
+        terminal = download->state();
+        error = download->errorString();
+    });
+    download->pause();
+    QTRY_COMPARE(terminal, MobileWebViewDownload::State::Interrupted);
+    QCOMPARE(error, QStringLiteral("Pause not supported"));
+}
+
 void MobileWebViewBackendCommonTest::downloadRetryEmitsNewRequest()
 {
     g_lastCreatedPrivate = nullptr;
@@ -1393,6 +1431,43 @@ void MobileWebViewBackendCommonTest::downloadRetryEmitsNewRequest()
     QCOMPARE(retryDownload->url(), QUrl(QStringLiteral("https://example.com/r.bin")));
     QCOMPARE(retryDownload->suggestedFileName(), QStringLiteral("r.bin"));
     QCOMPARE(retryDownload->state(), MobileWebViewDownload::State::Requested);
+}
+
+void MobileWebViewBackendCommonTest::downloadRetryInlineEmitsNewRequest()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+
+    QSignalSpy requestedSpy(&backend, &MobileWebViewBackend::downloadRequested);
+    auto *download = backend.beginInlineDownload(
+        QUrl(QStringLiteral("blob:https://example.com/uuid")),
+        QStringLiteral("hello.txt"),
+        QStringLiteral("text/plain"),
+        QStringLiteral("aGVsbG8="));
+    QVERIFY(download);
+    QVERIFY(download->isInline());
+    QCOMPARE(requestedSpy.count(), 1);
+
+    // Interrupt without writing so payload remains for retry.
+    backend.reportDownloadFinished(download->downloadId(), false, QStringLiteral("fail"));
+    QCOMPARE(download->state(), MobileWebViewDownload::State::Interrupted);
+
+    download->retry();
+    QCOMPARE(requestedSpy.count(), 2);
+    auto *retryDownload = qvariant_cast<MobileWebViewDownload *>(requestedSpy.at(1).at(0));
+    QVERIFY(retryDownload);
+    QVERIFY(retryDownload != download);
+    QVERIFY(retryDownload->isInline());
+    QCOMPARE(retryDownload->suggestedFileName(), QStringLiteral("hello.txt"));
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("hello.txt"));
+    retryDownload->accept(path);
+    QCOMPARE(retryDownload->state(), MobileWebViewDownload::State::Completed);
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), QByteArray("hello"));
 }
 
 QTEST_MAIN(MobileWebViewBackendCommonTest)
