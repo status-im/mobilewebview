@@ -986,19 +986,26 @@ void DarwinWebViewPrivate::startDownloadImpl(quint64 downloadId, const QUrl &url
 
     DownloadDelegate *delegate = m_downloadDelegate;
     WKWebView *webView = m_webView;
-    NSString *path = destinationPath.toNSString();
-    NSURL *nsUrl = url.toNSURL();
+    // Own the ObjC conversions across a possible async main-queue hop;
+    // QString::toNSString()/QUrl::toNSURL() return autoreleased objects.
+    NSString *path = [destinationPath.toNSString() copy];
+    NSURL *nsUrl = [url.toNSURL() copy];
 
     // Page-initiated: id is already registered → provide destination (may stash).
     // Explicit downloadUrl(): id unknown to the delegate → start a new WKDownload.
-    if ([delegate provideDestinationPath:path forDownloadId:downloadId])
+    if ([delegate provideDestinationPath:path forDownloadId:downloadId]) {
+        [path release];
+        [nsUrl release];
         return;
+    }
 
     runOnMainThread(^{
         [delegate startExplicitDownloadWithURL:nsUrl
                                     downloadId:downloadId
                                destinationPath:path
                                        webView:webView];
+        [path release];
+        [nsUrl release];
     });
 }
 

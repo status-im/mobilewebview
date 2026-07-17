@@ -31,6 +31,9 @@ bool isUnsupportedScheme(NSURL *url)
 @property (nonatomic, copy) NSString *pendingPath;
 @property (nonatomic, copy) NSData *resumeData;
 @property (nonatomic, assign) BOOL pausing;
+/// Host called resume() before WK cancel finished providing resumeData.
+@property (nonatomic, assign) BOOL resumeWhenReady;
+@property (nonatomic, assign) WKWebView *pendingResumeWebView;
 @property (nonatomic, assign) BOOL observingProgress;
 @property (nonatomic, assign) DownloadDelegate *observer;
 
@@ -56,12 +59,16 @@ bool isUnsupportedScheme(NSURL *url)
     }
     self.pendingPath = nil;
     self.pausing = NO;
+    // Keep resumeWhenReady / pendingResumeWebView / resumeData across detach so a
+    // resume() that raced the pause cancel callback can still complete.
 }
 
 - (void)destroy
 {
     [self detachActive];
     self.resumeData = nil;
+    self.resumeWhenReady = NO;
+    self.pendingResumeWebView = nil;
 }
 
 - (void)dealloc
@@ -319,7 +326,29 @@ bool isUnsupportedScheme(NSURL *url)
             return;
         if (resumeData)
             paused.resumeData = resumeData;
+        const BOOL wantResume = paused.resumeWhenReady;
+        WKWebView *resumeWebView = paused.pendingResumeWebView;
+        paused.resumeWhenReady = NO;
+        paused.pendingResumeWebView = nil;
         [blockSelf detachActiveForId:downloadId];
+        if (wantResume) {
+            [blockSelf resumeDownloadId:downloadId webView:resumeWebView];
+            return;
+        }
+        // Host already saw Paused (sync pause()); without resumeData we cannot
+        // honor resume() — interrupt so state is not stuck in Paused forever.
+        if (!paused.resumeData) {
+            MobileWebViewBackend *owner = blockSelf.owner;
+            if (!owner)
+                return;
+            QPointer<MobileWebViewBackend> guard(owner);
+            QMetaObject::invokeMethod(owner, [guard, downloadId]() {
+                if (guard)
+                    guard->reportDownloadFinished(
+                        downloadId, false,
+                        QStringLiteral("Pause not supported (no resume data)"));
+            }, Qt::QueuedConnection);
+        }
     }];
 }
 
@@ -337,13 +366,27 @@ bool isUnsupportedScheme(NSURL *url)
         }, Qt::QueuedConnection);
     };
 
-    if (!webView || !entry || !entry.resumeData) {
+    if (!webView || !entry) {
+        fail(self.owner, QStringLiteral("Resume data unavailable"));
+        return;
+    }
+
+    // pause() sets Paused immediately, but WK only delivers resumeData in the
+    // cancel completion — host resume() often arrives first. Queue it.
+    if (!entry.resumeData) {
+        if (entry.pausing) {
+            entry.resumeWhenReady = YES;
+            entry.pendingResumeWebView = webView;
+            return;
+        }
         fail(self.owner, QStringLiteral("Resume data unavailable"));
         return;
     }
 
     NSData *resumeData = [[entry.resumeData retain] autorelease];
     entry.resumeData = nil;
+    entry.resumeWhenReady = NO;
+    entry.pendingResumeWebView = nil;
     __block DownloadDelegate *blockSelf = self;
     [webView resumeDownloadFromResumeData:resumeData completionHandler:^(WKDownload *download) {
         if (!download) {
@@ -399,7 +442,8 @@ API_AVAILABLE(macos(11.3), ios(14.5))
         const uint64_t downloadId = existingId.unsignedLongLongValue;
         MWVDownloadEntry *entry = [self entryForId:downloadId create:NO];
         if (entry.pendingPath.length > 0) {
-            NSString *pending = entry.pendingPath;
+            // Retain before clearing the copy property — otherwise pending dangles.
+            NSString *pending = [[entry.pendingPath retain] autorelease];
             entry.pendingPath = nil;
             completionHandler([NSURL fileURLWithPath:pending]);
             return;
