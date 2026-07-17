@@ -90,11 +90,8 @@ final class DownloadFetcher {
         HttpURLConnection conn = null;
         OutputStream out = null;
         try {
-            if (!DownloadUrlPolicy.isSupportedDownloadUrl(url)) {
-                mCallbacks.onFinished(downloadId, false, "Unsupported download URL scheme");
-                return;
-            }
-
+            // startDownload is only invoked for Downloads that already passed
+            // C++ DownloadPolicy (scheme support) on the Download Request seam.
             URL current = new URL(url);
             int redirects = 0;
             while (true) {

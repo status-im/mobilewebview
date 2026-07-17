@@ -29,7 +29,6 @@ SOURCES=(
   "$ANDROID_SRC/BridgeScriptBuilder.java"
   "$ANDROID_SRC/PendingActionQueue.java"
   "$ANDROID_SRC/WebViewUrlPolicy.java"
-  "$ANDROID_SRC/DownloadUrlPolicy.java"
   "$ANDROID_SRC/BridgeInjectorHost.java"
   "$ANDROID_SRC/BridgeState.java"
   "$ANDROID_SRC/ScriptInjectionPhase.java"
@@ -38,7 +37,6 @@ SOURCES=(
   "$ANDROID_TEST/BridgeScriptBuilderTest.java"
   "$ANDROID_TEST/MobileWebViewPendingActionsTest.java"
   "$ANDROID_TEST/WebViewUrlPolicyTest.java"
-  "$ANDROID_TEST/DownloadUrlPolicyTest.java"
   "$ANDROID_TEST/TestAssert.java"
   "$ANDROID_TEST/FakeBridgeInjectorHost.java"
   "$ANDROID_TEST/BridgeScriptInjectorTest.java"
@@ -54,7 +52,6 @@ TESTS=(
   org.mobilewebview.BridgeScriptBuilderTest
   org.mobilewebview.MobileWebViewPendingActionsTest
   org.mobilewebview.WebViewUrlPolicyTest
-  org.mobilewebview.DownloadUrlPolicyTest
   org.mobilewebview.BridgeScriptInjectorTest
   org.mobilewebview.WebViewProfileManagerTest
   org.mobilewebview.DataClearManagerTest

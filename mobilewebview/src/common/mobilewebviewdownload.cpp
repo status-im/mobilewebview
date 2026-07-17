@@ -1,5 +1,4 @@
 #include "MobileWebView/mobilewebviewdownload.h"
-#include "mobilewebviewbackend_p.h"
 
 #if defined(Q_OS_ANDROID) || defined(Q_OS_MACOS) || defined(Q_OS_IOS)
 
@@ -18,14 +17,14 @@ MobileWebViewDownload::MobileWebViewDownload(quint64 id,
 {
 }
 
-void MobileWebViewDownload::bindBackend(MobileWebViewBackendPrivate *backend)
+void MobileWebViewDownload::bindTransferHooks(TransferHooks hooks)
 {
-    m_backend = backend;
+    m_hooks = std::move(hooks);
 }
 
 void MobileWebViewDownload::accept(const QString &destinationPath)
 {
-    if (m_state != State::Requested || !m_backend)
+    if (m_state != State::Requested || !m_hooks.start)
         return;
     if (destinationPath.isEmpty())
         return;
@@ -33,18 +32,17 @@ void MobileWebViewDownload::accept(const QString &destinationPath)
     m_destinationPath = destinationPath;
     emit destinationPathChanged();
     setInProgress();
-    m_backend->startDownloadImpl(m_id, m_url, m_destinationPath);
+    m_hooks.start(m_id, m_url, m_destinationPath);
 }
 
 void MobileWebViewDownload::cancel()
 {
-    if (isTerminal() || !m_backend)
+    if (isTerminal() || !m_hooks.cancel)
         return;
 
     // Always notify the platform: Requested may still hold a pending destination
     // handler (Apple WKDownload) that must be released with nil.
-    m_backend->cancelDownloadImpl(m_id);
-    m_backend->forgetDownload(m_id);
+    m_hooks.cancel(m_id);
     setCancelled();
     deleteLater();
 }

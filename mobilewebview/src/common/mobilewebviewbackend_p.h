@@ -10,6 +10,10 @@
 #include <QHash>
 #include <QMetaObject>
 #include <functional>
+#include <memory>
+
+#include "downloadregistry.h"
+#include "freezecontroller.h"
 
 class MobileWebViewBackend;
 class MobileWebViewDownload;
@@ -21,11 +25,7 @@ class MobileWebViewSnapshotItem;
 class MobileWebViewBackendPrivate
 {
 public:
-    enum class FreezeState {
-        Idle,
-        Capturing,
-        Frozen,
-    };
+    using FreezeState = FreezeController::State;
 
     explicit MobileWebViewBackendPrivate(MobileWebViewBackend *q);
     virtual ~MobileWebViewBackendPrivate();
@@ -108,13 +108,17 @@ public:
     // createDownload does not emit; emitDownloadRequested notifies the host.
     // Darwin page-initiated flow registers the id with WKDownload before emit
     // so accept() during the handler can supply the destination safely.
+    /// \a platformSuggestion is a host/engine-resolved name (e.g. WKDownload
+    /// suggestedFilename); \a contentDisposition is the raw header when available.
     MobileWebViewDownload *createDownload(const QUrl &url,
-                                          const QString &suggestedFileName,
+                                          const QString &platformSuggestion,
+                                          const QString &contentDisposition,
                                           const QString &mimeType,
                                           qint64 totalBytes);
     void emitDownloadRequested(MobileWebViewDownload *download);
     MobileWebViewDownload *onDownloadDetected(const QUrl &url,
-                                              const QString &suggestedFileName,
+                                              const QString &platformSuggestion,
+                                              const QString &contentDisposition,
                                               const QString &mimeType,
                                               qint64 totalBytes);
     void onDownloadProgress(quint64 downloadId, qint64 receivedBytes, qint64 totalBytes);
@@ -130,7 +134,9 @@ public:
     /// Native WebView is hidden only in Frozen state (overlay replaces it).
     bool shouldShowNativeWebView(bool qmlItemVisible) const
     {
-        return qmlItemVisible && m_nativeViewSetup && m_freezeState != FreezeState::Frozen;
+        if (!m_freeze)
+            return qmlItemVisible && m_nativeViewSetup;
+        return m_freeze->shouldShowNativeWebView(qmlItemVisible, m_nativeViewSetup);
     }
 
     /// Whether the live native view's data store matches the requested store.
@@ -178,15 +184,7 @@ public:
     WebChannelTransport *m_transport = nullptr;
 
     // Freeze: hide native WebView and show last captured frame in Qt scene
-    FreezeState m_freezeState = FreezeState::Idle;
-    quint64 m_freezeRequestId = 0;
-    /// Monotonic id for all captureSnapshotImpl calls (freeze + public snapshots).
-    quint64 m_nextSnapshotId = 0;
-    bool m_publicSnapshotPending = false;
-    quint64 m_publicSnapshotRequestId = 0;
-    QSize m_publicSnapshotTargetSize;
-    /// DPR from QQuickWindow at requestSnapshot time; used to convert logical targetSize to pixels.
-    qreal m_publicSnapshotDpr = 1.0;
+    std::unique_ptr<FreezeController> m_freeze;
     MobileWebViewSnapshotItem *m_snapshotItem = nullptr;
     bool m_freezeClipStateStored = false;
     bool m_clipStateBeforeFreeze = false;
@@ -221,8 +219,7 @@ public:
     QMetaObject::Connection m_afterAnimatingConnection;
 
     // Active (non-terminal) downloads owned by this backend.
-    quint64 m_nextDownloadId = 0;
-    QHash<quint64, MobileWebViewDownload *> m_downloads;
+    std::unique_ptr<DownloadRegistry> m_downloadRegistry;
 };
 
 // Factory function for creating platform-specific implementation
