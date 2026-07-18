@@ -156,5 +156,5 @@ void FreezeControllerTest::clearResets()
     QCOMPARE(probe.restoreClipCalls, 1);
 }
 
-QTEST_MAIN(FreezeControllerTest)
+QTEST_GUILESS_MAIN(FreezeControllerTest)
 #include "tst_freezecontroller.moc"

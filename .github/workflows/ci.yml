@@ -48,6 +48,8 @@ jobs:
         run: cmake --build build --parallel
 
       - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: ctest --test-dir build --output-on-failure
 
   cmake-tests-macos:
