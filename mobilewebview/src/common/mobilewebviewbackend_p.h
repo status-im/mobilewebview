@@ -156,6 +156,9 @@ public:
                                           const QString &mimeType,
                                           qint64 totalBytes);
     void emitDownloadRequested(MobileWebViewDownload *download);
+    /// Long-press on a link/image (Qt thread). \a logicalPos is item-local
+    /// logical px — platform code converts from physical px before calling.
+    void emitLinkLongPressed(const QUrl &linkUrl, const QUrl &imageUrl, QPointF logicalPos);
     MobileWebViewDownload *onDownloadDetected(const QUrl &url,
                                               const QString &platformSuggestion,
                                               const QString &contentDisposition,

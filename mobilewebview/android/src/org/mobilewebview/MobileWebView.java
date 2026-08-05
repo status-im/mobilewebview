@@ -21,8 +21,10 @@ import android.webkit.WebSettings;
 import android.webkit.WebBackForwardList;
 import android.webkit.WebHistoryItem;
 import android.webkit.WebView;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Message;
 import android.graphics.Rect;
 
 import java.io.ByteArrayOutputStream;
@@ -83,6 +85,10 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     private boolean mOffTheRecord = false;
     private String mActiveProfileName = null;
     private String mHttpUserAgent = "";
+
+    // Last touch in WebView-local px; a long-press hit-test carries no position.
+    private float mLastTouchX = 0f;
+    private float mLastTouchY = 0f;
 
     /**
      * Constructor - creates and initializes WebView
@@ -210,6 +216,15 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
                     contentLength,
                     userAgent));
         });
+
+        // Long-press on a link/image → host context menu (save link, ADR 0005).
+        // Touch listener only records the position; it never consumes the event.
+        mWebView.setOnTouchListener((v, event) -> {
+            mLastTouchX = event.getX();
+            mLastTouchY = event.getY();
+            return false;
+        });
+        mWebView.setOnLongClickListener(v -> handleLongPress());
 
         mActiveProfileName = mProfileManager.configureProfile(mWebView, mStorageName, mOffTheRecord);
 
@@ -922,6 +937,64 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     private native void nativeOnWebMessageReceived(long nativePtr, String message,
                                                    String origin, boolean isMainFrame);
     private native void nativeOnNavigationStarted(long nativePtr, String url);
+    /**
+     * Long-press hit-test. Links and images surface a host context menu
+     * (nativeOnLinkLongPressed) and consume the gesture, mirroring Chrome;
+     * anything else falls through to the platform behaviour (text selection).
+     */
+    private boolean handleLongPress() {
+        if (mWebView == null) {
+            return false;
+        }
+        final WebView.HitTestResult hit = mWebView.getHitTestResult();
+        if (hit == null) {
+            return false;
+        }
+        final float x = mLastTouchX;
+        final float y = mLastTouchY;
+        final String extra = hit.getExtra();
+
+        switch (hit.getType()) {
+            case WebView.HitTestResult.SRC_ANCHOR_TYPE: {
+                if (extra == null || extra.isEmpty()) {
+                    return false;
+                }
+                notifyLinkLongPressed(extra, "", x, y);
+                return true;
+            }
+            case WebView.HitTestResult.IMAGE_TYPE: {
+                if (extra == null || extra.isEmpty()) {
+                    return false;
+                }
+                notifyLinkLongPressed("", extra, x, y);
+                return true;
+            }
+            case WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE: {
+                // extra is the image src; the anchor href needs a focus-node request.
+                final Message hrefMsg = new Handler(Looper.getMainLooper()) {
+                    @Override
+                    public void handleMessage(Message m) {
+                        final Bundle data = m.getData();
+                        final String href = data != null ? data.getString("url") : null;
+                        final String src = data != null ? data.getString("src") : null;
+                        notifyLinkLongPressed(
+                                href != null ? href : "",
+                                src != null ? src : (extra != null ? extra : ""),
+                                x, y);
+                    }
+                }.obtainMessage();
+                mWebView.requestFocusNodeHref(hrefMsg);
+                return true;
+            }
+            default:
+                return false;
+        }
+    }
+
+    private void notifyLinkLongPressed(String linkUrl, String imageUrl, float x, float y) {
+        withNativePtr(ptr -> nativeOnLinkLongPressed(ptr, linkUrl, imageUrl, x, y));
+    }
+
     private native void nativeOnNavigationFinished(long nativePtr, String url);
     private native void nativeOnNavigationFailed(long nativePtr);
     private native void nativeOnJavaScriptResult(long nativePtr, String result, String error);
@@ -945,4 +1018,6 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
                                                  long receivedBytes, long totalBytes);
     private native void nativeOnDownloadFinished(long nativePtr, long downloadId,
                                                  boolean ok, String error);
+    private native void nativeOnLinkLongPressed(long nativePtr, String linkUrl, String imageUrl,
+                                                float x, float y);
 }

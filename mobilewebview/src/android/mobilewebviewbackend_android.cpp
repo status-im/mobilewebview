@@ -91,6 +91,7 @@ public:
     
     // Callback handlers (called from JNI)
     void onWebMessageReceived(const QString &message, const QString &origin, bool isMainFrame);
+    void onLinkLongPressedPx(const QUrl &linkUrl, const QUrl &imageUrl, QPointF posPx);
     void onNavigationStarted(const QString &url);
     void onNavigationFinished(const QString &url);
     void onNavigationFailed();
@@ -1144,6 +1145,19 @@ void AndroidWebViewPrivate::onWebMessageReceived(const QString &message, const Q
     emit q_ptr->webMessageReceived(message, origin, isMainFrame);
 }
 
+void AndroidWebViewPrivate::onLinkLongPressedPx(const QUrl &linkUrl, const QUrl &imageUrl,
+                                                QPointF posPx)
+{
+    // Java reports WebView-local physical px; the native view mirrors the item's
+    // geometry (syncNativeGeometryFromScene), so logical = px / dpr.
+    qreal dpr = 1.0;
+    if (QQuickWindow *win = q_ptr->window())
+        dpr = win->devicePixelRatio();
+    if (dpr <= 0)
+        dpr = 1.0;
+    emitLinkLongPressed(linkUrl, imageUrl, posPx / dpr);
+}
+
 void AndroidWebViewPrivate::onNavigationStarted(const QString &url)
 {
     // Update origins before user scripts / QWebChannel handshake on the next pass.
@@ -1533,6 +1547,18 @@ Java_org_mobilewebview_MobileWebView_nativeOnDownloadProgress(JNIEnv *, jobject,
     const qint64 total = totalBytes >= 0 ? static_cast<qint64>(totalBytes) : -1;
     dispatchToBackend(nativePtr, [id, received, total](AndroidWebViewPrivate *backend) {
         backend->onDownloadProgress(id, received, total);
+    });
+}
+
+JNIEXPORT void JNICALL
+Java_org_mobilewebview_MobileWebView_nativeOnLinkLongPressed(JNIEnv *env, jobject,
+        jlong nativePtr, jstring linkUrl, jstring imageUrl, jfloat x, jfloat y)
+{
+    const QString qLink = toQString(env, linkUrl);
+    const QString qImage = toQString(env, imageUrl);
+    const QPointF posPx(x, y);
+    dispatchToBackend(nativePtr, [qLink, qImage, posPx](AndroidWebViewPrivate *backend) {
+        backend->onLinkLongPressedPx(QUrl(qLink), QUrl(qImage), posPx);
     });
 }
 
