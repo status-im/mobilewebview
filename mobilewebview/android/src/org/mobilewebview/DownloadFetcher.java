@@ -1,19 +1,10 @@
 package org.mobilewebview;
 
-import android.content.ContentResolver;
-import android.content.ContentValues;
 import android.content.Context;
-import android.media.MediaScannerConnection;
-import android.net.Uri;
-import android.os.Build;
-import android.os.Environment;
-import android.provider.MediaStore;
 import android.util.Log;
 import android.webkit.CookieManager;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -131,7 +122,7 @@ final class DownloadFetcher {
             future.cancel(true);
         }
         mSessions.remove(downloadId);
-        cleanupPartial(session.destination, null);
+        DownloadIo.cleanupPartial(session.destination, null);
     }
 
     void cancelAll() {
@@ -163,7 +154,7 @@ final class DownloadFetcher {
             while (true) {
                 if (session.state != State.RUNNING || Thread.interrupted()) {
                     if (session.shouldCleanupPartial()) {
-                        cleanupPartial(session.destination, context);
+                        DownloadIo.cleanupPartial(session.destination, context);
                     }
                     return;
                 }
@@ -200,7 +191,7 @@ final class DownloadFetcher {
                     // Server ignored Range — discard partial and retry without Range.
                     conn.disconnect();
                     session.offset = 0;
-                    cleanupPartial(session.destination, context);
+                    DownloadIo.cleanupPartial(session.destination, context);
                     continue;
                 }
                 if (code < 200 || code >= 300) {
@@ -218,7 +209,7 @@ final class DownloadFetcher {
                     total >= 0 ? total + session.offset : -1);
             }
 
-            out = openDestination(session.destination, context, session.offset);
+            out = DownloadIo.openDestination(session.destination, context, session.offset);
             try (InputStream in = conn.getInputStream()) {
                 byte[] buf = new byte[BUFFER_SIZE];
                 long received = session.offset;
@@ -227,7 +218,7 @@ final class DownloadFetcher {
                 while ((n = in.read(buf)) != -1) {
                     if (session.state != State.RUNNING || Thread.interrupted()) {
                         if (session.shouldCleanupPartial()) {
-                            cleanupPartial(session.destination, context);
+                            DownloadIo.cleanupPartial(session.destination, context);
                         }
                         return;
                     }
@@ -244,7 +235,8 @@ final class DownloadFetcher {
             }
 
             if (!session.offTheRecord) {
-                registerInSystemDownloads(session.destination, context, conn.getContentType());
+                DownloadMediaStore.registerCompleted(
+                        session.destination, context, conn.getContentType());
             }
             mSessions.remove(downloadId);
             mCallbacks.onFinished(downloadId, true, null);
@@ -253,11 +245,11 @@ final class DownloadFetcher {
                 return;
             }
             if (session.state == State.CANCELLING || Thread.interrupted()) {
-                cleanupPartial(session.destination, context);
+                DownloadIo.cleanupPartial(session.destination, context);
                 return;
             }
             Log.e(TAG, "Download failed: " + session.url, e);
-            cleanupPartial(session.destination, context);
+            DownloadIo.cleanupPartial(session.destination, context);
             mSessions.remove(downloadId);
             mCallbacks.onFinished(downloadId, false,
                     e.getMessage() != null ? e.getMessage() : "Download failed");
@@ -272,106 +264,5 @@ final class DownloadFetcher {
                 conn.disconnect();
             }
         }
-    }
-
-    private static OutputStream openDestination(String destination, Context context, long offset)
-            throws Exception {
-        if (destination != null && destination.startsWith("content:")) {
-            Uri uri = Uri.parse(destination);
-            String mode = RangeFetchPolicy.shouldAppend(offset) ? "wa" : "w";
-            OutputStream stream = context.getContentResolver().openOutputStream(uri, mode);
-            if (stream == null) {
-                throw new IllegalStateException("Cannot open content URI");
-            }
-            return stream;
-        }
-        File file = new File(destination);
-        File parent = file.getParentFile();
-        if (parent != null && !parent.exists() && !parent.mkdirs()) {
-            throw new IllegalStateException("Cannot create destination directory");
-        }
-        return new FileOutputStream(file, RangeFetchPolicy.shouldAppend(offset));
-    }
-
-    private static void cleanupPartial(String destination, Context context) {
-        try {
-            if (destination != null && destination.startsWith("content:")) {
-                if (context != null) {
-                    context.getContentResolver().delete(Uri.parse(destination), null, null);
-                }
-            } else if (destination != null) {
-                //noinspection ResultOfMethodCallIgnored
-                new File(destination).delete();
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "Failed to cleanup partial download", e);
-        }
-    }
-
-    private static void registerInSystemDownloads(String destination, Context context, String mime) {
-        if (context == null || destination == null || destination.startsWith("content:")) {
-            return;
-        }
-        try {
-            File file = new File(destination);
-            if (!file.exists()) {
-                return;
-            }
-            // App-private paths aren't MediaStore-indexable. Q+: copy into
-            // MediaStore.Downloads for the system UI (host still opens its file).
-            // Pre-Q: scan only — public write needs WRITE_EXTERNAL_STORAGE.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                publishToMediaStoreDownloads(file, context, mime);
-                return;
-            }
-            MediaScannerConnection.scanFile(
-                    context,
-                    new String[] { file.getAbsolutePath() },
-                    mime != null ? new String[] { mime } : null,
-                    null);
-        } catch (Exception e) {
-            Log.w(TAG, "Failed to register download in system UI", e);
-        }
-    }
-
-    private static void publishToMediaStoreDownloads(File file, Context context, String mime)
-            throws Exception {
-        final ContentResolver resolver = context.getContentResolver();
-
-        final ContentValues values = new ContentValues();
-        values.put(MediaStore.Downloads.DISPLAY_NAME, file.getName());
-        values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
-        values.put(MediaStore.Downloads.IS_PENDING, 1);
-        if (mime != null && !mime.isEmpty()) {
-            values.put(MediaStore.Downloads.MIME_TYPE, mime);
-        }
-
-        // MediaStore uniquifies DISPLAY_NAME itself ("name (1).ext") on collision.
-        final Uri collection =
-                MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
-        final Uri item = resolver.insert(collection, values);
-        if (item == null) {
-            Log.w(TAG, "MediaStore insert failed for " + file.getName());
-            return;
-        }
-
-        try (OutputStream out = resolver.openOutputStream(item);
-             InputStream in = new FileInputStream(file)) {
-            if (out == null) {
-                throw new IllegalStateException("openOutputStream returned null");
-            }
-            final byte[] buffer = new byte[BUFFER_SIZE];
-            int read;
-            while ((read = in.read(buffer)) > 0) {
-                out.write(buffer, 0, read);
-            }
-        } catch (Exception e) {
-            resolver.delete(item, null, null);
-            throw e;
-        }
-
-        final ContentValues publish = new ContentValues();
-        publish.put(MediaStore.Downloads.IS_PENDING, 0);
-        resolver.update(item, publish, null, null);
     }
 }
