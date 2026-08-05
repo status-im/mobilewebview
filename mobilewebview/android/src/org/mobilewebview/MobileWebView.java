@@ -191,7 +191,12 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
-        settings.setAllowFileAccess(false);
+        // file:// top-level loads: hosts open completed Downloads (and the media
+        // player page) by navigating to their file URLs; without this the WebView
+        // shows net::ERR_ACCESS_DENIED. Web→file navigation stays blocked by
+        // Chromium regardless, and the two flags below keep file-page JS from
+        // reading other local files.
+        settings.setAllowFileAccess(true);
         settings.setAllowContentAccess(true);
         settings.setAllowFileAccessFromFileURLs(false);
         settings.setAllowUniversalAccessFromFileURLs(false);
