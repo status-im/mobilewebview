@@ -111,7 +111,28 @@
     return null;
   }
 
+  // Same-origin http(s) <a download>: WebView/WKWebView ignore the download
+  // attribute and would render the target (media plays in the tab instead of
+  // saving). Post a URL-only envelope (no base64) — native fetches it through
+  // the ordinary Download path. Cross-origin keeps navigating, like Chrome.
+  function handleHttpUrl(a, href, fileName) {
+    try {
+      if (a.origin !== window.location.origin)
+        return false;
+    } catch (e) {
+      return false;
+    }
+    postNative({
+      mwvDownload: true,
+      url: href,
+      fileName: fileName
+    });
+    return true;
+  }
+
   document.addEventListener('click', function(ev) {
+    if (ev.defaultPrevented)
+      return;
     var a = findDownloadAnchor(ev.target);
     if (!a)
       return;
@@ -120,8 +141,18 @@
       return;
     var isBlob = href.indexOf('blob:') === 0;
     var isData = href.indexOf('data:') === 0;
-    if (!isBlob && !isData)
+    var isHttp = /^https?:/i.test(href);
+    if (!isBlob && !isData && !isHttp)
       return;
+
+    if (isHttp) {
+      // Empty download attribute → let native DownloadPolicy name it from the URL.
+      if (handleHttpUrl(a, href, a.getAttribute('download') || '')) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+      return;
+    }
 
     ev.preventDefault();
     ev.stopPropagation();

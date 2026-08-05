@@ -8,6 +8,7 @@ class InlineDownloadMessageTest : public QObject
 
 private slots:
     void parseValidEnvelope();
+    void parseUrlOnlyEnvelope();
     void parseRejectsNonJson();
     void parseRejectsNonObject();
     void parseRejectsMissingFlag();
@@ -25,6 +26,20 @@ void InlineDownloadMessageTest::parseValidEnvelope()
     QCOMPARE(envelope->fileName, QStringLiteral("a.txt"));
     QCOMPARE(envelope->mimeType, QStringLiteral("text/plain"));
     QCOMPARE(envelope->base64, QStringLiteral("aGVsbG8="));
+}
+
+void InlineDownloadMessageTest::parseUrlOnlyEnvelope()
+{
+    // http(s) <a download> click: no payload — the handler routes an empty-base64
+    // envelope to downloadUrl instead of the Inline Download path.
+    const QString json =
+        QStringLiteral("{\"mwvDownload\":true,\"url\":\"https://example.com/sample.mp3\","
+                       "\"fileName\":\"\"}");
+    const auto envelope = MobileWebView::parseInlineDownloadMessage(json);
+    QVERIFY(envelope.has_value());
+    QCOMPARE(envelope->url, QUrl(QStringLiteral("https://example.com/sample.mp3")));
+    QVERIFY(envelope->fileName.isEmpty());
+    QVERIFY(envelope->base64.isEmpty());
 }
 
 void InlineDownloadMessageTest::parseRejectsNonJson()
