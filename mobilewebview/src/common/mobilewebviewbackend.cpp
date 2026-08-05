@@ -534,6 +534,14 @@ void MobileWebViewBackendPrivate::emitDownloadRequested(MobileWebViewDownload *d
     m_downloadRegistry->emitRequested(download);
 }
 
+void MobileWebViewBackendPrivate::emitLinkLongPressed(const QUrl &linkUrl, const QUrl &imageUrl,
+                                                      QPointF logicalPos)
+{
+    if (linkUrl.isEmpty() && imageUrl.isEmpty())
+        return;
+    emit q_ptr->linkLongPressed(linkUrl, imageUrl, logicalPos);
+}
+
 MobileWebViewDownload *MobileWebViewBackendPrivate::onDownloadDetected(
     const QUrl &url,
     const QString &platformSuggestion,

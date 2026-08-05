@@ -199,6 +199,12 @@ signals:
     /// Host must accept(destination) or cancel(); no accept ⇒ cancelled on destroy/profile switch.
     void downloadRequested(MobileWebViewDownload *download);
 
+    /// Long-press on a link and/or image (Android; other platforms never emit).
+    /// linkUrl is the anchor href, imageUrl the <img> src — either may be empty,
+    /// never both. position is item-local logical px for anchoring a menu.
+    /// downloadUrl() is the matching "save link" trigger.
+    void linkLongPressed(const QUrl &linkUrl, const QUrl &imageUrl, const QPointF &position);
+
     // Emitted when JavaScript execution completes
     void javaScriptResult(const QVariant &result, const QString &error);
 
