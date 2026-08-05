@@ -119,6 +119,14 @@ public:
     // =========================================================================
     virtual void startDownloadImpl(quint64 downloadId, const QUrl &url,
                                    const QString &destinationPath);
+    /// Explicit downloadUrl() entry. Default detects immediately with the given
+    /// name and no metadata; platforms may first resolve response headers when
+    /// the host supplied no name (Android probes; the raw URL names files
+    /// "download" and hides their type from the host).
+    virtual void requestUrlDownloadImpl(const QUrl &url, const QString &suggestedFileName)
+    {
+        onDownloadDetected(url, suggestedFileName, QString(), QString(), -1);
+    }
     virtual void cancelDownloadImpl(quint64) {}
     /// Default: interrupt with "pause not supported".
     virtual void pauseDownloadImpl(quint64 downloadId);

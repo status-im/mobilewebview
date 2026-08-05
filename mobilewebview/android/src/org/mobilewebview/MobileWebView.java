@@ -687,6 +687,62 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     }
 
     /**
+     * Resolve Content-Disposition/Content-Type for an explicit URL download
+     * (downloadUrl with no host-supplied name), then report it through the same
+     * nativeOnDownloadDetected path as the DownloadListener. Without the probe
+     * those downloads carry no metadata: the file lands as literal "download"
+     * and hosts cannot tell an image from a binary blob.
+     */
+    public void probeDownload(final String url) {
+        final String ua;
+        String agent = mHttpUserAgent;
+        if ((agent == null || agent.isEmpty()) && mWebView != null) {
+            agent = mWebView.getSettings().getUserAgentString();
+        }
+        ua = agent != null ? agent : "";
+
+        new Thread(() -> {
+            String disposition = "";
+            String mime = "";
+            long length = -1;
+            try {
+                java.net.HttpURLConnection conn =
+                        (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+                conn.setRequestMethod("HEAD");
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
+                if (!ua.isEmpty()) {
+                    conn.setRequestProperty("User-Agent", ua);
+                }
+                if (!mOffTheRecord) {
+                    String cookies = android.webkit.CookieManager.getInstance().getCookie(url);
+                    if (cookies != null && !cookies.isEmpty()) {
+                        conn.setRequestProperty("Cookie", cookies);
+                    }
+                }
+                conn.connect();
+                final int code = conn.getResponseCode();
+                if (code >= 200 && code < 400) {
+                    final String d = conn.getHeaderField("Content-Disposition");
+                    final String m = conn.getContentType();
+                    disposition = d != null ? d : "";
+                    mime = m != null ? m : "";
+                    length = conn.getContentLengthLong();
+                }
+                conn.disconnect();
+            } catch (Exception e) {
+                Log.w(TAG, "probeDownload failed for " + url, e);
+            }
+            // Empty metadata on failure — the download still proceeds; the
+            // policy falls back to naming from the URL.
+            final String fDisposition = disposition;
+            final String fMime = mime;
+            final long fLength = length;
+            withNativePtr(ptr -> nativeOnDownloadDetected(ptr, url, fDisposition, fMime, fLength, ua));
+        }, "MwvDownloadProbe").start();
+    }
+
+    /**
      * Start a self-fetch download after the host accepted a Download Target.
      */
     public void startDownload(long downloadId, String url, String destination) {
