@@ -86,7 +86,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     private String mActiveProfileName = null;
     private String mHttpUserAgent = "";
 
-    // Last touch in WebView-local px; a long-press hit-test carries no position.
+    // WebView-local px; HitTestResult has no coordinates.
     private float mLastTouchX = 0f;
     private float mLastTouchY = 0f;
 
@@ -191,11 +191,8 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
-        // file:// top-level loads: hosts open completed Downloads (and the media
-        // player page) by navigating to their file URLs; without this the WebView
-        // shows net::ERR_ACCESS_DENIED. Web→file navigation stays blocked by
-        // Chromium regardless, and the two flags below keep file-page JS from
-        // reading other local files.
+        // Top-level file:// for opening Downloads / local media. Web→file stays
+        // blocked; flags below keep file-origin JS from reading other local files.
         settings.setAllowFileAccess(true);
         settings.setAllowContentAccess(true);
         settings.setAllowFileAccessFromFileURLs(false);
@@ -222,8 +219,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
                     userAgent));
         });
 
-        // Long-press on a link/image → host context menu (save link, ADR 0005).
-        // Touch listener only records the position; it never consumes the event.
+        // Long-press → host context menu (ADR 0005). Touch only records position.
         mWebView.setOnTouchListener((v, event) -> {
             mLastTouchX = event.getX();
             mLastTouchY = event.getY();
@@ -687,11 +683,8 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     }
 
     /**
-     * Resolve Content-Disposition/Content-Type for an explicit URL download
-     * (downloadUrl with no host-supplied name), then report it through the same
-     * nativeOnDownloadDetected path as the DownloadListener. Without the probe
-     * those downloads carry no metadata: the file lands as literal "download"
-     * and hosts cannot tell an image from a binary blob.
+     * HEAD-probe Content-Disposition/Type for unnamed downloadUrl, then the same
+     * nativeOnDownloadDetected path as DownloadListener.
      */
     public void probeDownload(final String url) {
         final String ua;
@@ -733,8 +726,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
             } catch (Exception e) {
                 Log.w(TAG, "probeDownload failed for " + url, e);
             }
-            // Empty metadata on failure — the download still proceeds; the
-            // policy falls back to naming from the URL.
+            // Probe failure: empty metadata; DownloadPolicy names from the URL.
             final String fDisposition = disposition;
             final String fMime = mime;
             final long fLength = length;
@@ -999,9 +991,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
                                                    String origin, boolean isMainFrame);
     private native void nativeOnNavigationStarted(long nativePtr, String url);
     /**
-     * Long-press hit-test. Links and images surface a host context menu
-     * (nativeOnLinkLongPressed) and consume the gesture, mirroring Chrome;
-     * anything else falls through to the platform behaviour (text selection).
+     * Link/image long-press: notify host and consume; else fall through (selection).
      */
     private boolean handleLongPress() {
         if (mWebView == null) {
@@ -1031,7 +1021,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
                 return true;
             }
             case WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE: {
-                // extra is the image src; the anchor href needs a focus-node request.
+                // SRC_IMAGE_ANCHOR: extra is img src; href via requestFocusNodeHref.
                 final Message hrefMsg = new Handler(Looper.getMainLooper()) {
                     @Override
                     public void handleMessage(Message m) {
