@@ -872,8 +872,16 @@ bool tryHandleInlineDownloadMessage(MobileWebViewBackend *backend, const QString
 
     // Consumed either way — never forward mwvDownload packets to WebChannel.
     if (backend) {
-        backend->beginInlineDownload(
-            envelope->url, envelope->fileName, envelope->mimeType, envelope->base64);
+        // URL-only envelope (no payload): http(s) <a download> click, which the
+        // native WebViews ignore. Route through the ordinary Download path —
+        // isSupportedUrl re-checks the scheme, page input is untrusted.
+        if (envelope->base64.isEmpty()
+                && MobileWebView::DownloadPolicy::isSupportedUrl(envelope->url)) {
+            backend->downloadUrl(envelope->url, envelope->fileName);
+        } else {
+            backend->beginInlineDownload(
+                envelope->url, envelope->fileName, envelope->mimeType, envelope->base64);
+        }
     }
     return true;
 }
