@@ -317,11 +317,9 @@ final class DownloadFetcher {
             if (!file.exists()) {
                 return;
             }
-            // Hosts download into app-private storage, which MediaScanner cannot
-            // index — the system Downloads UI stayed empty. On Q+ publish a copy
-            // through MediaStore.Downloads instead (the host keeps opening its own
-            // private file). Pre-Q keeps the scan: reaching public storage there
-            // would need WRITE_EXTERNAL_STORAGE.
+            // App-private paths aren't MediaStore-indexable. Q+: copy into
+            // MediaStore.Downloads for the system UI (host still opens its file).
+            // Pre-Q: scan only — public write needs WRITE_EXTERNAL_STORAGE.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 publishToMediaStoreDownloads(file, context, mime);
                 return;

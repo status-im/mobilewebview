@@ -111,10 +111,8 @@
     return null;
   }
 
-  // Same-origin http(s) <a download>: WebView/WKWebView ignore the download
-  // attribute and would render the target (media plays in the tab instead of
-  // saving). Post a URL-only envelope (no base64) — native fetches it through
-  // the ordinary Download path. Cross-origin keeps navigating, like Chrome.
+  // Same-origin http(s) <a download>: native ignores the attribute — post a
+  // URL-only envelope for the Download path. Cross-origin: navigate (Chrome-like).
   function handleHttpUrl(a, href, fileName) {
     try {
       if (a.origin !== window.location.origin)
@@ -146,7 +144,7 @@
       return;
 
     if (isHttp) {
-      // Empty download attribute → let native DownloadPolicy name it from the URL.
+      // Empty download attr → DownloadPolicy names from URL.
       if (handleHttpUrl(a, href, a.getAttribute('download') || '')) {
         ev.preventDefault();
         ev.stopPropagation();

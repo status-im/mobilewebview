@@ -30,8 +30,7 @@ void InlineDownloadMessageTest::parseValidEnvelope()
 
 void InlineDownloadMessageTest::parseUrlOnlyEnvelope()
 {
-    // http(s) <a download> click: no payload — the handler routes an empty-base64
-    // envelope to downloadUrl instead of the Inline Download path.
+    // Empty base64 → downloadUrl path, not Inline Download.
     const QString json =
         QStringLiteral("{\"mwvDownload\":true,\"url\":\"https://example.com/sample.mp3\","
                        "\"fileName\":\"\"}");

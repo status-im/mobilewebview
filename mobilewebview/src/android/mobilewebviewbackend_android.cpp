@@ -990,9 +990,7 @@ void AndroidWebViewPrivate::setHttpUserAgentImpl(const QString &userAgent)
 void AndroidWebViewPrivate::requestUrlDownloadImpl(const QUrl &url,
                                                    const QString &suggestedFileName)
 {
-    // Host-named downloads skip the probe: the name is decided, metadata would
-    // only confirm it. Unnamed ones resolve headers first so DownloadPolicy can
-    // name and type the file (falls back to the plain path on any JNI gap).
+    // Named: detect immediately. Unnamed: HEAD-probe first (JNI miss → plain path).
     if (!suggestedFileName.isEmpty()) {
         MobileWebViewBackendPrivate::requestUrlDownloadImpl(url, suggestedFileName);
         return;
@@ -1181,8 +1179,7 @@ void AndroidWebViewPrivate::onWebMessageReceived(const QString &message, const Q
 void AndroidWebViewPrivate::onLinkLongPressedPx(const QUrl &linkUrl, const QUrl &imageUrl,
                                                 QPointF posPx)
 {
-    // Java reports WebView-local physical px; the native view mirrors the item's
-    // geometry (syncNativeGeometryFromScene), so logical = px / dpr.
+    // Physical WebView px → logical (view matches item geometry; ÷ dpr).
     qreal dpr = 1.0;
     if (QQuickWindow *win = q_ptr->window())
         dpr = win->devicePixelRatio();

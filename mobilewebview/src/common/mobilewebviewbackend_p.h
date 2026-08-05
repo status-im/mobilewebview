@@ -119,10 +119,8 @@ public:
     // =========================================================================
     virtual void startDownloadImpl(quint64 downloadId, const QUrl &url,
                                    const QString &destinationPath);
-    /// Explicit downloadUrl() entry. Default detects immediately with the given
-    /// name and no metadata; platforms may first resolve response headers when
-    /// the host supplied no name (Android probes; the raw URL names files
-    /// "download" and hides their type from the host).
+    /// downloadUrl() entry. Default: detect with given name, no metadata.
+    /// Platforms may probe headers when name is empty (Android).
     virtual void requestUrlDownloadImpl(const QUrl &url, const QString &suggestedFileName)
     {
         onDownloadDetected(url, suggestedFileName, QString(), QString(), -1);
@@ -164,8 +162,7 @@ public:
                                           const QString &mimeType,
                                           qint64 totalBytes);
     void emitDownloadRequested(MobileWebViewDownload *download);
-    /// Long-press on a link/image (Qt thread). \a logicalPos is item-local
-    /// logical px — platform code converts from physical px before calling.
+    /// Link/image long-press (Qt thread). \a logicalPos: item-local logical px.
     void emitLinkLongPressed(const QUrl &linkUrl, const QUrl &imageUrl, QPointF logicalPos);
     MobileWebViewDownload *onDownloadDetected(const QUrl &url,
                                               const QString &platformSuggestion,
