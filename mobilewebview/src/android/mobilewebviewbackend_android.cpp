@@ -92,6 +92,7 @@ public:
     // Callback handlers (called from JNI)
     void onWebMessageReceived(const QString &message, const QString &origin, bool isMainFrame);
     void onLinkLongPressedPx(const QUrl &linkUrl, const QUrl &imageUrl, QPointF posPx);
+    void requestUrlDownloadImpl(const QUrl &url, const QString &suggestedFileName) override;
     void onNavigationStarted(const QString &url);
     void onNavigationFinished(const QString &url);
     void onNavigationFailed();
@@ -135,6 +136,7 @@ private:
     jmethodID m_stopFindMethod = nullptr;
     jmethodID m_captureSnapshotForFreezeMethod = nullptr;
     jmethodID m_startDownloadMethod = nullptr;
+    jmethodID m_probeDownloadMethod = nullptr;
     jmethodID m_cancelDownloadMethod = nullptr;
     jmethodID m_pauseDownloadMethod = nullptr;
     jmethodID m_resumeDownloadMethod = nullptr;
@@ -233,6 +235,8 @@ bool AndroidWebViewPrivate::initNativeView()
     m_captureSnapshotForFreezeMethod = env->GetMethodID(m_webViewClass, "captureSnapshotForFreeze", "(J)V");
     m_startDownloadMethod = env->GetMethodID(m_webViewClass, "startDownload",
         "(JLjava/lang/String;Ljava/lang/String;)V");
+    m_probeDownloadMethod = env->GetMethodID(m_webViewClass, "probeDownload",
+        "(Ljava/lang/String;)V");
     m_cancelDownloadMethod = env->GetMethodID(m_webViewClass, "cancelDownload", "(J)V");
     m_pauseDownloadMethod = env->GetMethodID(m_webViewClass, "pauseDownload", "(J)V");
     m_resumeDownloadMethod = env->GetMethodID(m_webViewClass, "resumeDownload", "(J)V");
@@ -981,6 +985,35 @@ void AndroidWebViewPrivate::setHttpUserAgentImpl(const QString &userAgent)
         env->DeleteLocalRef(jUserAgent);
     }
     clearJniExceptionIfAny(env);
+}
+
+void AndroidWebViewPrivate::requestUrlDownloadImpl(const QUrl &url,
+                                                   const QString &suggestedFileName)
+{
+    // Host-named downloads skip the probe: the name is decided, metadata would
+    // only confirm it. Unnamed ones resolve headers first so DownloadPolicy can
+    // name and type the file (falls back to the plain path on any JNI gap).
+    if (!suggestedFileName.isEmpty()) {
+        MobileWebViewBackendPrivate::requestUrlDownloadImpl(url, suggestedFileName);
+        return;
+    }
+
+    {
+        QMutexLocker locker(&m_jniMutex);
+        if (m_jniInitialized && m_webViewObject && m_probeDownloadMethod) {
+            QJniEnvironment env;
+            if (env.isValid()) {
+                jstring jUrl = env->NewStringUTF(url.toString().toUtf8().constData());
+                env->CallVoidMethod(m_webViewObject, m_probeDownloadMethod, jUrl);
+                if (jUrl)
+                    env->DeleteLocalRef(jUrl);
+                clearJniExceptionIfAny(env);
+                return;
+            }
+        }
+    }
+
+    MobileWebViewBackendPrivate::requestUrlDownloadImpl(url, suggestedFileName);
 }
 
 void AndroidWebViewPrivate::startDownloadImpl(quint64 downloadId, const QUrl &url,

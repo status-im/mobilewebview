@@ -923,7 +923,7 @@ void MobileWebViewBackend::reportDownloadFinished(quint64 downloadId,
 void MobileWebViewBackend::downloadUrl(const QUrl &url, const QString &suggestedFileName)
 {
     Q_D(MobileWebViewBackend);
-    d->onDownloadDetected(url, suggestedFileName, QString(), QString(), -1);
+    d->requestUrlDownloadImpl(url, suggestedFileName);
 }
 
 bool MobileWebViewBackend::interactionEnabled() const
