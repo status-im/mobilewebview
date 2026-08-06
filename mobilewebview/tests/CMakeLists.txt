@@ -80,27 +80,28 @@ target_link_libraries(tst_freezecontroller PRIVATE
 )
 add_test(NAME tst_freezecontroller COMMAND tst_freezecontroller)
 
-if(APPLE)
-    add_executable(tst_downloadregistry
-        tst_downloadregistry.cpp
-        ../include/MobileWebView/mobilewebviewdownload.h
-        ../src/common/downloadregistry.cpp
-        ../src/common/downloadpolicy.cpp
-        ../src/common/mobilewebviewdownload.cpp
-        ../src/common/inlinedownloadcodec.cpp
-        ../src/common/inlinedownloadwriter.cpp
-    )
-    target_include_directories(tst_downloadregistry PRIVATE
-        ../include
-        ../src/common
-    )
-    target_link_libraries(tst_downloadregistry PRIVATE
-        Qt::Core
-        Qt::Qml
-        Qt::Test
-    )
-    add_test(NAME tst_downloadregistry COMMAND tst_downloadregistry)
-endif()
+# Platform-independent: MOBILEWEBVIEW_FORCE_DOWNLOAD_TYPES opens the download
+# types on hosts without a mobile backend, so Linux CI runs this suite too.
+add_executable(tst_downloadregistry
+    tst_downloadregistry.cpp
+    ../include/MobileWebView/mobilewebviewdownload.h
+    ../src/common/downloadregistry.cpp
+    ../src/common/downloadpolicy.cpp
+    ../src/common/mobilewebviewdownload.cpp
+    ../src/common/inlinedownloadcodec.cpp
+    ../src/common/inlinedownloadwriter.cpp
+)
+target_compile_definitions(tst_downloadregistry PRIVATE MOBILEWEBVIEW_FORCE_DOWNLOAD_TYPES)
+target_include_directories(tst_downloadregistry PRIVATE
+    ../include
+    ../src/common
+)
+target_link_libraries(tst_downloadregistry PRIVATE
+    Qt::Core
+    Qt::Qml
+    Qt::Test
+)
+add_test(NAME tst_downloadregistry COMMAND tst_downloadregistry)
 
 add_executable(tst_webchanneltransport
     tst_webchanneltransport.cpp

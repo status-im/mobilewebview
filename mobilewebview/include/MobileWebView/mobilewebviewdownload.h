@@ -6,7 +6,10 @@
 
 #include <functional>
 
-#if defined(Q_OS_ANDROID) || defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+// MOBILEWEBVIEW_FORCE_DOWNLOAD_TYPES lets platform-independent unit tests
+// (tst_downloadregistry) compile these types on hosts without a mobile backend.
+#if defined(Q_OS_ANDROID) || defined(Q_OS_MACOS) || defined(Q_OS_IOS) \
+    || defined(MOBILEWEBVIEW_FORCE_DOWNLOAD_TYPES)
 
 /// One Download for its full lifecycle: Requested → InProgress → terminal state.
 /// Created only by MobileWebViewBackend; surfaced via downloadRequested().
