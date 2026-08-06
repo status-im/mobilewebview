@@ -23,6 +23,13 @@ SOURCES=(
   "$JVM_SHADOW/androidx/webkit/WebStorageCompat.java"
   "$JVM_SHADOW/androidx/webkit/Profile.java"
   "$JVM_SHADOW/androidx/webkit/ProfileStore.java"
+  "$JVM_SHADOW/android/net/Uri.java"
+  "$JVM_SHADOW/android/content/ContentResolver.java"
+  "$JVM_SHADOW/android/content/ContentValues.java"
+  "$JVM_SHADOW/android/media/MediaScannerConnection.java"
+  "$JVM_SHADOW/android/os/Build.java"
+  "$JVM_SHADOW/android/os/Environment.java"
+  "$JVM_SHADOW/android/provider/MediaStore.java"
   "$ANDROID_SRC/WebViewProfileManager.java"
   "$ANDROID_SRC/DataClearManager.java"
   "$ANDROID_SRC/OriginUtils.java"
@@ -35,6 +42,9 @@ SOURCES=(
   "$ANDROID_SRC/BridgeScriptInjector.java"
   "$ANDROID_SRC/RangeFetchPolicy.java"
   "$ANDROID_SRC/DownloadProbe.java"
+  "$ANDROID_SRC/DownloadIo.java"
+  "$ANDROID_SRC/DownloadMediaStore.java"
+  "$ANDROID_SRC/DownloadFetcher.java"
   "$ANDROID_TEST/OriginUtilsTest.java"
   "$ANDROID_TEST/BridgeScriptBuilderTest.java"
   "$ANDROID_TEST/MobileWebViewPendingActionsTest.java"
@@ -46,6 +56,7 @@ SOURCES=(
   "$ANDROID_TEST/DataClearManagerTest.java"
   "$ANDROID_TEST/RangeFetchPolicyTest.java"
   "$ANDROID_TEST/DownloadProbeTest.java"
+  "$ANDROID_TEST/DownloadFetcherRaceTest.java"
 )
 
 echo "Compiling Java tests..."
@@ -61,6 +72,7 @@ TESTS=(
   org.mobilewebview.DataClearManagerTest
   org.mobilewebview.RangeFetchPolicyTest
   org.mobilewebview.DownloadProbeTest
+  org.mobilewebview.DownloadFetcherRaceTest
 )
 
 for test in "${TESTS[@]}"; do

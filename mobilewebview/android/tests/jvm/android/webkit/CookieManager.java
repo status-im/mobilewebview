@@ -17,6 +17,10 @@ public final class CookieManager {
         return sInstance;
     }
 
+    public String getCookie(String url) {
+        return null;
+    }
+
     public void flush() {
         ++sFlushCount;
     }
