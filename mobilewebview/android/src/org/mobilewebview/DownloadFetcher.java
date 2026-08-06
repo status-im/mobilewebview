@@ -44,6 +44,9 @@ final class DownloadFetcher {
         volatile State state = State.RUNNING;
         volatile long offset = 0L;
         volatile Future<?> future;
+        // Bumped by every startFetch; a worker whose generation is stale has been
+        // superseded (pause→resume race) and must neither clean up nor report.
+        volatile long generation = 0L;
 
         Session(String url, String destination, String userAgent, boolean offTheRecord) {
             this.url = url;
@@ -133,9 +136,10 @@ final class DownloadFetcher {
 
     private void startFetch(long downloadId, Session session, Context context) {
         session.state = State.RUNNING;
+        final long generation = ++session.generation;
         Future<?> future = mExecutor.submit(() -> {
             try {
-                fetch(downloadId, session, context);
+                fetch(downloadId, session, generation, context);
             } finally {
                 if (session.future != null) {
                     session.future = null;
@@ -145,13 +149,16 @@ final class DownloadFetcher {
         session.future = future;
     }
 
-    private void fetch(long downloadId, Session session, Context context) {
+    private void fetch(long downloadId, Session session, long generation, Context context) {
         HttpURLConnection conn = null;
         OutputStream out = null;
         try {
             URL current = new URL(session.url);
             int redirects = 0;
             while (true) {
+                if (session.generation != generation) {
+                    return; // superseded — the newer worker owns the session and the file
+                }
                 if (session.state != State.RUNNING || Thread.interrupted()) {
                     if (session.shouldCleanupPartial()) {
                         DownloadIo.cleanupPartial(session.destination, context);
@@ -216,6 +223,9 @@ final class DownloadFetcher {
                 long lastNotify = 0;
                 int n;
                 while ((n = in.read(buf)) != -1) {
+                    if (session.generation != generation) {
+                        return; // superseded — hands off the session and the file
+                    }
                     if (session.state != State.RUNNING || Thread.interrupted()) {
                         if (session.shouldCleanupPartial()) {
                             DownloadIo.cleanupPartial(session.destination, context);
@@ -231,9 +241,15 @@ final class DownloadFetcher {
                         lastNotify = now;
                     }
                 }
+                if (session.generation != generation) {
+                    return; // superseded on clean EOF — no stale progress or completion
+                }
                 mCallbacks.onProgress(downloadId, received, total >= 0 ? total : received);
             }
 
+            if (session.generation != generation) {
+                return; // superseded mid-write — the newer worker reports for this id
+            }
             if (!session.offTheRecord) {
                 DownloadMediaStore.registerCompleted(
                         session.destination, context, conn.getContentType());
@@ -241,6 +257,11 @@ final class DownloadFetcher {
             mSessions.remove(downloadId);
             mCallbacks.onFinished(downloadId, true, null);
         } catch (Exception e) {
+            if (session.generation != generation) {
+                // Pause→resume race: our interrupt exception must not delete the
+                // partial file or report failure for the download the new worker owns.
+                return;
+            }
             if (session.state == State.PAUSING) {
                 return;
             }
