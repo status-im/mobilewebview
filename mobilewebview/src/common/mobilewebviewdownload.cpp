@@ -1,6 +1,7 @@
 #include "MobileWebView/mobilewebviewdownload.h"
 
-#if defined(Q_OS_ANDROID) || defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if defined(Q_OS_ANDROID) || defined(Q_OS_MACOS) || defined(Q_OS_IOS) \
+    || defined(MOBILEWEBVIEW_FORCE_DOWNLOAD_TYPES)
 
 MobileWebViewDownload::MobileWebViewDownload(quint64 id,
                                              const QUrl &url,
