@@ -1,4 +1,5 @@
 #include "MobileWebView/mobilewebviewbackend.h"
+#include "MobileWebView/mobilewebviewcapabilities.h"
 #include "../common/mobilewebviewbackend_p.h"
 #include "../common/origin_utils.h"
 #include "../common/storage_profile_utils.h"
@@ -219,6 +220,7 @@ public:
     bool hasNativeFindPanelImpl() const override;
     void showFindPanelImpl() override;
     void hideFindPanelImpl() override;
+    bool inPageMediaPlaybackSupportedImpl() const override;
     void captureSnapshotImpl(quint64 requestId) override;
     void detachNativeViewFromSceneImpl() override;
     void startDownloadImpl(quint64 downloadId, const QUrl &url,
@@ -847,6 +849,11 @@ void DarwinWebViewPrivate::hideFindPanelImpl()
         }
     });
 #endif
+}
+
+bool DarwinWebViewPrivate::inPageMediaPlaybackSupportedImpl() const
+{
+    return MobileWebViewCapabilities::isInPageMediaPlaybackSupported();
 }
 
 void DarwinWebViewPrivate::updateInteractionEnabled(bool enabled)

@@ -7,6 +7,7 @@
 #include <qqml.h>
 
 #include "MobileWebView/mobilewebviewbackend.h"
+#include "MobileWebView/mobilewebviewcapabilities.h"
 #include "MobileWebView/mobilewebviewdownload.h"
 #include "agentcontrol.h"
 #include "downloadtestsupport.h"
@@ -24,6 +25,11 @@ int main(int argc, char *argv[])
 {
     QGuiApplication app(argc, argv);
     qmlRegisterType<MobileWebViewBackend>("MobileWebView", 1, 0, "MobileWebViewBackend");
+    // Capabilities are process facts, so QML reads them off a singleton and
+    // never needs a MobileWebViewBackend to ask.
+    qmlRegisterSingletonType<MobileWebViewCapabilities>(
+        "MobileWebView", 1, 0, "MobileWebViewCapabilities",
+        [](QQmlEngine *, QJSEngine *) -> QObject * { return new MobileWebViewCapabilities; });
     qmlRegisterUncreatableType<MobileWebViewDownload>(
         "MobileWebView", 1, 0, "MobileWebViewDownload",
         QStringLiteral("Created by MobileWebViewBackend via downloadRequested"));

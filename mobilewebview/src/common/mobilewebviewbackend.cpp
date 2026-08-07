@@ -1002,6 +1002,12 @@ bool MobileWebViewBackend::clearSiteDataSupported() const
     return d->clearSiteDataSupportedImpl();
 }
 
+bool MobileWebViewBackend::inPageMediaPlaybackSupported() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->inPageMediaPlaybackSupportedImpl();
+}
+
 bool MobileWebViewBackend::freeze() const
 {
     Q_D(const MobileWebViewBackend);
