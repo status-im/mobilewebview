@@ -1,4 +1,5 @@
 #include "MobileWebView/mobilewebviewbackend.h"
+#include "MobileWebView/mobilewebviewcapabilities.h"
 #include "../common/mobilewebviewbackend_p.h"
 #include "../common/inlinedownloadcodec.h"
 #include "../common/inlinedownloadmessage.h"
@@ -69,6 +70,7 @@ public:
     bool findSupportedImpl() const override;
     // hasNativeFindPanelImpl/showFindPanelImpl/hideFindPanelImpl: base-class
     // defaults (false / no-op) — the QML find panel is used on Android.
+    bool inPageMediaPlaybackSupportedImpl() const override;
     void captureSnapshotImpl(quint64 requestId) override;
     void detachNativeViewFromSceneImpl() override;
     void startDownloadImpl(quint64 downloadId, const QUrl &url,
@@ -1132,6 +1134,11 @@ void AndroidWebViewPrivate::stopFindImpl()
 bool AndroidWebViewPrivate::findSupportedImpl() const
 {
     return true;
+}
+
+bool AndroidWebViewPrivate::inPageMediaPlaybackSupportedImpl() const
+{
+    return MobileWebViewCapabilities::isInPageMediaPlaybackSupported();
 }
 
 void AndroidWebViewPrivate::captureSnapshotImpl(quint64 requestId)

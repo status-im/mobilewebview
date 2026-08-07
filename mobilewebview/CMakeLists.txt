@@ -41,8 +41,10 @@ endif()
 
 set(MOBILEWEBVIEW_COMMON_SOURCES
     include/MobileWebView/mobilewebviewbackend.h
+    include/MobileWebView/mobilewebviewcapabilities.h
     include/MobileWebView/mobilewebviewdownload.h
     src/common/mobilewebviewbackend.cpp
+    src/common/mobilewebviewcapabilities.cpp
     src/common/mobilewebviewdownload.cpp
     src/common/mobilewebviewbackend_p.h
     src/common/snapshotitem.h
@@ -76,6 +78,7 @@ set(MOBILEWEBVIEW_COMMON_SOURCES
 
 set(MOBILEWEBVIEW_DARWIN_SOURCES
     src/darwin/mobilewebviewbackend_darwin.mm
+    src/darwin/mobilewebviewcapabilities_darwin.mm
     src/darwin/navigationdelegate.h
     src/darwin/navigationdelegate.mm
     src/darwin/downloaddelegate.h
@@ -115,6 +118,7 @@ elseif(CMAKE_SYSTEM_NAME MATCHES "iOS")
 elseif(CMAKE_SYSTEM_NAME MATCHES "Android")
     list(APPEND MOBILEWEBVIEW_PLATFORM_SOURCES
         src/android/mobilewebviewbackend_android.cpp
+        src/android/mobilewebviewcapabilities_android.cpp
     )
 endif()
 

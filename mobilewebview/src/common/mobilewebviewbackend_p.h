@@ -126,6 +126,13 @@ public:
     virtual void hideFindPanelImpl() {}
 
     // =========================================================================
+    // Optional capability: in-page media playback. Default: unsupported.
+    // Overrides answer from MobileWebViewCapabilities so the instance property
+    // and the static accessor cannot drift apart.
+    // =========================================================================
+    virtual bool inPageMediaPlaybackSupportedImpl() const { return false; }
+
+    // =========================================================================
     // Optional capability: downloads (ADR 0005).
     // Platform performs the transfer after host accept(). Default
     // startDownloadImpl immediately reports the download as Interrupted.
