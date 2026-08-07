@@ -103,6 +103,19 @@ public:
     virtual bool clearSiteDataSupportedImpl() const { return false; }
 
     // =========================================================================
+    // Optional capability: local file loads.
+    // Default: a plain loadUrlImpl(), which is correct for engines that accept
+    // a top-level file:// through the normal load path (Android WebView, with
+    // setAllowFileAccess(true) and "file" in WebViewUrlPolicy). WKWebView
+    // ignores file:// URLs passed to -loadRequest: (no sandbox extension
+    // reaches the WebContent process), so Darwin overrides this with
+    // -loadFileURL:allowingReadAccessToURL:.
+    // \a readAccessDirUrl is a directory, already resolved by loadFileUrl() to
+    // the file's own directory when the caller passed an empty URL.
+    // =========================================================================
+    virtual void loadFileUrlImpl(const QUrl &fileUrl, const QUrl &readAccessDirUrl);
+
+    // =========================================================================
     // Optional capability: find-in-page. Defaults: unsupported, no-ops.
     // =========================================================================
     virtual void findTextImpl(const QString &, int) {}
@@ -218,6 +231,12 @@ public:
     bool m_hasLastHtml = false;
     QString m_lastHtml;
     QUrl m_lastHtmlBaseUrl;
+    // Last local-file load, replayed through loadFileUrlImpl (never as a plain
+    // URL load, which iOS drops for file://) after a store recreate or a
+    // native-view rebuild. Cleared as soon as the view leaves that file.
+    bool m_hasLastFileUrl = false;
+    QUrl m_lastFileUrl;
+    QUrl m_lastFileReadAccessUrl;
     QUrl m_url;
     QString m_title;
     bool m_canGoBack = false;

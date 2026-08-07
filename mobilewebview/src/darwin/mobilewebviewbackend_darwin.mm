@@ -187,6 +187,7 @@ public:
     bool initNativeView() override;
     void destroyNativeView() override;
     void loadUrlImpl(const QUrl &url) override;
+    void loadFileUrlImpl(const QUrl &fileUrl, const QUrl &readAccessDirUrl) override;
     void loadHtmlImpl(const QString &html, const QUrl &baseUrl) override;
     void goBackImpl() override;
     void goForwardImpl() override;
@@ -404,6 +405,29 @@ void DarwinWebViewPrivate::loadUrlImpl(const QUrl &url)
     runOnMainThread(^{
         NSURLRequest *request = [NSURLRequest requestWithURL:nsUrl];
         [webView loadRequest:request];
+    });
+}
+
+void DarwinWebViewPrivate::loadFileUrlImpl(const QUrl &fileUrl, const QUrl &readAccessDirUrl)
+{
+    if (!m_webView) {
+        qWarning() << "DarwinWebViewPrivate: webView is null";
+        return;
+    }
+
+    WKWebView *webView = m_webView;
+    NSURL *nsFileUrl = fileUrl.toNSURL();
+    // -loadRequest: is not usable here: since iOS 13 WKWebView drops file://
+    // requests because no sandbox extension is issued to the WebContent
+    // process, so the load never happens and the view stays blank.
+    // -loadFileURL:allowingReadAccessToURL: issues that extension for the
+    // read-access directory.
+    NSURL *nsReadAccessUrl = (readAccessDirUrl.isValid() && !readAccessDirUrl.isEmpty())
+                                 ? readAccessDirUrl.toNSURL()
+                                 : [nsFileUrl URLByDeletingLastPathComponent];
+
+    runOnMainThread(^{
+        [webView loadFileURL:nsFileUrl allowingReadAccessToURL:nsReadAccessUrl];
     });
 }
 
@@ -962,6 +986,8 @@ void DarwinWebViewPrivate::setupNativeViewImpl()
         ensureBridgeInstalled();
         if (m_hasLastHtml) {
             loadHtmlImpl(m_lastHtml, m_lastHtmlBaseUrl);
+        } else if (m_hasLastFileUrl) {
+            loadFileUrlImpl(m_lastFileUrl, m_lastFileReadAccessUrl);
         } else if (m_url.isValid() && !m_url.isEmpty()) {
             loadUrlImpl(m_url);
         }
