@@ -13,6 +13,7 @@
 
 #include <QUuid>
 #include <QDebug>
+#include <QFileInfo>
 #include <QMutex>
 #include <QMutexLocker>
 #include <QPointer>
@@ -192,6 +193,16 @@ void MobileWebViewBackendPrivate::clearSiteDataImpl(const QString &origin,
     }
 }
 
+// Default local-file load: a plain URL load. Engines that accept a top-level
+// file:// through the normal load path (Android WebView) need nothing more;
+// the read-access directory has no equivalent there. Darwin overrides.
+void MobileWebViewBackendPrivate::loadFileUrlImpl(const QUrl &fileUrl,
+                                                  const QUrl &readAccessDirUrl)
+{
+    Q_UNUSED(readAccessDirUrl)
+    loadUrlImpl(fileUrl);
+}
+
 // Default download implementation: report the download as Interrupted via the
 // same onDownloadFinished path platforms use, queued so the host sees the
 // InProgress -> Interrupted transition after accept() returns.
@@ -330,6 +341,17 @@ void MobileWebViewBackendPrivate::updateUrlState(const QUrl &url)
     const QString prevOrigin = extractOrigin(m_url);
     const QString newOrigin = extractOrigin(url);
     m_url = url;
+    // Keep the file-load replay pointing at whatever the view actually shows:
+    // a navigation to another local file stays a file load (the granted
+    // directory still covers it); leaving file:// drops the recorded load so a
+    // later recreate replays the live URL instead of the stale file.
+    if (m_hasLastFileUrl && m_lastFileUrl != url) {
+        if (url.isLocalFile()) {
+            m_lastFileUrl = url;
+        } else {
+            m_hasLastFileUrl = false;
+        }
+    }
     emit q_ptr->urlChanged();
 
     if (!newOrigin.isEmpty() && newOrigin != prevOrigin) {
@@ -509,6 +531,8 @@ void MobileWebViewBackendPrivate::recreateNativeViewForStore()
 
     if (m_hasLastHtml) {
         loadHtmlImpl(m_lastHtml, m_lastHtmlBaseUrl);
+    } else if (m_hasLastFileUrl) {
+        loadFileUrlImpl(m_lastFileUrl, m_lastFileReadAccessUrl);
     } else if (urlToReload.isValid() && !urlToReload.isEmpty()) {
         loadUrlImpl(urlToReload);
     }
@@ -716,6 +740,8 @@ void MobileWebViewBackend::setUrl(const QUrl &url)
     Q_D(MobileWebViewBackend);
     if (d->m_url != url) {
         d->m_url = url;
+        // A plain URL load supersedes any recorded local-file load.
+        d->m_hasLastFileUrl = false;
         emit urlChanged();
 
         QString origin = extractOrigin(url);
@@ -1095,6 +1121,7 @@ void MobileWebViewBackend::loadUrl(const QUrl &url)
     }
 
     d->m_hasLastHtml = false;
+    d->m_hasLastFileUrl = false;
     // Record the requested URL so it survives an internal store recreate (and a
     // deferred native-view setup), matching setUrl() and loadHtml() replay semantics.
     if (d->m_url != url) {
@@ -1103,6 +1130,47 @@ void MobileWebViewBackend::loadUrl(const QUrl &url)
     }
     d->ensureBridgeInstalled();
     d->loadUrlImpl(url);
+}
+
+void MobileWebViewBackend::loadFileUrl(const QUrl &fileUrl, const QUrl &readAccessUrl)
+{
+    Q_D(MobileWebViewBackend);
+
+    if (!fileUrl.isValid() || !fileUrl.isLocalFile()) {
+        qWarning() << "MobileWebViewBackend::loadFileUrl: not a local file URL:" << fileUrl;
+        return;
+    }
+    if (!readAccessUrl.isEmpty() && !readAccessUrl.isLocalFile()) {
+        qWarning() << "MobileWebViewBackend::loadFileUrl: read-access URL is not a local"
+                      " directory URL:" << readAccessUrl;
+        return;
+    }
+
+    // Empty read access = the file's own directory: the narrowest grant that
+    // still lets the page (and its sibling resources) load.
+    const QUrl readAccessDirUrl =
+        readAccessUrl.isEmpty()
+            ? QUrl::fromLocalFile(QFileInfo(fileUrl.toLocalFile()).absolutePath())
+            : readAccessUrl;
+
+    QString origin = extractOrigin(fileUrl);
+    if (!origin.isEmpty()) {
+        updateAllowedOrigins({origin});
+    }
+
+    // Record the file load so a store recreate or native-view rebuild replays it
+    // through the file path; a plain loadUrlImpl() replay would blank the tab on
+    // iOS, where -loadRequest: ignores file:// URLs.
+    d->m_hasLastHtml = false;
+    d->m_hasLastFileUrl = true;
+    d->m_lastFileUrl = fileUrl;
+    d->m_lastFileReadAccessUrl = readAccessDirUrl;
+    if (d->m_url != fileUrl) {
+        d->m_url = fileUrl;
+        emit urlChanged();
+    }
+    d->ensureBridgeInstalled();
+    d->loadFileUrlImpl(fileUrl, readAccessDirUrl);
 }
 
 void MobileWebViewBackend::loadHtml(const QString &html, const QUrl &baseUrl)

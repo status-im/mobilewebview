@@ -464,6 +464,11 @@ jobjectArray AndroidWebViewPrivate::createJavaStringArray(QJniEnvironment &env, 
     return array;
 }
 
+// loadFileUrlImpl is deliberately not overridden here: Android WebView loads a
+// top-level file:// through this very path (MobileWebView.setupWebView enables
+// setAllowFileAccess, and WebViewUrlPolicy lists "file" as supported), and it
+// has no read-access-directory concept to honour. The base default forwards to
+// loadUrlImpl, which is exactly what this platform needs.
 void AndroidWebViewPrivate::loadUrlImpl(const QUrl &url)
 {
     QMutexLocker locker(&m_jniMutex);
@@ -899,6 +904,8 @@ void AndroidWebViewPrivate::setupNativeViewImpl()
         ensureBridgeInstalled();
         if (m_hasLastHtml) {
             loadHtmlImpl(m_lastHtml, m_lastHtmlBaseUrl);
+        } else if (m_hasLastFileUrl) {
+            loadFileUrlImpl(m_lastFileUrl, m_lastFileReadAccessUrl);
         } else if (m_url.isValid() && !m_url.isEmpty()) {
             loadUrlImpl(m_url);
         }

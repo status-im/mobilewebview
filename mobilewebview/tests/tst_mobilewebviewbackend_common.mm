@@ -2,6 +2,7 @@
 
 #include <QCoreApplication>
 #include <QFile>
+#include <QFileInfo>
 #include <QPointer>
 #include <QQuickView>
 #include <QQuickWindow>
@@ -43,6 +44,13 @@ public:
     {
         ++loadUrlCalls;
         lastLoadedUrl = url;
+    }
+
+    void loadFileUrlImpl(const QUrl &fileUrl, const QUrl &readAccessDirUrl) override
+    {
+        ++loadFileUrlCalls;
+        lastLoadedFileUrl = fileUrl;
+        lastFileReadAccessUrl = readAccessDirUrl;
     }
 
     void loadHtmlImpl(const QString &html, const QUrl &baseUrl) override
@@ -193,6 +201,7 @@ public:
     }
 
     int loadUrlCalls = 0;
+    int loadFileUrlCalls = 0;
     int loadHtmlCalls = 0;
     int goBackCalls = 0;
     int goForwardCalls = 0;
@@ -244,6 +253,8 @@ public:
     QStringList lastAllowedOrigins;
     QStringList lastBridgeOrigins;
     QUrl lastLoadedUrl;
+    QUrl lastLoadedFileUrl;
+    QUrl lastFileReadAccessUrl;
     QUrl lastHtmlBaseUrl;
     QRectF lastGeometry;
 };
@@ -285,6 +296,10 @@ private slots:
     void freezeAndRequestSnapshotAreIndependent();
     void offTheRecordChangeRecreatesNativeViewAndReloadsCurrentUrl();
     void loadUrlContentSurvivesStoreRecreate();
+    void loadFileUrlRejectsNonFileUrls();
+    void loadFileUrlDefaultsReadAccessToOwnDirectory();
+    void loadFileUrlContentSurvivesStoreRecreateAsFileLoad();
+    void loadFileUrlReplayDroppedAfterNavigatingAwayFromFile();
     void loadHtmlContentSurvivesStoreRecreate();
     void offTheRecordSameValueDoesNotRecreateNativeView();
     void storageNameChangeRecreatesNativeViewInStandardMode();
@@ -1013,6 +1028,116 @@ void MobileWebViewBackendCommonTest::loadUrlContentSurvivesStoreRecreate()
 
     QCOMPARE(d->loadUrlCalls, loadUrlBefore + 1);
     QCOMPARE(d->lastLoadedUrl, pageUrl);
+}
+
+void MobileWebViewBackendCommonTest::loadFileUrlRejectsNonFileUrls()
+{
+    // loadFileUrl() is the local-file entry point only; a remote URL must not
+    // silently fall through to a normal load (it would bypass the caller's
+    // intent and, on Darwin, hand a non-file URL to
+    // -loadFileURL:allowingReadAccessToURL:, which throws).
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+    auto *d = g_lastCreatedPrivate;
+
+    backend.loadFileUrl(QUrl(QStringLiteral("https://example.com/report.pdf")));
+    QCOMPARE(d->loadFileUrlCalls, 0);
+    QCOMPARE(d->loadUrlCalls, 0);
+    QVERIFY(backend.url().isEmpty());
+
+    backend.loadFileUrl(QUrl());
+    QCOMPARE(d->loadFileUrlCalls, 0);
+    QCOMPARE(d->loadUrlCalls, 0);
+
+    // A read-access URL that is not a local directory URL is rejected too, so a
+    // bad grant can never reach the platform.
+    backend.loadFileUrl(QUrl::fromLocalFile(QStringLiteral("/tmp/mwv/report.pdf")),
+                        QUrl(QStringLiteral("https://example.com/")));
+    QCOMPARE(d->loadFileUrlCalls, 0);
+    QCOMPARE(d->loadUrlCalls, 0);
+}
+
+void MobileWebViewBackendCommonTest::loadFileUrlDefaultsReadAccessToOwnDirectory()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+    auto *d = g_lastCreatedPrivate;
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString filePath = dir.filePath(QStringLiteral("clip.mp4"));
+    const QUrl fileUrl = QUrl::fromLocalFile(filePath);
+
+    QSignalSpy urlSpy(&backend, &MobileWebViewBackend::urlChanged);
+    backend.loadFileUrl(fileUrl);
+
+    QCOMPARE(d->loadFileUrlCalls, 1);
+    QCOMPARE(d->loadUrlCalls, 0);
+    QCOMPARE(d->lastLoadedFileUrl, fileUrl);
+    // Empty read access resolves to the file's own directory, not to the file.
+    QCOMPARE(d->lastFileReadAccessUrl,
+             QUrl::fromLocalFile(QFileInfo(filePath).absolutePath()));
+    QCOMPARE(backend.url(), fileUrl);
+    QCOMPARE(urlSpy.count(), 1);
+
+    // An explicit directory is passed through untouched.
+    const QUrl explicitDir = QUrl::fromLocalFile(dir.path());
+    backend.loadFileUrl(fileUrl, explicitDir);
+    QCOMPARE(d->loadFileUrlCalls, 2);
+    QCOMPARE(d->lastFileReadAccessUrl, explicitDir);
+}
+
+void MobileWebViewBackendCommonTest::loadFileUrlContentSurvivesStoreRecreateAsFileLoad()
+{
+    // A local file opened in the tab must be replayed through the file path
+    // after a store recreate. Degrading to loadUrlImpl() would blank the tab on
+    // iOS, where -loadRequest: ignores file:// URLs.
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+    auto *d = g_lastCreatedPrivate;
+
+    const QUrl fileUrl = QUrl::fromLocalFile(QStringLiteral("/tmp/mwv-downloads/clip.mp4"));
+    const QUrl readAccessDir = QUrl::fromLocalFile(QStringLiteral("/tmp/mwv-downloads"));
+    backend.loadFileUrl(fileUrl, readAccessDir);
+    d->m_nativeViewSetup = true;
+
+    const int loadFileUrlBefore = d->loadFileUrlCalls;
+    const int loadUrlBefore = d->loadUrlCalls;
+
+    backend.setOffTheRecord(true);
+
+    QCOMPARE(d->loadFileUrlCalls, loadFileUrlBefore + 1);
+    QCOMPARE(d->loadUrlCalls, loadUrlBefore);
+    QCOMPARE(d->lastLoadedFileUrl, fileUrl);
+    QCOMPARE(d->lastFileReadAccessUrl, readAccessDir);
+}
+
+void MobileWebViewBackendCommonTest::loadFileUrlReplayDroppedAfterNavigatingAwayFromFile()
+{
+    // Once the view leaves file://, the recorded file load is stale: a recreate
+    // must replay the live URL instead of reopening the old file.
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+    auto *d = g_lastCreatedPrivate;
+
+    backend.loadFileUrl(QUrl::fromLocalFile(QStringLiteral("/tmp/mwv-downloads/page.html")));
+    d->m_nativeViewSetup = true;
+
+    const QUrl webUrl(QStringLiteral("https://example.com/after"));
+    backend.updateUrlState(webUrl);
+
+    const int loadFileUrlBefore = d->loadFileUrlCalls;
+    const int loadUrlBefore = d->loadUrlCalls;
+
+    backend.setOffTheRecord(true);
+
+    QCOMPARE(d->loadFileUrlCalls, loadFileUrlBefore);
+    QCOMPARE(d->loadUrlCalls, loadUrlBefore + 1);
+    QCOMPARE(d->lastLoadedUrl, webUrl);
 }
 
 void MobileWebViewBackendCommonTest::loadHtmlContentSurvivesStoreRecreate()

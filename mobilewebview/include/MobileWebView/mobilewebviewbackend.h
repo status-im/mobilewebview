@@ -124,6 +124,30 @@ public:
 
 public slots:
     void loadUrl(const QUrl &url);
+
+    /// Load a local file (e.g. a finished download) as the top-level document.
+    ///
+    /// \a fileUrl must be a local file URL (file://); anything else is a no-op
+    /// with a warning. Use this instead of loadUrl()/url for local content:
+    /// iOS/macOS WKWebView silently ignores file:// URLs passed to
+    /// -loadRequest:, because no sandbox extension is handed to the WebContent
+    /// process, so the tab just stays blank.
+    ///
+    /// \a readAccessUrl is a DIRECTORY the web content is additionally granted
+    /// read access to — Apple: "To read additional files related to the content
+    /// file, specify a directory"
+    /// (https://developer.apple.com/documentation/webkit/wkwebview/loadfileurl(_:allowingreadaccessto:)).
+    /// An empty \a readAccessUrl means "the file's own directory", which is the
+    /// narrowest grant that still lets the page load. A non-empty
+    /// \a readAccessUrl must also be a local file URL; otherwise the call is a
+    /// no-op with a warning. Grant no more than the content needs: everything
+    /// under the directory becomes readable by the loaded page.
+    ///
+    /// The file load is recorded and replayed (through the same file path, not
+    /// as a plain URL load) when the native view is recreated — a storage
+    /// profile switch or a native-view rebuild does not blank the tab.
+    Q_INVOKABLE void loadFileUrl(const QUrl &fileUrl, const QUrl &readAccessUrl = QUrl());
+
     void loadHtml(const QString &html, const QUrl &baseUrl = QUrl());
     void goBack();
     void goForward();
