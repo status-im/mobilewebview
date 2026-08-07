@@ -100,6 +100,8 @@ public:
     virtual void deleteAllCookiesImpl(std::function<void()> completion);
     virtual void clearDomStorageImpl(std::function<void()> completion);
     virtual void clearSiteDataImpl(const QString &origin, std::function<void()> completion);
+    // Supported-ness is answered from MobileWebViewCapabilities, so the
+    // instance property and the static accessor cannot drift apart.
     virtual bool clearSiteDataSupportedImpl() const { return false; }
 
     // =========================================================================
@@ -117,6 +119,8 @@ public:
 
     // =========================================================================
     // Optional capability: find-in-page. Defaults: unsupported, no-ops.
+    // The two supported-ness overrides answer from MobileWebViewCapabilities,
+    // so the instance properties and the static accessors cannot drift apart.
     // =========================================================================
     virtual void findTextImpl(const QString &, int) {}
     virtual void stopFindImpl() {}

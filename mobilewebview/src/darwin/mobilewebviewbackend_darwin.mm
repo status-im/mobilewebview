@@ -558,7 +558,7 @@ void DarwinWebViewPrivate::clearSiteDataImpl(const QString &origin, std::functio
 
 bool DarwinWebViewPrivate::clearSiteDataSupportedImpl() const
 {
-    return true;
+    return MobileWebViewCapabilities::isClearSiteDataSupported();
 }
 
 void DarwinWebViewPrivate::stopImpl()
@@ -799,20 +799,12 @@ void DarwinWebViewPrivate::setHttpUserAgentImpl(const QString &userAgent)
 
 bool DarwinWebViewPrivate::findSupportedImpl() const
 {
-#ifdef Q_OS_IOS
-    return true;
-#else
-    return false;
-#endif
+    return MobileWebViewCapabilities::isFindSupported();
 }
 
 bool DarwinWebViewPrivate::hasNativeFindPanelImpl() const
 {
-#ifdef Q_OS_IOS
-    return true;
-#else
-    return false;
-#endif
+    return MobileWebViewCapabilities::hasNativeFindPanel();
 }
 
 void DarwinWebViewPrivate::showFindPanelImpl()

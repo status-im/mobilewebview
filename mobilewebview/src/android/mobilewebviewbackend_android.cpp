@@ -68,8 +68,9 @@ public:
     void findTextImpl(const QString &text, int flags) override;
     void stopFindImpl() override;
     bool findSupportedImpl() const override;
-    // hasNativeFindPanelImpl/showFindPanelImpl/hideFindPanelImpl: base-class
-    // defaults (false / no-op) — the QML find panel is used on Android.
+    bool hasNativeFindPanelImpl() const override;
+    // showFindPanelImpl/hideFindPanelImpl: base-class no-ops — the QML find
+    // panel is used on Android.
     bool inPageMediaPlaybackSupportedImpl() const override;
     void captureSnapshotImpl(quint64 requestId) override;
     void detachNativeViewFromSceneImpl() override;
@@ -619,32 +620,7 @@ void AndroidWebViewPrivate::clearSiteDataImpl(const QString &origin, std::functi
 
 bool AndroidWebViewPrivate::clearSiteDataSupportedImpl() const
 {
-    QJniEnvironment env;
-    if (!env.isValid()) {
-        return false;
-    }
-    jclass managerClass = env->FindClass("org/mobilewebview/DataClearManager");
-    if (!managerClass) {
-        if (env->ExceptionCheck()) {
-            env->ExceptionClear();
-        }
-        return false;
-    }
-    jmethodID method = env->GetStaticMethodID(managerClass, "isClearSiteDataSupported", "()Z");
-    if (!method) {
-        env->DeleteLocalRef(managerClass);
-        if (env->ExceptionCheck()) {
-            env->ExceptionClear();
-        }
-        return false;
-    }
-    const jboolean supported = env->CallStaticBooleanMethod(managerClass, method);
-    env->DeleteLocalRef(managerClass);
-    if (env->ExceptionCheck()) {
-        env->ExceptionClear();
-        return false;
-    }
-    return supported == JNI_TRUE;
+    return MobileWebViewCapabilities::isClearSiteDataSupported();
 }
 
 void AndroidWebViewPrivate::evaluateJavaScript(const QString &script)
@@ -1133,7 +1109,12 @@ void AndroidWebViewPrivate::stopFindImpl()
 
 bool AndroidWebViewPrivate::findSupportedImpl() const
 {
-    return true;
+    return MobileWebViewCapabilities::isFindSupported();
+}
+
+bool AndroidWebViewPrivate::hasNativeFindPanelImpl() const
+{
+    return MobileWebViewCapabilities::hasNativeFindPanel();
 }
 
 bool AndroidWebViewPrivate::inPageMediaPlaybackSupportedImpl() const

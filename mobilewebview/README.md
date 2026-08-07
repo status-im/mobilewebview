@@ -17,8 +17,9 @@ Cross-platform native WebView component for Qt/QML applications with WebChannel 
 - Seamless integration with Qt Quick
 - Profile data clearing (`clearHttpCache`, `deleteAllCookies`, `clearDomStorage`, `clearProfileData`) and force reload (`reloadAndBypassCache`); full per-site wipe via `clearSiteData()` (gated by `clearSiteDataSupported`, see ADR 0004); completion signals and read-only `clearing` busy property for host UI
 - Backend capabilities answerable without an instance via the `MobileWebViewCapabilities`
-  statics — currently `isInPageMediaPlaybackSupported()`, mirrored as the
-  `inPageMediaPlaybackSupported` property on both the singleton and `MobileWebViewBackend`
+  statics — `isFindSupported()`, `hasNativeFindPanel()`, `isClearSiteDataSupported()` and
+  `isInPageMediaPlaybackSupported()`, each mirrored as a property on both the singleton and
+  `MobileWebViewBackend`
 
 ## Usage
 
