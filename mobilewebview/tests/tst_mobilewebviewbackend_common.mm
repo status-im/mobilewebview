@@ -11,6 +11,7 @@
 #include <QVariantMap>
 
 #include "MobileWebView/mobilewebviewbackend.h"
+#include "MobileWebView/mobilewebviewcapabilities.h"
 #include "MobileWebView/mobilewebviewdownload.h"
 #include "../src/common/mobilewebviewbackend_p.h"
 #include "../src/common/snapshotimageprovider.h"
@@ -103,6 +104,11 @@ public:
     }
 
     bool clearSiteDataSupportedImpl() const override { return clearSiteDataSupportedValue; }
+
+    bool inPageMediaPlaybackSupportedImpl() const override
+    {
+        return inPageMediaPlaybackSupportedValue;
+    }
 
     void evaluateJavaScript(const QString &script) override
     {
@@ -215,6 +221,7 @@ public:
     int clearDomStorageCalls = 0;
     int clearSiteDataCalls = 0;
     bool clearSiteDataSupportedValue = true;
+    bool inPageMediaPlaybackSupportedValue = true;
     QString lastClearSiteDataOrigin;
     int evaluateCalls = 0;
     int updateGeometryCalls = 0;
@@ -317,6 +324,8 @@ private slots:
     void downloadPauseUnsupportedInterrupts();
     void downloadRetryEmitsNewRequest();
     void downloadRetryInlineEmitsNewRequest();
+    void inPageMediaPlaybackSupportedReflectsPlatformImpl();
+    void inPageMediaPlaybackSupportedIsReadableWithoutABackend();
 };
 
 void MobileWebViewBackendCommonTest::forwardsCallsAndStateChanges()
@@ -1593,6 +1602,40 @@ void MobileWebViewBackendCommonTest::downloadRetryInlineEmitsNewRequest()
     QFile file(path);
     QVERIFY(file.open(QIODevice::ReadOnly));
     QCOMPARE(file.readAll(), QByteArray("hello"));
+}
+
+void MobileWebViewBackendCommonTest::inPageMediaPlaybackSupportedReflectsPlatformImpl()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d);
+
+    // The property is a pure read of the platform private, both ways round —
+    // a Backend that cannot play media in a page must be able to say so.
+    d->inPageMediaPlaybackSupportedValue = true;
+    QVERIFY(backend.inPageMediaPlaybackSupported());
+    QCOMPARE(backend.property("inPageMediaPlaybackSupported").toBool(), true);
+
+    d->inPageMediaPlaybackSupportedValue = false;
+    QVERIFY(!backend.inPageMediaPlaybackSupported());
+    QCOMPARE(backend.property("inPageMediaPlaybackSupported").toBool(), false);
+}
+
+void MobileWebViewBackendCommonTest::inPageMediaPlaybackSupportedIsReadableWithoutABackend()
+{
+    // The point of the static: a host answers the question with no instance,
+    // and no platform check of its own.
+    const bool supported = MobileWebViewCapabilities::isInPageMediaPlaybackSupported();
+
+    // macOS and iOS 17.4+ play WebM in a page; the Darwin build is only ever
+    // false below that iOS floor, which this suite cannot be run on.
+    QVERIFY(supported);
+
+    // Same answer through the QML-facing singleton object.
+    MobileWebViewCapabilities capabilities;
+    QCOMPARE(capabilities.inPageMediaPlaybackSupported(), supported);
+    QCOMPARE(capabilities.property("inPageMediaPlaybackSupported").toBool(), supported);
 }
 
 QTEST_MAIN(MobileWebViewBackendCommonTest)
