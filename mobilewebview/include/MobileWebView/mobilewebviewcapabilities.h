@@ -21,16 +21,33 @@ class MobileWebViewCapabilities : public QObject
     Q_OBJECT
     QML_ELEMENT
     QML_SINGLETON
+    Q_PROPERTY(bool findSupported READ findSupported CONSTANT)
+    Q_PROPERTY(bool hasNativeFindPanel READ hasNativeFindPanel CONSTANT)
+    Q_PROPERTY(bool clearSiteDataSupported READ clearSiteDataSupported CONSTANT)
     Q_PROPERTY(bool inPageMediaPlaybackSupported READ inPageMediaPlaybackSupported CONSTANT)
 
 public:
     explicit MobileWebViewCapabilities(QObject *parent = nullptr);
+
+    /// Can the engine search the loaded page for text (findText/stopFind)?
+    static bool isFindSupported();
+
+    /// Does the engine bring its own find UI? Answering "no" means the host
+    /// must draw a find panel of its own to drive findText(). No instance twin:
+    /// "has" already reads as a predicate, so the property reads this directly.
+    static bool hasNativeFindPanel();
+
+    /// Can the engine wipe every website data type for a single origin?
+    /// Answering "no" leaves only the coarse profile-wide clears.
+    static bool isClearSiteDataSupported();
 
     /// Can the engine decode and play audio/video inside a loaded page?
     /// Answering "no" means an in-page player would come up dead, so a host
     /// should hand the file to the OS instead.
     static bool isInPageMediaPlaybackSupported();
 
+    bool findSupported() const { return isFindSupported(); }
+    bool clearSiteDataSupported() const { return isClearSiteDataSupported(); }
     bool inPageMediaPlaybackSupported() const { return isInPageMediaPlaybackSupported(); }
 };
 

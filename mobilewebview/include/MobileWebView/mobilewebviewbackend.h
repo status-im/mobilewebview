@@ -70,11 +70,11 @@ public:
     QString favicon() const;
     qreal zoomFactor() const;
     void setZoomFactor(qreal factor);
+    /// Convenience views of the MobileWebViewCapabilities statics; a host with
+    /// no backend at hand should read those instead.
     bool findSupported() const;
     bool hasNativeFindPanel() const;
     bool clearSiteDataSupported() const;
-    /// Convenience view of MobileWebViewCapabilities::isInPageMediaPlaybackSupported();
-    /// a host with no backend at hand should read the static instead.
     bool inPageMediaPlaybackSupported() const;
     bool freeze() const;
     void setFreeze(bool freeze);

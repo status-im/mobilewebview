@@ -2,6 +2,35 @@
 
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
 
+bool MobileWebViewCapabilities::isFindSupported()
+{
+    // WKWebView's find interaction is iOS-only; the macOS build drives find
+    // through no native API here, so it reports unsupported.
+#ifdef Q_OS_IOS
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool MobileWebViewCapabilities::hasNativeFindPanel()
+{
+    // Where find works on Darwin it is the system find navigator, so the host
+    // must not draw one of its own.
+#ifdef Q_OS_IOS
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool MobileWebViewCapabilities::isClearSiteDataSupported()
+{
+    // WKWebsiteDataStore removes records per data type and display name on
+    // every Darwin version this library supports.
+    return true;
+}
+
 bool MobileWebViewCapabilities::isInPageMediaPlaybackSupported()
 {
 #ifdef Q_OS_IOS
