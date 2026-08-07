@@ -256,8 +256,10 @@ if(APPLE)
     add_executable(tst_mobilewebviewbackend_common
         tst_mobilewebviewbackend_common.mm
         ../include/MobileWebView/mobilewebviewbackend.h
+        ../include/MobileWebView/mobilewebviewcapabilities.h
         ../include/MobileWebView/mobilewebviewdownload.h
         ../src/common/mobilewebviewbackend.cpp
+        ../src/common/mobilewebviewcapabilities.cpp
         ../src/common/mobilewebviewdownload.cpp
         ../src/common/snapshotimageprovider.cpp
         ../src/common/snapshotitem.cpp
@@ -270,6 +272,7 @@ if(APPLE)
         ../src/common/freezecontroller.cpp
         ../src/common/userscript_utils.cpp
         ../src/common/webchanneltransport.cpp
+        ../src/darwin/mobilewebviewcapabilities_darwin.mm
         ../src/darwin/navigationdelegate.mm
         ../src/darwin/script_utils.mm
         ../src/darwin/origin_utils.mm

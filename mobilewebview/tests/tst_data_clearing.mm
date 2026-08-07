@@ -10,6 +10,7 @@
 #include <QTcpSocket>
 
 #include "MobileWebView/mobilewebviewbackend.h"
+#include "MobileWebView/mobilewebviewcapabilities.h"
 #include "../src/common/storage_profile_utils.h"
 
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
@@ -407,6 +408,7 @@ class DataClearingTest : public QObject
 
 private slots:
     void clearSiteDataSupportedIsTrueOnApple();
+    void inPageMediaPlaybackSupportedMatchesStaticOnApple();
     void noViewClearMethodsNoOp();
     void clearHttpCacheRemovesCacheRecords();
     void deleteAllCookiesRemovesCookies();
@@ -424,6 +426,16 @@ void DataClearingTest::clearSiteDataSupportedIsTrueOnApple()
 {
     MobileWebViewBackend backend;
     QVERIFY(backend.clearSiteDataSupported());
+}
+
+void DataClearingTest::inPageMediaPlaybackSupportedMatchesStaticOnApple()
+{
+    // Against the real Darwin private, not a fake: the instance property must
+    // give the same answer as the static, with no native view ever created.
+    MobileWebViewBackend backend;
+    QCOMPARE(backend.inPageMediaPlaybackSupported(),
+             MobileWebViewCapabilities::isInPageMediaPlaybackSupported());
+    QVERIFY(backend.inPageMediaPlaybackSupported());
 }
 
 void DataClearingTest::noViewClearMethodsNoOp()
