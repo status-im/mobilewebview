@@ -105,6 +105,10 @@ public:
 
     bool clearSiteDataSupportedImpl() const override { return clearSiteDataSupportedValue; }
 
+    bool findSupportedImpl() const override { return findSupportedValue; }
+
+    bool hasNativeFindPanelImpl() const override { return hasNativeFindPanelValue; }
+
     bool inPageMediaPlaybackSupportedImpl() const override
     {
         return inPageMediaPlaybackSupportedValue;
@@ -221,6 +225,8 @@ public:
     int clearDomStorageCalls = 0;
     int clearSiteDataCalls = 0;
     bool clearSiteDataSupportedValue = true;
+    bool findSupportedValue = true;
+    bool hasNativeFindPanelValue = true;
     bool inPageMediaPlaybackSupportedValue = true;
     QString lastClearSiteDataOrigin;
     int evaluateCalls = 0;
@@ -326,6 +332,10 @@ private slots:
     void downloadRetryInlineEmitsNewRequest();
     void inPageMediaPlaybackSupportedReflectsPlatformImpl();
     void inPageMediaPlaybackSupportedIsReadableWithoutABackend();
+    void findCapabilitiesReflectPlatformImpl();
+    void findCapabilitiesAreReadableWithoutABackend();
+    void clearSiteDataSupportedReflectsPlatformImpl();
+    void clearSiteDataSupportedIsReadableWithoutABackend();
 };
 
 void MobileWebViewBackendCommonTest::forwardsCallsAndStateChanges()
@@ -1636,6 +1646,78 @@ void MobileWebViewBackendCommonTest::inPageMediaPlaybackSupportedIsReadableWitho
     MobileWebViewCapabilities capabilities;
     QCOMPARE(capabilities.inPageMediaPlaybackSupported(), supported);
     QCOMPARE(capabilities.property("inPageMediaPlaybackSupported").toBool(), supported);
+}
+
+void MobileWebViewBackendCommonTest::findCapabilitiesReflectPlatformImpl()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d);
+
+    // Both properties are pure reads of the platform private, and they vary
+    // independently — a Backend can search a page without owning find UI.
+    d->findSupportedValue = true;
+    d->hasNativeFindPanelValue = false;
+    QVERIFY(backend.findSupported());
+    QVERIFY(!backend.hasNativeFindPanel());
+    QCOMPARE(backend.property("findSupported").toBool(), true);
+    QCOMPARE(backend.property("hasNativeFindPanel").toBool(), false);
+
+    d->findSupportedValue = false;
+    d->hasNativeFindPanelValue = true;
+    QVERIFY(!backend.findSupported());
+    QVERIFY(backend.hasNativeFindPanel());
+    QCOMPARE(backend.property("findSupported").toBool(), false);
+    QCOMPARE(backend.property("hasNativeFindPanel").toBool(), true);
+}
+
+void MobileWebViewBackendCommonTest::findCapabilitiesAreReadableWithoutABackend()
+{
+    // The point of the statics: a host answers with no instance and no
+    // platform check of its own.
+    const bool findSupported = MobileWebViewCapabilities::isFindSupported();
+    const bool nativePanel = MobileWebViewCapabilities::hasNativeFindPanel();
+
+    // WKWebView's find interaction is iOS-only; this suite runs on macOS.
+    QVERIFY(!findSupported);
+    QVERIFY(!nativePanel);
+
+    // Same answers through the QML-facing singleton object.
+    MobileWebViewCapabilities capabilities;
+    QCOMPARE(capabilities.findSupported(), findSupported);
+    QCOMPARE(capabilities.property("findSupported").toBool(), findSupported);
+    QCOMPARE(capabilities.hasNativeFindPanel(), nativePanel);
+    QCOMPARE(capabilities.property("hasNativeFindPanel").toBool(), nativePanel);
+}
+
+void MobileWebViewBackendCommonTest::clearSiteDataSupportedReflectsPlatformImpl()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d);
+
+    d->clearSiteDataSupportedValue = true;
+    QVERIFY(backend.clearSiteDataSupported());
+    QCOMPARE(backend.property("clearSiteDataSupported").toBool(), true);
+
+    d->clearSiteDataSupportedValue = false;
+    QVERIFY(!backend.clearSiteDataSupported());
+    QCOMPARE(backend.property("clearSiteDataSupported").toBool(), false);
+}
+
+void MobileWebViewBackendCommonTest::clearSiteDataSupportedIsReadableWithoutABackend()
+{
+    const bool supported = MobileWebViewCapabilities::isClearSiteDataSupported();
+
+    // WKWebsiteDataStore removes per-origin records on every Darwin version
+    // this library supports.
+    QVERIFY(supported);
+
+    MobileWebViewCapabilities capabilities;
+    QCOMPARE(capabilities.clearSiteDataSupported(), supported);
+    QCOMPARE(capabilities.property("clearSiteDataSupported").toBool(), supported);
 }
 
 QTEST_MAIN(MobileWebViewBackendCommonTest)

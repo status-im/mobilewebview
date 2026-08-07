@@ -408,6 +408,8 @@ class DataClearingTest : public QObject
 
 private slots:
     void clearSiteDataSupportedIsTrueOnApple();
+    void clearSiteDataSupportedMatchesStaticOnApple();
+    void findCapabilitiesMatchStaticsOnApple();
     void inPageMediaPlaybackSupportedMatchesStaticOnApple();
     void noViewClearMethodsNoOp();
     void clearHttpCacheRemovesCacheRecords();
@@ -426,6 +428,30 @@ void DataClearingTest::clearSiteDataSupportedIsTrueOnApple()
 {
     MobileWebViewBackend backend;
     QVERIFY(backend.clearSiteDataSupported());
+}
+
+void DataClearingTest::clearSiteDataSupportedMatchesStaticOnApple()
+{
+    // Against the real Darwin private, not a fake: the instance property must
+    // give the same answer as the static, with no native view ever created.
+    MobileWebViewBackend backend;
+    QCOMPARE(backend.clearSiteDataSupported(),
+             MobileWebViewCapabilities::isClearSiteDataSupported());
+    QVERIFY(backend.clearSiteDataSupported());
+}
+
+void DataClearingTest::findCapabilitiesMatchStaticsOnApple()
+{
+    MobileWebViewBackend backend;
+    QCOMPARE(backend.findSupported(), MobileWebViewCapabilities::isFindSupported());
+    QCOMPARE(backend.hasNativeFindPanel(), MobileWebViewCapabilities::hasNativeFindPanel());
+#ifdef Q_OS_IOS
+    QVERIFY(backend.findSupported());
+    QVERIFY(backend.hasNativeFindPanel());
+#else
+    QVERIFY(!backend.findSupported());
+    QVERIFY(!backend.hasNativeFindPanel());
+#endif
 }
 
 void DataClearingTest::inPageMediaPlaybackSupportedMatchesStaticOnApple()
