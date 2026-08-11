@@ -17,7 +17,9 @@ class MobileWebViewDownload;
 class DownloadRegistry
 {
 public:
-    using EmitRequested = std::function<void(MobileWebViewDownload *)>;
+    /// \a token is the opaque host correlation token from downloadUrl(),
+    /// echoed verbatim; empty for page-initiated Downloads.
+    using EmitRequested = std::function<void(MobileWebViewDownload *, const QString &token)>;
 
     DownloadRegistry(QObject *parent,
                      EmitRequested emitRequested,
@@ -32,14 +34,15 @@ public:
                                   qint64 totalBytes,
                                   QByteArray payload = {});
 
-    void emitRequested(MobileWebViewDownload *download);
+    void emitRequested(MobileWebViewDownload *download, const QString &token = {});
 
     MobileWebViewDownload *onDetected(const QUrl &url,
                                       const QString &platformSuggestion,
                                       const QString &contentDisposition,
                                       const QString &mimeType,
                                       qint64 totalBytes,
-                                      QByteArray payload = {});
+                                      QByteArray payload = {},
+                                      const QString &token = {});
 
     void onProgress(quint64 downloadId, qint64 receivedBytes, qint64 totalBytes);
     void onFinished(quint64 downloadId, bool ok, const QString &error);

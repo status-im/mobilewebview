@@ -80,11 +80,11 @@ MobileWebViewDownload *DownloadRegistry::create(const QUrl &url,
     return download;
 }
 
-void DownloadRegistry::emitRequested(MobileWebViewDownload *download)
+void DownloadRegistry::emitRequested(MobileWebViewDownload *download, const QString &token)
 {
     if (!download || !m_emitRequested)
         return;
-    m_emitRequested(download);
+    m_emitRequested(download, token);
 }
 
 MobileWebViewDownload *DownloadRegistry::onDetected(const QUrl &url,
@@ -92,11 +92,12 @@ MobileWebViewDownload *DownloadRegistry::onDetected(const QUrl &url,
                                                     const QString &contentDisposition,
                                                     const QString &mimeType,
                                                     qint64 totalBytes,
-                                                    QByteArray payload)
+                                                    QByteArray payload,
+                                                    const QString &token)
 {
     MobileWebViewDownload *download = create(
         url, platformSuggestion, contentDisposition, mimeType, totalBytes, std::move(payload));
-    emitRequested(download);
+    emitRequested(download, token);
     return download;
 }
 

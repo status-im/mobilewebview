@@ -167,7 +167,10 @@ public slots:
     void clearProfileData();
 
     /// Explicit download trigger ("save link", host-side retry). Emits downloadRequested.
-    void downloadUrl(const QUrl &url, const QString &suggestedFileName = QString());
+    /// \a token is opaque to the Backend: whatever the host passes is echoed back
+    /// on downloadRequested, so a host-side retry can be correlated by identity.
+    void downloadUrl(const QUrl &url, const QString &suggestedFileName = QString(),
+                     const QString &token = QString());
 
     // Install WebChannel bridge; must be called BEFORE loadUrl/loadHtml
     bool installMessageBridge(const QString &ns,
@@ -225,7 +228,8 @@ signals:
 
     /// Emitted when a Download is detected (page-initiated or downloadUrl).
     /// Host must accept(destination) or cancel(); no accept ⇒ cancelled on destroy/profile switch.
-    void downloadRequested(MobileWebViewDownload *download);
+    /// \a token echoes downloadUrl()'s token; empty for every other Download.
+    void downloadRequested(MobileWebViewDownload *download, const QString &token);
 
     /// Android link/image long-press (other platforms never emit).
     /// Either URL may be empty, not both. position: item-local logical px.

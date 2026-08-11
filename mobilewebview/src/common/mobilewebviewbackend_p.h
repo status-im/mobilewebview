@@ -144,10 +144,12 @@ public:
     virtual void startDownloadImpl(quint64 downloadId, const QUrl &url,
                                    const QString &destinationPath);
     /// downloadUrl() entry. Default: detect with given name, no metadata.
-    /// Platforms may probe headers when name is empty (Android).
-    virtual void requestUrlDownloadImpl(const QUrl &url, const QString &suggestedFileName)
+    /// Platforms may probe headers when name is empty (Android). \a token is
+    /// carried untouched to downloadRequested.
+    virtual void requestUrlDownloadImpl(const QUrl &url, const QString &suggestedFileName,
+                                        const QString &token)
     {
-        onDownloadDetected(url, suggestedFileName, QString(), QString(), -1);
+        onDownloadDetected(url, suggestedFileName, QString(), QString(), -1, token);
     }
     virtual void cancelDownloadImpl(quint64) {}
     /// Default: interrupt with "pause not supported".
@@ -192,7 +194,8 @@ public:
                                               const QString &platformSuggestion,
                                               const QString &contentDisposition,
                                               const QString &mimeType,
-                                              qint64 totalBytes);
+                                              qint64 totalBytes,
+                                              const QString &token = {});
     MobileWebViewDownload *onInlineDownloadDetected(const QUrl &url,
                                                     const QString &platformSuggestion,
                                                     const QString &mimeType,
