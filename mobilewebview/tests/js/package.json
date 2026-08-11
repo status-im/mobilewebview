@@ -1,0 +1,15 @@
+{
+  "name": "mobilewebview-js-tests",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Unit tests for MobileWebView page-world scripts",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0"
+  }
+}
