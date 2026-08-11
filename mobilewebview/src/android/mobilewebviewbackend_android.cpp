@@ -991,14 +991,22 @@ void AndroidWebViewPrivate::requestUrlDownloadImpl(const QUrl &url,
                 jstring jUrl = env->NewStringUTF(url.toString().toUtf8().constData());
                 // The token rides through the probe so the async detection still
                 // echoes it — no URL/time correlation anywhere on this path.
-                jstring jToken = env->NewStringUTF(token.toUtf8().constData());
-                env->CallVoidMethod(m_webViewObject, m_probeDownloadMethod, jUrl, jToken);
+                // fromString: the token is opaque, so it may carry anything a
+                // QString can (NewStringUTF would truncate at an embedded NUL).
+                const QJniObject jToken = QJniObject::fromString(token);
+                bool probed = jUrl && jToken.isValid() && !env->ExceptionCheck();
+                if (probed) {
+                    env->CallVoidMethod(m_webViewObject, m_probeDownloadMethod,
+                                        jUrl, jToken.object<jstring>());
+                    probed = !env->ExceptionCheck();
+                }
                 if (jUrl)
                     env->DeleteLocalRef(jUrl);
-                if (jToken)
-                    env->DeleteLocalRef(jToken);
                 clearJniExceptionIfAny(env);
-                return;
+                // A failed probe must not swallow the request — fall through to
+                // the plain path instead.
+                if (probed)
+                    return;
             }
         }
     }
