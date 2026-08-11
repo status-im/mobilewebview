@@ -216,7 +216,8 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
                     contentDisposition != null ? contentDisposition : "",
                     mimeType != null ? mimeType : "",
                     contentLength,
-                    userAgent));
+                    userAgent,
+                    ""));
         });
 
         // Long-press → host context menu (ADR 0005). Touch only records position.
@@ -686,7 +687,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
      * HEAD-probe Content-Disposition/Type for unnamed downloadUrl, then the same
      * nativeOnDownloadDetected path as DownloadListener.
      */
-    public void probeDownload(final String url) {
+    public void probeDownload(final String url, final String token) {
         final String ua;
         String agent = mHttpUserAgent;
         if ((agent == null || agent.isEmpty()) && mWebView != null) {
@@ -706,7 +707,8 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
                     probed.contentDisposition,
                     probed.mimeType,
                     probed.contentLength,
-                    ua));
+                    ua,
+                    token != null ? token : ""));
         }, "MwvDownloadProbe").start();
     }
 
@@ -1040,7 +1042,8 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     private native void nativeOnClearDomStorageCompleted(long nativePtr, long requestId);
     private native void nativeOnClearSiteDataCompleted(long nativePtr, long requestId);
     private native void nativeOnDownloadDetected(long nativePtr, String url, String contentDisposition,
-                                                 String mimeType, long contentLength, String userAgent);
+                                                 String mimeType, long contentLength, String userAgent,
+                                                 String token);
     private native void nativeOnDownloadProgress(long nativePtr, long downloadId,
                                                  long receivedBytes, long totalBytes);
     private native void nativeOnDownloadFinished(long nativePtr, long downloadId,

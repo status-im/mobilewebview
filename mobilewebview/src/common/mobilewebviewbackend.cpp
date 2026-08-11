@@ -78,9 +78,9 @@ MobileWebViewBackendPrivate::MobileWebViewBackendPrivate(MobileWebViewBackend *q
         return;
     m_downloadRegistry = std::make_unique<DownloadRegistry>(
         q,
-        [this](MobileWebViewDownload *download) {
+        [this](MobileWebViewDownload *download, const QString &token) {
             if (download)
-                emit q_ptr->downloadRequested(download);
+                emit q_ptr->downloadRequested(download, token);
         },
         &m_downloadTransfer);
 
@@ -571,12 +571,13 @@ MobileWebViewDownload *MobileWebViewBackendPrivate::onDownloadDetected(
     const QString &platformSuggestion,
     const QString &contentDisposition,
     const QString &mimeType,
-    qint64 totalBytes)
+    qint64 totalBytes,
+    const QString &token)
 {
     if (!m_downloadRegistry)
         return nullptr;
     return m_downloadRegistry->onDetected(
-        url, platformSuggestion, contentDisposition, mimeType, totalBytes);
+        url, platformSuggestion, contentDisposition, mimeType, totalBytes, {}, token);
 }
 
 MobileWebViewDownload *MobileWebViewBackendPrivate::onInlineDownloadDetected(
@@ -944,10 +945,11 @@ void MobileWebViewBackend::reportDownloadFinished(quint64 downloadId,
     d->onDownloadFinished(downloadId, ok, error);
 }
 
-void MobileWebViewBackend::downloadUrl(const QUrl &url, const QString &suggestedFileName)
+void MobileWebViewBackend::downloadUrl(const QUrl &url, const QString &suggestedFileName,
+                                       const QString &token)
 {
     Q_D(MobileWebViewBackend);
-    d->requestUrlDownloadImpl(url, suggestedFileName);
+    d->requestUrlDownloadImpl(url, suggestedFileName, token);
 }
 
 bool MobileWebViewBackend::interactionEnabled() const

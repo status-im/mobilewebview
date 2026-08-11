@@ -38,9 +38,12 @@ not handing off to the OS download UI), exposing a per-transfer model to QML.
 
 - **Triggers (v1):** page-initiated — `Content-Disposition: attachment`,
   non-renderable MIME types, and `<a download>` links — plus an explicit
-  `downloadUrl(url, suggestedFileName)` slot. The explicit trigger reuses the same
+  `downloadUrl(url, suggestedFileName, token)` slot. The explicit trigger reuses the same
   transfer machinery at near-zero marginal cost, and it is what makes host-side
   retry of a failed download possible in v1 and covers context-menu "save link".
+  `token` is opaque to the library: it is echoed verbatim on `downloadRequested`
+  so the host can correlate its re-issue by identity instead of URL and timing.
+  Every other Download carries an empty token.
   "Save page as MHTML" is deferred.
 - **Inline Downloads (`blob:` / `data:`):** page-generated files
   (`URL.createObjectURL` + `<a download>`) are supported via a library-owned
@@ -53,7 +56,7 @@ not handing off to the OS download UI), exposing a per-transfer model to QML.
   Cross-platform parity uses the script path on both Apple and Android
   (not WKDownload-only for blobs).
 - **Async accept model:** when a Download is detected the backend emits
-  `downloadRequested(MobileWebViewDownload* download)` carrying metadata only
+  `downloadRequested(MobileWebViewDownload* download, QString token)` carrying metadata only
   (source URL, suggested filename, MIME, expected size) before any bytes are written.
   The host calls `download.accept(target)` with a **host-chosen Download Target**
   (path/content URI) or `download.cancel()`. With no handler / no accept, the

@@ -95,7 +95,8 @@ public:
     // Callback handlers (called from JNI)
     void onWebMessageReceived(const QString &message, const QString &origin, bool isMainFrame);
     void onLinkLongPressedPx(const QUrl &linkUrl, const QUrl &imageUrl, QPointF posPx);
-    void requestUrlDownloadImpl(const QUrl &url, const QString &suggestedFileName) override;
+    void requestUrlDownloadImpl(const QUrl &url, const QString &suggestedFileName,
+                                const QString &token) override;
     void onNavigationStarted(const QString &url);
     void onNavigationFinished(const QString &url);
     void onNavigationFailed();
@@ -239,7 +240,7 @@ bool AndroidWebViewPrivate::initNativeView()
     m_startDownloadMethod = env->GetMethodID(m_webViewClass, "startDownload",
         "(JLjava/lang/String;Ljava/lang/String;)V");
     m_probeDownloadMethod = env->GetMethodID(m_webViewClass, "probeDownload",
-        "(Ljava/lang/String;)V");
+        "(Ljava/lang/String;Ljava/lang/String;)V");
     m_cancelDownloadMethod = env->GetMethodID(m_webViewClass, "cancelDownload", "(J)V");
     m_pauseDownloadMethod = env->GetMethodID(m_webViewClass, "pauseDownload", "(J)V");
     m_resumeDownloadMethod = env->GetMethodID(m_webViewClass, "resumeDownload", "(J)V");
@@ -973,11 +974,12 @@ void AndroidWebViewPrivate::setHttpUserAgentImpl(const QString &userAgent)
 }
 
 void AndroidWebViewPrivate::requestUrlDownloadImpl(const QUrl &url,
-                                                   const QString &suggestedFileName)
+                                                   const QString &suggestedFileName,
+                                                   const QString &token)
 {
     // Named: detect immediately. Unnamed: HEAD-probe first (JNI miss → plain path).
     if (!suggestedFileName.isEmpty()) {
-        MobileWebViewBackendPrivate::requestUrlDownloadImpl(url, suggestedFileName);
+        MobileWebViewBackendPrivate::requestUrlDownloadImpl(url, suggestedFileName, token);
         return;
     }
 
@@ -987,16 +989,21 @@ void AndroidWebViewPrivate::requestUrlDownloadImpl(const QUrl &url,
             QJniEnvironment env;
             if (env.isValid()) {
                 jstring jUrl = env->NewStringUTF(url.toString().toUtf8().constData());
-                env->CallVoidMethod(m_webViewObject, m_probeDownloadMethod, jUrl);
+                // The token rides through the probe so the async detection still
+                // echoes it — no URL/time correlation anywhere on this path.
+                jstring jToken = env->NewStringUTF(token.toUtf8().constData());
+                env->CallVoidMethod(m_webViewObject, m_probeDownloadMethod, jUrl, jToken);
                 if (jUrl)
                     env->DeleteLocalRef(jUrl);
+                if (jToken)
+                    env->DeleteLocalRef(jToken);
                 clearJniExceptionIfAny(env);
                 return;
             }
         }
     }
 
-    MobileWebViewBackendPrivate::requestUrlDownloadImpl(url, suggestedFileName);
+    MobileWebViewBackendPrivate::requestUrlDownloadImpl(url, suggestedFileName, token);
 }
 
 void AndroidWebViewPrivate::startDownloadImpl(quint64 downloadId, const QUrl &url,
@@ -1551,15 +1558,17 @@ Java_org_mobilewebview_MobileWebView_nativeOnClearSiteDataCompleted(JNIEnv *, jo
 JNIEXPORT void JNICALL
 Java_org_mobilewebview_MobileWebView_nativeOnDownloadDetected(JNIEnv *env, jobject,
         jlong nativePtr, jstring url, jstring contentDisposition, jstring mimeType,
-        jlong contentLength, jstring /*userAgent*/)
+        jlong contentLength, jstring /*userAgent*/, jstring token)
 {
     const QString qUrl = toQString(env, url);
     const QString qDisposition = toQString(env, contentDisposition);
     const QString qMime = toQString(env, mimeType);
+    const QString qToken = toQString(env, token);
     const qint64 total = contentLength > 0 ? static_cast<qint64>(contentLength) : -1;
 
-    dispatchToBackend(nativePtr, [qUrl, qDisposition, qMime, total](AndroidWebViewPrivate *backend) {
-        backend->onDownloadDetected(QUrl(qUrl), QString(), qDisposition, qMime, total);
+    dispatchToBackend(nativePtr,
+                      [qUrl, qDisposition, qMime, total, qToken](AndroidWebViewPrivate *backend) {
+        backend->onDownloadDetected(QUrl(qUrl), QString(), qDisposition, qMime, total, qToken);
     });
 }
 

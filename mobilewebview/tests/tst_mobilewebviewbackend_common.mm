@@ -321,6 +321,7 @@ private slots:
     void httpUserAgentDefaultsEmptyAndAppliesWithoutRecreate();
     void httpUserAgentSurvivesStoreRecreate();
     void downloadUrlEmitsRequestedAndAcceptStartsTransfer();
+    void downloadUrlEchoesTokenOnRequested();
     void downloadCancelFromRequestedDoesNotStartTransfer();
     void downloadProgressAndCompletionReachTerminalState();
     void downloadRejectsBlobAndDataSchemes();
@@ -1356,6 +1357,27 @@ void MobileWebViewBackendCommonTest::downloadUrlEmitsRequestedAndAcceptStartsTra
     QCOMPARE(d->lastStartDownloadUrl, download->url());
     QCOMPARE(d->lastStartDownloadDestination, QStringLiteral("/tmp/report.pdf"));
     QVERIFY(stateSpy.count() >= 1);
+}
+
+// The Backend never interprets the token — it comes back with the Download
+// Request so the host can correlate its own retry by identity, not by URL.
+void MobileWebViewBackendCommonTest::downloadUrlEchoesTokenOnRequested()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+
+    QSignalSpy requestedSpy(&backend, &MobileWebViewBackend::downloadRequested);
+    backend.downloadUrl(QUrl(QStringLiteral("https://example.com/a.bin")),
+                        QStringLiteral("a.bin"),
+                        QStringLiteral("retry-42"));
+    QCOMPARE(requestedSpy.count(), 1);
+    QCOMPARE(requestedSpy.at(0).at(1).toString(), QStringLiteral("retry-42"));
+
+    // No token passed → empty, the page-initiated shape.
+    backend.downloadUrl(QUrl(QStringLiteral("https://example.com/b.bin")),
+                        QStringLiteral("b.bin"));
+    QCOMPARE(requestedSpy.count(), 2);
+    QVERIFY(requestedSpy.at(1).at(1).toString().isEmpty());
 }
 
 void MobileWebViewBackendCommonTest::downloadCancelFromRequestedDoesNotStartTransfer()

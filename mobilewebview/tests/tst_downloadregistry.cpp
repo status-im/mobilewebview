@@ -42,6 +42,7 @@ class DownloadRegistryTest : public QObject
 private slots:
     void createRejectsUnsupportedSchemes();
     void createAndEmit();
+    void detectedTokenIsEchoedVerbatim();
     void progressUpdatesDownload();
     void finishRemovesAndDeleteLater();
     void cancelAllInvokesPlatformAndMarksCancelled();
@@ -75,9 +76,10 @@ void DownloadRegistryTest::createAndEmit()
     QObject parent;
     RecordingTransfer transfer;
     MobileWebViewDownload *emitted = nullptr;
+    QString emittedToken;
     DownloadRegistry registry(
         &parent,
-        [&](MobileWebViewDownload *d) { emitted = d; },
+        [&](MobileWebViewDownload *d, const QString &t) { emitted = d; emittedToken = t; },
         &transfer);
 
     auto *download = registry.onDetected(
@@ -96,6 +98,40 @@ void DownloadRegistryTest::createAndEmit()
     QCOMPARE(download->state(), MobileWebViewDownload::State::Requested);
     QVERIFY(!download->isInline());
     QCOMPARE(registry.downloadById(download->downloadId()), download);
+    QVERIFY(emittedToken.isEmpty());
+}
+
+// The token is opaque: the registry never reads it, only hands it back with
+// the Download Request the host's downloadUrl() started.
+void DownloadRegistryTest::detectedTokenIsEchoedVerbatim()
+{
+    QObject parent;
+    RecordingTransfer transfer;
+    MobileWebViewDownload *emitted = nullptr;
+    QString emittedToken;
+    DownloadRegistry registry(
+        &parent,
+        [&](MobileWebViewDownload *d, const QString &t) { emitted = d; emittedToken = t; },
+        &transfer);
+
+    auto *download = registry.onDetected(
+        QUrl(QStringLiteral("https://example.com/file.bin")),
+        QStringLiteral("file.bin"),
+        QString(),
+        QStringLiteral("application/octet-stream"),
+        -1,
+        {},
+        QStringLiteral("retry-7"));
+
+    QCOMPARE(emitted, download);
+    QCOMPARE(emittedToken, QStringLiteral("retry-7"));
+
+    // A library retry() is the registry's own request, not the host's — no token.
+    download->accept(QStringLiteral("/tmp/file.bin"));
+    registry.onFinished(download->downloadId(), false, QStringLiteral("network"));
+    download->retry();
+    QVERIFY(emitted != download);
+    QVERIFY(emittedToken.isEmpty());
 }
 
 void DownloadRegistryTest::progressUpdatesDownload()
@@ -289,9 +325,10 @@ void DownloadRegistryTest::retryFromInterruptedEmitsNewRequest()
     QObject parent;
     RecordingTransfer transfer;
     MobileWebViewDownload *emitted = nullptr;
+    QString emittedToken;
     DownloadRegistry registry(
         &parent,
-        [&](MobileWebViewDownload *d) { emitted = d; },
+        [&](MobileWebViewDownload *d, const QString &t) { emitted = d; emittedToken = t; },
         &transfer);
 
     auto *download = registry.create(
@@ -320,9 +357,10 @@ void DownloadRegistryTest::retryInlineFromInterrupted()
     QObject parent;
     RecordingTransfer transfer;
     MobileWebViewDownload *emitted = nullptr;
+    QString emittedToken;
     DownloadRegistry registry(
         &parent,
-        [&](MobileWebViewDownload *d) { emitted = d; },
+        [&](MobileWebViewDownload *d, const QString &t) { emitted = d; emittedToken = t; },
         &transfer);
 
     const QByteArray payload("retry-me");
