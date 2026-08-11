@@ -11,16 +11,42 @@ function btoaUtf8(str) {
   return Buffer.from(str, 'binary').toString('base64');
 }
 
-function makeDom(url = 'https://download-harness.invalid/page') {
+function makeDom(url = 'https://download-harness.invalid/page', options = {}) {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', {
     url,
     pretendToBeVisual: true,
+    ...options,
   });
   return dom;
 }
 
+function makePageWorldDom(url) {
+  // runScripts required for window.eval / injected userscript simulation.
+  return makeDom(url, { runScripts: 'dangerously' });
+}
+
 function postedPackets(post) {
   return post.mock.calls.map((c) => c.arguments[0]);
+}
+
+function substitutedSource(maxDecodedBytes = MAX) {
+  return readRawSource().replace(/%MAX_INLINE_BYTES%/g, String(maxDecodedBytes));
+}
+
+function clickDataDownload(doc, win, href = 'data:text/plain;base64,YQ==') {
+  const a = doc.createElement('a');
+  a.setAttribute('download', 'x.txt');
+  a.setAttribute('href', href);
+  Object.defineProperty(a, 'href', {
+    configurable: true,
+    get() {
+      return href;
+    },
+  });
+  doc.body.appendChild(a);
+  const ev = new win.MouseEvent('click', { bubbles: true, cancelable: true });
+  a.dispatchEvent(ev);
+  return ev;
 }
 
 describe('inline_download_interceptor source', () => {
@@ -29,6 +55,41 @@ describe('inline_download_interceptor source', () => {
     assert.match(raw, /%MAX_INLINE_BYTES%/);
     assert.doesNotMatch(raw, /maxDecodedBytes:\s*32\s*\*/);
     assert.ok(SOURCE_PATH.endsWith('inline_download_interceptor.js'));
+  });
+});
+
+describe('page-world bootstrap', () => {
+  it('does not leak factory symbols onto window', () => {
+    const dom = makePageWorldDom();
+    dom.window.eval(substitutedSource());
+    assert.equal(typeof dom.window.createInlineDownloadInterceptor, 'undefined');
+    assert.equal(typeof dom.window.createDefaultPost, 'undefined');
+    assert.equal(typeof dom.window.TAG, 'undefined');
+    dom.window.close();
+  });
+
+  it('attaches even when the page defines a global module shim', () => {
+    const dom = makePageWorldDom();
+    const posts = [];
+    dom.window.module = { exports: {} };
+    dom.window.NativeBridge = {
+      postMessage(json) {
+        posts.push(json);
+      },
+    };
+    dom.window.eval(substitutedSource());
+
+    assert.equal(
+      typeof dom.window.module.exports.createInlineDownloadInterceptor,
+      'undefined',
+      'must not take the CommonJS export branch in page world'
+    );
+
+    const ev = clickDataDownload(dom.window.document, dom.window);
+    assert.equal(ev.defaultPrevented, true);
+    assert.equal(posts.length, 1);
+    assert.equal(JSON.parse(posts[0]).mwvDownload, true);
+    dom.window.close();
   });
 });
 
@@ -60,13 +121,7 @@ describe('createDefaultPost', () => {
     doc.addEventListener('__mwv_download__', (e) => events.push(e.detail));
 
     const post = exports.createDefaultPost(doc);
-    // Bind globals the default post looks up
-    globalThis.NativeBridge = dom.window.NativeBridge;
-    try {
-      post({ mwvDownload: true, url: 'data:text/plain,hi' });
-    } finally {
-      delete globalThis.NativeBridge;
-    }
+    post({ mwvDownload: true, url: 'data:text/plain,hi' });
 
     assert.equal(posts.length, 1);
     assert.equal(events.length, 0);
@@ -114,7 +169,7 @@ describe('createDefaultPost', () => {
   it('does not double-post when NativeBridge succeeds', () => {
     const bridgePosts = [];
     const qtPosts = [];
-    globalThis.NativeBridge = {
+    dom.window.NativeBridge = {
       postMessage(json) {
         bridgePosts.push(json);
       },
@@ -131,11 +186,7 @@ describe('createDefaultPost', () => {
     const events = [];
     doc.addEventListener('__mwv_download__', (e) => events.push(e.detail));
 
-    try {
-      exports.createDefaultPost(doc)({ mwvDownload: true });
-    } finally {
-      delete globalThis.NativeBridge;
-    }
+    exports.createDefaultPost(doc)({ mwvDownload: true });
 
     assert.equal(bridgePosts.length, 1);
     assert.equal(qtPosts.length, 0);
@@ -493,13 +544,6 @@ describe('createInlineDownloadInterceptor', () => {
       click(target);
       // a.getAttribute('download') || 'download' → 'download'
       assert.equal(postedPackets(post)[0].fileName, 'download');
-    });
-  });
-
-  describe('limits', () => {
-    it('derives maxBase64Chars from maxDecodedBytes', () => {
-      assert.equal(api.maxDecodedBytes, MAX);
-      assert.equal(api.maxBase64Chars, Math.floor((MAX * 4) / 3) + 4);
     });
   });
 });

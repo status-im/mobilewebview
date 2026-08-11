@@ -8,9 +8,7 @@ export QTDIR="${QTDIR:-$HOME/Qt/6.11.0/macos}"
 echo "==> JS unit tests (inline_download_interceptor)"
 (
   cd "$ROOT/mobilewebview/tests/js"
-  if [[ ! -d node_modules ]]; then
-    npm ci
-  fi
+  npm ci
   npm test
 )
 
