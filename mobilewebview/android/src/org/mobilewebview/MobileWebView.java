@@ -688,15 +688,12 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
      * nativeOnDownloadDetected path as DownloadListener.
      */
     public void probeDownload(final String url, final String token) {
-        final String ua;
-        String agent = mHttpUserAgent;
-        if ((agent == null || agent.isEmpty()) && mWebView != null) {
-            agent = mWebView.getSettings().getUserAgentString();
-        }
-        ua = agent != null ? agent : "";
-        final String cookies = mOffTheRecord
-                ? null
-                : android.webkit.CookieManager.getInstance().getCookie(url);
+        // Never throws: a dead WebView or missing provider degrades to an
+        // anonymous probe instead of losing the request (see ProbeRequest).
+        final ProbeRequest request = ProbeRequest.resolve(mHttpUserAgent, mWebView,
+                mOffTheRecord, url);
+        final String ua = request.userAgent;
+        final String cookies = request.cookieHeader;
 
         new Thread(() -> {
             // Probe failure: empty metadata; DownloadPolicy names from the URL.

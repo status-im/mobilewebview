@@ -33,4 +33,8 @@ public class WebSettings {
     public int getCacheMode() {
         return mCacheMode;
     }
+
+    public String getUserAgentString() {
+        return "fake-settings-agent";
+    }
 }

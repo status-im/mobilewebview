@@ -17,7 +17,20 @@ public final class CookieManager {
         return sInstance;
     }
 
+    private static RuntimeException sGetCookieFailure = null;
+
+    public static void failGetCookieWith(RuntimeException failure) {
+        sGetCookieFailure = failure;
+    }
+
+    public static void resetGetCookieFailure() {
+        sGetCookieFailure = null;
+    }
+
     public String getCookie(String url) {
+        if (sGetCookieFailure != null) {
+            throw sGetCookieFailure;
+        }
         return null;
     }
 
