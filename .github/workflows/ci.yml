@@ -15,6 +15,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: mobilewebview/tests/js/package-lock.json
+
+      - name: Run JS unit tests
+        working-directory: mobilewebview/tests/js
+        run: |
+          npm ci
+          npm test
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:

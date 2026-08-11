@@ -1,14 +1,15 @@
 // Intercept <a download> clicks for blob:/data: URLs and post an Inline Download
 // envelope to native (not via WebChannel RPC). Runs at document-start in page world.
-(function() {
-  'use strict';
+//
+// createInlineDownloadInterceptor is the testable factory; the browser bootstrap
+// below attaches it once. Node tests load via CommonJS after substituting
+// %MAX_INLINE_BYTES%.
+'use strict';
 
-  var TAG = '[MwvInlineDownload]';
-  // Substituted at injection from InlineDownloadCodec::kMaxDecodedBytes.
-  var MAX_DECODED_BYTES = %MAX_INLINE_BYTES%;
-  var MAX_BASE64_CHARS = Math.floor(MAX_DECODED_BYTES * 4 / 3) + 4;
+var TAG = '[MwvInlineDownload]';
 
-  function postNative(packet) {
+function createDefaultPost(doc) {
+  return function postNative(packet) {
     var json = JSON.stringify(packet);
     if (typeof NativeBridge !== 'undefined' && typeof NativeBridge.postMessage === 'function') {
       try {
@@ -18,17 +19,36 @@
         console.error(TAG, 'NativeBridge.postMessage failed:', e);
       }
     }
-    if (typeof webkit !== 'undefined' && webkit.messageHandlers && webkit.messageHandlers.qtbridge) {
+    var win = doc.defaultView || (typeof window !== 'undefined' ? window : undefined);
+    var wk = win && win.webkit;
+    if (wk && wk.messageHandlers && wk.messageHandlers.qtbridge) {
       try {
-        webkit.messageHandlers.qtbridge.postMessage(json);
+        wk.messageHandlers.qtbridge.postMessage(json);
         return;
       } catch (e) {
         console.error(TAG, 'qtbridge.postMessage failed:', e);
       }
     }
     // Darwin isolated world: bridge world listens and forwards without invokeKey wrap.
-    document.dispatchEvent(new CustomEvent('__mwv_download__', { detail: json }));
-  }
+    var CustomEventCtor =
+      (win && win.CustomEvent) ||
+      (typeof CustomEvent !== 'undefined' ? CustomEvent : undefined);
+    if (typeof CustomEventCtor !== 'function') {
+      console.error(TAG, 'CustomEvent unavailable for __mwv_download__');
+      return;
+    }
+    doc.dispatchEvent(new CustomEventCtor('__mwv_download__', { detail: json }));
+  };
+}
+
+function createInlineDownloadInterceptor(opts) {
+  var MAX_DECODED_BYTES = opts.maxDecodedBytes;
+  var MAX_BASE64_CHARS = Math.floor(MAX_DECODED_BYTES * 4 / 3) + 4;
+  var postNative = opts.post;
+  var fetchFn = opts.fetch;
+  var FileReaderCtor = opts.FileReader;
+  var btoaFn = opts.btoa;
+  var attachedDocument = null;
 
   function mimeFromDataUrl(url) {
     var m = /^data:([^;,]+)/i.exec(url || '');
@@ -65,7 +85,7 @@
     // Percent-encoded data: encode as base64 for the native codec.
     try {
       var decoded = decodeURIComponent(body);
-      var b64 = btoa(unescape(encodeURIComponent(decoded)));
+      var b64 = btoaFn(unescape(encodeURIComponent(decoded)));
       emitInline(href, fileName, mime, b64);
     } catch (e) {
       console.warn(TAG, 'Failed to encode data: URL', e);
@@ -73,37 +93,45 @@
   }
 
   function handleBlobUrl(href, fileName, mimeHint) {
-    if (typeof fetch !== 'function') {
+    if (typeof fetchFn !== 'function') {
       console.warn(TAG, 'fetch unavailable for blob: URL');
-      return;
+      return Promise.resolve();
     }
-    fetch(href).then(function(resp) {
+    return fetchFn(href).then(function(resp) {
       return resp.blob();
     }).then(function(blob) {
       if (blob.size > MAX_DECODED_BYTES) {
         console.warn(TAG, 'Inline download skipped: exceeds size limit');
         return;
       }
-      var reader = new FileReader();
-      reader.onloadend = function() {
-        var result = reader.result || '';
-        var comma = String(result).indexOf(',');
-        var b64 = comma >= 0 ? String(result).substring(comma + 1) : String(result);
-        var mime = blob.type || mimeHint || 'application/octet-stream';
-        emitInline(href, fileName, mime, b64);
-      };
-      reader.onerror = function() {
-        console.warn(TAG, 'FileReader failed for blob: URL');
-      };
-      reader.readAsDataURL(blob);
+      if (typeof FileReaderCtor !== 'function') {
+        console.warn(TAG, 'FileReader unavailable for blob: URL');
+        return;
+      }
+      return new Promise(function(resolve) {
+        var reader = new FileReaderCtor();
+        reader.onloadend = function() {
+          var result = reader.result || '';
+          var comma = String(result).indexOf(',');
+          var b64 = comma >= 0 ? String(result).substring(comma + 1) : String(result);
+          var mime = blob.type || mimeHint || 'application/octet-stream';
+          emitInline(href, fileName, mime, b64);
+          resolve();
+        };
+        reader.onerror = function() {
+          console.warn(TAG, 'FileReader failed for blob: URL');
+          resolve();
+        };
+        reader.readAsDataURL(blob);
+      });
     }).catch(function(e) {
       console.warn(TAG, 'Failed to read blob: URL', e);
     });
   }
 
-  function findDownloadAnchor(target) {
+  function findDownloadAnchor(target, doc) {
     var el = target;
-    while (el && el !== document) {
+    while (el && el !== doc) {
       if (el.tagName === 'A' && el.hasAttribute('download'))
         return el;
       el = el.parentNode;
@@ -114,8 +142,9 @@
   // Same-origin http(s) <a download>: native ignores the attribute — post a
   // URL-only envelope for the Download path. Cross-origin: navigate (Chrome-like).
   function handleHttpUrl(a, href, fileName) {
+    var win = attachedDocument && (attachedDocument.defaultView || attachedDocument.parentWindow);
     try {
-      if (a.origin !== window.location.origin)
+      if (!win || a.origin !== win.location.origin)
         return false;
     } catch (e) {
       return false;
@@ -128,10 +157,13 @@
     return true;
   }
 
-  document.addEventListener('click', function(ev) {
+  function onClick(ev) {
     if (ev.defaultPrevented)
       return;
-    var a = findDownloadAnchor(ev.target);
+    var doc = attachedDocument;
+    if (!doc)
+      return;
+    var a = findDownloadAnchor(ev.target, doc);
     if (!a)
       return;
     var href = a.href || a.getAttribute('href') || '';
@@ -160,5 +192,40 @@
       handleDataUrl(href, fileName);
     else
       handleBlobUrl(href, fileName, a.type || '');
-  }, true);
-})();
+  }
+
+  return {
+    attach: function(doc) {
+      attachedDocument = doc;
+      doc.addEventListener('click', onClick, true);
+      return function detach() {
+        doc.removeEventListener('click', onClick, true);
+        if (attachedDocument === doc)
+          attachedDocument = null;
+      };
+    },
+    // Test seams (also usable for direct invocation).
+    handleDataUrl: handleDataUrl,
+    handleBlobUrl: handleBlobUrl,
+    findDownloadAnchor: findDownloadAnchor,
+    maxBase64Chars: MAX_BASE64_CHARS,
+    maxDecodedBytes: MAX_DECODED_BYTES
+  };
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    createInlineDownloadInterceptor: createInlineDownloadInterceptor,
+    createDefaultPost: createDefaultPost,
+    TAG: TAG
+  };
+} else {
+  // Substituted at injection from InlineDownloadCodec::kMaxDecodedBytes.
+  createInlineDownloadInterceptor({
+    maxDecodedBytes: %MAX_INLINE_BYTES%,
+    post: createDefaultPost(document),
+    fetch: typeof fetch === 'function' ? fetch : undefined,
+    FileReader: typeof FileReader !== 'undefined' ? FileReader : undefined,
+    btoa: typeof btoa === 'function' ? btoa : undefined
+  }).attach(document);
+}
