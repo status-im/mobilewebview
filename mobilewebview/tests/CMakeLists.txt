@@ -296,3 +296,17 @@ if(APPLE)
     )
     add_test(NAME tst_mobilewebviewbackend_common COMMAND tst_mobilewebviewbackend_common)
 endif()
+
+add_executable(tst_focus_policy
+    tst_focus_policy.cpp
+    ../src/common/focus_policy.cpp
+)
+target_include_directories(tst_focus_policy PRIVATE
+    ../src/common
+)
+target_link_libraries(tst_focus_policy PRIVATE
+    Qt::Core
+    Qt::Gui
+    Qt::Test
+)
+add_test(NAME tst_focus_policy COMMAND tst_focus_policy)

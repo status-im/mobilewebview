@@ -53,6 +53,7 @@ set(MOBILEWEBVIEW_COMMON_SOURCES
     src/common/snapshotimageprovider.cpp
     src/common/origin_utils.h
     src/common/origin_utils.cpp
+    src/common/focus_policy.cpp
     src/common/inlinedownloadcodec.h
     src/common/inlinedownloadcodec.cpp
     src/common/inlinedownloadmessage.h
