@@ -564,19 +564,28 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     }
 
     /**
-     * Set WebView visibility
+     * Set WebView visibility.
+     *
+     * @param grabFocus when shown, request view focus so the WebView receives
+     *                  key events (notably KEYCODE_BACK; without focus
+     *                  dispatchKeyEvent is not called and Back is never
+     *                  forwarded to QML). Native passes false while a Qt text
+     *                  input owns the soft keyboard, otherwise re-showing the
+     *                  WebView (e.g. after a popup closes) would silently
+     *                  redirect typing from that field into the page.
      */
-    public void setVisible(boolean visible) {
+    public void setVisible(boolean visible, boolean grabFocus) {
         runOnMainThread(() -> {
             if (mWebView == null) return;
             mWebView.setVisibility(visible ? View.VISIBLE : View.GONE);
-            // Grab focus when shown so the WebView receives key events
-            // (notably KEYCODE_BACK). Without focus, dispatchKeyEvent is not
-            // called and Back is never forwarded to QML.
-            if (visible) {
+            if (visible && grabFocus) {
                 mWebView.requestFocus();
             }
         });
+    }
+
+    public void setVisible(boolean visible) {
+        setVisible(visible, true);
     }
 
     /**

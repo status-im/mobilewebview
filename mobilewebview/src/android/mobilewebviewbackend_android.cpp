@@ -4,6 +4,7 @@
 #include "../common/inlinedownloadcodec.h"
 #include "../common/inlinedownloadmessage.h"
 #include "../common/origin_utils.h"
+#include "../common/focus_policy.h"
 #include "../common/userscript_utils.h"
 #include "../common/android_js_result.h"
 
@@ -222,7 +223,7 @@ bool AndroidWebViewPrivate::initNativeView()
     m_stopMethod = env->GetMethodID(m_webViewClass, "stop", "()V");
     m_evaluateJavaScriptMethod = env->GetMethodID(m_webViewClass, "evaluateJavaScript", "(Ljava/lang/String;)V");
     m_setGeometryMethod = env->GetMethodID(m_webViewClass, "setGeometry", "(IIII)V");
-    m_setVisibleMethod = env->GetMethodID(m_webViewClass, "setVisible", "(Z)V");
+    m_setVisibleMethod = env->GetMethodID(m_webViewClass, "setVisible", "(ZZ)V");
     m_destroyMethod = env->GetMethodID(m_webViewClass, "destroy", "()V");
     m_updateAllowedOriginsMethod = env->GetMethodID(m_webViewClass, "updateAllowedOrigins", "([Ljava/lang/String;)V");
     m_setInteractionEnabledMethod = env->GetMethodID(m_webViewClass, "setInteractionEnabled", "(Z)V");
@@ -704,7 +705,11 @@ void AndroidWebViewPrivate::updateNativeVisibility(bool visible)
     }
 
     const bool shouldBeVisible = shouldShowNativeWebView(visible);
-    env->CallVoidMethod(m_webViewObject, m_setVisibleMethod, shouldBeVisible ? JNI_TRUE : JNI_FALSE);
+    const bool grabFocus = shouldBeVisible
+        && MobileWebViewFocusPolicy::nativeViewMayGrabFocus(QGuiApplication::focusObject());
+    env->CallVoidMethod(m_webViewObject, m_setVisibleMethod,
+                        shouldBeVisible ? JNI_TRUE : JNI_FALSE,
+                        grabFocus ? JNI_TRUE : JNI_FALSE);
 
     clearJniExceptionIfAny(env);
 }
