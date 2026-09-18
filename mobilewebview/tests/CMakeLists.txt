@@ -1,5 +1,5 @@
 find_package(QT NAMES Qt6 REQUIRED COMPONENTS Core Test WebChannel)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Test WebChannel)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Network Test WebChannel)
 
 add_executable(tst_origin_utils
     tst_origin_utils.cpp
@@ -213,6 +213,23 @@ if(APPLE)
         Qt::Test
     )
     add_test(NAME tst_storage_profiles COMMAND tst_storage_profiles)
+
+    add_executable(tst_default_user_agent_first_load
+        tst_default_user_agent_first_load.mm
+    )
+    target_include_directories(tst_default_user_agent_first_load PRIVATE
+        ../include
+    )
+    target_link_libraries(tst_default_user_agent_first_load PRIVATE
+        MobileWebView
+        Qt::Core
+        Qt::Gui
+        Qt::Network
+        Qt::Qml
+        Qt::Quick
+        Qt::Test
+    )
+    add_test(NAME tst_default_user_agent_first_load COMMAND tst_default_user_agent_first_load)
 
     add_executable(tst_data_clearing
         tst_data_clearing.mm
