@@ -26,7 +26,7 @@
 #include <QDebug>
 #include <QCoreApplication>
 #include <QPointer>
-#include <QPointer>
+#include <QTimer>
 #include <QFile>
 #include <QVariantMap>
 #include <optional>
@@ -233,6 +233,9 @@ public:
 
 private:
     void fetchDefaultHttpUserAgent();
+    void onDefaultHttpUserAgentFetched(const QString &userAgent);
+    bool deferLoadForDefaultUserAgent();
+    void loadLastContent();
 
     WKWebView *m_webView = nullptr;
     NavigationDelegate *m_navigationDelegate = nullptr;
@@ -243,6 +246,11 @@ private:
     void *m_hostView = nullptr;
 
     std::optional<QRect> m_lastGeometry;
+
+    // A load that arrives while the default User-Agent is still being fetched
+    // waits for it, so the first request already carries the host's override.
+    bool m_defaultUaPending = false;
+    bool m_loadDeferredForUa = false;
 };
 
 namespace {
@@ -265,6 +273,7 @@ void DarwinWebViewPrivate::fetchDefaultHttpUserAgent()
 
     // No public API returns it synchronously, and customUserAgent on the real
     // view would mask it, so ask a separate view that never gets an override.
+    m_defaultUaPending = true;
     QPointer<MobileWebViewBackend> guard(q_ptr);
     runOnMainThread(^{
         WKWebViewConfiguration *config = [[WKWebViewConfiguration alloc] init];
@@ -276,18 +285,51 @@ void DarwinWebViewPrivate::fetchDefaultHttpUserAgent()
                 ? QString::fromNSString(static_cast<NSString *>(result))
                 : QString();
             [probe release];
-            if (userAgent.isEmpty()) {
-                return;
-            }
             QMetaObject::invokeMethod(qApp, [this, guard, userAgent]() {
-                s_defaultHttpUserAgent = userAgent;
+                if (!userAgent.isEmpty())
+                    s_defaultHttpUserAgent = userAgent;
                 // The backend owns this private, so a live guard means a live this.
-                if (guard) {
-                    setDefaultHttpUserAgent(userAgent);
-                }
+                if (guard)
+                    onDefaultHttpUserAgentFetched(userAgent);
             }, Qt::QueuedConnection);
         }];
     });
+
+    // A probe that never answers must not keep the page blank.
+    QTimer::singleShot(2000, q_ptr, [this]() { onDefaultHttpUserAgentFetched(QString()); });
+}
+
+void DarwinWebViewPrivate::onDefaultHttpUserAgentFetched(const QString &userAgent)
+{
+    // Report first: the host's binding sets the override before anything loads.
+    if (!userAgent.isEmpty())
+        setDefaultHttpUserAgent(userAgent);
+    if (!m_defaultUaPending)
+        return;
+    m_defaultUaPending = false;
+    if (m_loadDeferredForUa) {
+        m_loadDeferredForUa = false;
+        loadLastContent();
+    }
+}
+
+bool DarwinWebViewPrivate::deferLoadForDefaultUserAgent()
+{
+    if (!m_defaultUaPending)
+        return false;
+    m_loadDeferredForUa = true;
+    return true;
+}
+
+void DarwinWebViewPrivate::loadLastContent()
+{
+    if (m_hasLastHtml) {
+        loadHtmlImpl(m_lastHtml, m_lastHtmlBaseUrl);
+    } else if (m_hasLastFileUrl) {
+        loadFileUrlImpl(m_lastFileUrl, m_lastFileReadAccessUrl);
+    } else if (m_url.isValid() && !m_url.isEmpty()) {
+        loadUrlImpl(m_url);
+    }
 }
 
 DarwinWebViewPrivate::~DarwinWebViewPrivate()
@@ -444,6 +486,8 @@ void DarwinWebViewPrivate::loadUrlImpl(const QUrl &url)
         qWarning() << "DarwinWebViewPrivate: webView is null";
         return;
     }
+    if (deferLoadForDefaultUserAgent())
+        return;
 
     WKWebView *webView = m_webView;
     NSURL *nsUrl = url.toNSURL();
@@ -460,6 +504,8 @@ void DarwinWebViewPrivate::loadFileUrlImpl(const QUrl &fileUrl, const QUrl &read
         qWarning() << "DarwinWebViewPrivate: webView is null";
         return;
     }
+    if (deferLoadForDefaultUserAgent())
+        return;
 
     WKWebView *webView = m_webView;
     NSURL *nsFileUrl = fileUrl.toNSURL();
@@ -483,6 +529,8 @@ void DarwinWebViewPrivate::loadHtmlImpl(const QString &html, const QUrl &baseUrl
         qWarning() << "DarwinWebViewPrivate: webView is null";
         return;
     }
+    if (deferLoadForDefaultUserAgent())
+        return;
 
     WKWebView *webView = m_webView;
     NSString *htmlString = html.toNSString();
@@ -1027,13 +1075,7 @@ void DarwinWebViewPrivate::setupNativeViewImpl()
 
     if (createdNow) {
         ensureBridgeInstalled();
-        if (m_hasLastHtml) {
-            loadHtmlImpl(m_lastHtml, m_lastHtmlBaseUrl);
-        } else if (m_hasLastFileUrl) {
-            loadFileUrlImpl(m_lastFileUrl, m_lastFileReadAccessUrl);
-        } else if (m_url.isValid() && !m_url.isEmpty()) {
-            loadUrlImpl(m_url);
-        }
+        loadLastContent();
     }
 }
 
