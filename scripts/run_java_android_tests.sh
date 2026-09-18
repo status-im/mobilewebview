@@ -14,6 +14,7 @@ SOURCES=(
   "$JVM_SHADOW/android/content/Context.java"
   "$JVM_SHADOW/android/util/Log.java"
   "$JVM_SHADOW/android/webkit/ValueCallback.java"
+  "$JVM_SHADOW/android/webkit/JavascriptInterface.java"
   "$JVM_SHADOW/android/webkit/WebView.java"
   "$JVM_SHADOW/android/webkit/CookieManager.java"
   "$JVM_SHADOW/android/webkit/WebSettings.java"
@@ -48,6 +49,8 @@ SOURCES=(
   "$ANDROID_SRC/DownloadMediaStore.java"
   "$ANDROID_SRC/DownloadFetcher.java"
   "$ANDROID_SRC/SelfFetchDownloads.java"
+  "$ANDROID_SRC/NativeBridgeHost.java"
+  "$ANDROID_SRC/MobileWebViewNativeBridge.java"
   "$ANDROID_TEST/OriginUtilsTest.java"
   "$ANDROID_TEST/BridgeScriptBuilderTest.java"
   "$ANDROID_TEST/MobileWebViewPendingActionsTest.java"
@@ -63,6 +66,7 @@ SOURCES=(
   "$ANDROID_TEST/ProbeRequestTest.java"
   "$ANDROID_TEST/DownloadFetcherRaceTest.java"
   "$ANDROID_TEST/SelfFetchDownloadsTest.java"
+  "$ANDROID_TEST/MobileWebViewNativeBridgeTest.java"
 )
 
 echo "Compiling Java tests..."
@@ -82,6 +86,7 @@ TESTS=(
   org.mobilewebview.ProbeRequestTest
   org.mobilewebview.DownloadFetcherRaceTest
   org.mobilewebview.SelfFetchDownloadsTest
+  org.mobilewebview.MobileWebViewNativeBridgeTest
 )
 
 for test in "${TESTS[@]}"; do
