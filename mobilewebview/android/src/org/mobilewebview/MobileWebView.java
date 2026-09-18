@@ -70,7 +70,22 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
 
     private final WebViewProfileManager mProfileManager = new WebViewProfileManager();
     private final DataClearManager mDataClearManager = new DataClearManager();
-    private final DownloadFetcher mDownloadFetcher = new DownloadFetcher(new DownloadFetcher.Callbacks() {
+    private final SelfFetchDownloads mDownloads = new SelfFetchDownloads(new SelfFetchDownloads.Host() {
+        @Override
+        public String httpUserAgent() {
+            return mHttpUserAgent;
+        }
+
+        @Override
+        public boolean offTheRecord() {
+            return mOffTheRecord;
+        }
+
+        @Override
+        public Context context() {
+            return mContext;
+        }
+    }, new DownloadFetcher.Callbacks() {
         @Override
         public void onProgress(long downloadId, long receivedBytes, long totalBytes) {
             withNativePtr(ptr -> nativeOnDownloadProgress(ptr, downloadId, receivedBytes, totalBytes));
@@ -699,8 +714,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     public void probeDownload(final String url, final String token) {
         // Never throws: a dead WebView or missing provider degrades to an
         // anonymous probe instead of losing the request (see ProbeRequest).
-        final ProbeRequest request = ProbeRequest.resolve(mHttpUserAgent, mContext,
-                mOffTheRecord, url);
+        final ProbeRequest request = mDownloads.probeRequest(url);
         final String ua = request.userAgent;
         final String cookies = request.cookieHeader;
 
@@ -722,21 +736,19 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
      * Start a self-fetch download after the host accepted a Download Target.
      */
     public void startDownload(long downloadId, String url, String destination) {
-        String ua = RequestUserAgent.resolve(mHttpUserAgent, mContext);
-        mDownloadFetcher.start(downloadId, url, destination, ua, mOffTheRecord, mContext);
+        mDownloads.start(downloadId, url, destination);
     }
 
     public void cancelDownload(long downloadId) {
-        mDownloadFetcher.cancel(downloadId);
+        mDownloads.cancel(downloadId);
     }
 
     public void pauseDownload(long downloadId) {
-        mDownloadFetcher.pause(downloadId);
+        mDownloads.pause(downloadId);
     }
 
     public void resumeDownload(long downloadId) {
-        String ua = RequestUserAgent.resolve(mHttpUserAgent, mContext);
-        mDownloadFetcher.resume(downloadId, ua, mOffTheRecord, mContext);
+        mDownloads.resume(downloadId);
     }
 
     /**
@@ -744,7 +756,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
      */
     public void destroy() {
         mNativePtr = 0;  // zero out immediately so JNI callbacks are ignored
-        mDownloadFetcher.cancelAll();
+        mDownloads.cancelAll();
         runOnMainThread(() -> {
             mBridgeInjector.clearDocumentStartScripts();
             if (mWebView != null) {

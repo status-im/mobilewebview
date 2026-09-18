@@ -35,6 +35,8 @@ public final class DownloadFetcherRaceTest {
     public static void main(String[] args) throws Exception {
         pausedThenResumedDownloadSurvivesStaleWorkerDeath();
         System.out.println("DownloadFetcherRaceTest passed");
+        // DownloadFetcher pool threads idle for 60s before the JVM may exit.
+        System.exit(0);
     }
 
     private static void pausedThenResumedDownloadSurvivesStaleWorkerDeath() throws Exception {

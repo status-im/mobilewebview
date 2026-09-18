@@ -47,6 +47,7 @@ SOURCES=(
   "$ANDROID_SRC/DownloadIo.java"
   "$ANDROID_SRC/DownloadMediaStore.java"
   "$ANDROID_SRC/DownloadFetcher.java"
+  "$ANDROID_SRC/SelfFetchDownloads.java"
   "$ANDROID_TEST/OriginUtilsTest.java"
   "$ANDROID_TEST/BridgeScriptBuilderTest.java"
   "$ANDROID_TEST/MobileWebViewPendingActionsTest.java"
@@ -61,6 +62,7 @@ SOURCES=(
   "$ANDROID_TEST/RequestUserAgentTest.java"
   "$ANDROID_TEST/ProbeRequestTest.java"
   "$ANDROID_TEST/DownloadFetcherRaceTest.java"
+  "$ANDROID_TEST/SelfFetchDownloadsTest.java"
 )
 
 echo "Compiling Java tests..."
@@ -79,6 +81,7 @@ TESTS=(
   org.mobilewebview.RequestUserAgentTest
   org.mobilewebview.ProbeRequestTest
   org.mobilewebview.DownloadFetcherRaceTest
+  org.mobilewebview.SelfFetchDownloadsTest
 )
 
 for test in "${TESTS[@]}"; do
