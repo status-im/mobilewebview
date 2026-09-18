@@ -1065,6 +1065,21 @@ QString MobileWebViewBackend::httpUserAgent() const
     return d->m_httpUserAgent;
 }
 
+QString MobileWebViewBackend::defaultHttpUserAgent() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_defaultHttpUserAgent;
+}
+
+void MobileWebViewBackendPrivate::setDefaultHttpUserAgent(const QString &userAgent)
+{
+    if (m_defaultHttpUserAgent == userAgent) {
+        return;
+    }
+    m_defaultHttpUserAgent = userAgent;
+    emit q_ptr->defaultHttpUserAgentChanged();
+}
+
 void MobileWebViewBackend::setHttpUserAgent(const QString &httpUserAgent)
 {
     Q_D(MobileWebViewBackend);

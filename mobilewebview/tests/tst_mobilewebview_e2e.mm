@@ -87,6 +87,7 @@ class MobileWebViewE2ETest : public QObject
 
 private slots:
     void bridgeRoundtripSmoke();
+    void defaultHttpUserAgentIsTheEngineDefault();
 };
 
 void MobileWebViewE2ETest::bridgeRoundtripSmoke()
@@ -156,6 +157,25 @@ void MobileWebViewE2ETest::bridgeRoundtripSmoke()
     backend.reload();
     backend.stop();
     backend.updateAllowedOrigins({QStringLiteral("https://example.com")});
+}
+
+void MobileWebViewE2ETest::defaultHttpUserAgentIsTheEngineDefault()
+{
+    MobileWebViewBackend backend;
+    backend.setHttpUserAgent(QStringLiteral("StatusMobile/1.0"));
+    if (backend.defaultHttpUserAgent().isEmpty()) {
+        QSignalSpy spy(&backend, &MobileWebViewBackend::defaultHttpUserAgentChanged);
+        QVERIFY(spy.wait(10000));
+    }
+
+    // WebKit's own string, untouched by the override set above.
+    const QString engineDefault = backend.defaultHttpUserAgent();
+    QVERIFY2(engineDefault.contains(QStringLiteral("AppleWebKit/")), qPrintable(engineDefault));
+    QVERIFY(!engineDefault.contains(QStringLiteral("StatusMobile")));
+
+    // Known for the whole process once fetched: the next view has it at once.
+    MobileWebViewBackend next;
+    QCOMPARE(next.defaultHttpUserAgent(), engineDefault);
 }
 
 QTEST_MAIN(MobileWebViewE2ETest)

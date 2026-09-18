@@ -42,6 +42,7 @@ class MobileWebViewBackend : public QQuickItem
     Q_PROPERTY(bool offTheRecord READ offTheRecord WRITE setOffTheRecord NOTIFY offTheRecordChanged)
     Q_PROPERTY(QString storageName READ storageName WRITE setStorageName NOTIFY storageNameChanged)
     Q_PROPERTY(QString httpUserAgent READ httpUserAgent WRITE setHttpUserAgent NOTIFY httpUserAgentChanged)
+    Q_PROPERTY(QString defaultHttpUserAgent READ defaultHttpUserAgent NOTIFY defaultHttpUserAgentChanged)
     Q_PROPERTY(bool clearing READ clearing NOTIFY clearingChanged)
 
 public:
@@ -84,6 +85,8 @@ public:
     void setStorageName(const QString &storageName);
     QString httpUserAgent() const;
     void setHttpUserAgent(const QString &httpUserAgent);
+    // What the engine sends with no override; empty until the platform reports it.
+    QString defaultHttpUserAgent() const;
     bool clearing() const;
 
     /// Async native snapshot. On success, snapshotReady carries a stable
@@ -214,6 +217,7 @@ signals:
     void offTheRecordChanged();
     void storageNameChanged();
     void httpUserAgentChanged();
+    void defaultHttpUserAgentChanged();
     void clearingChanged();
 
     void clearHttpCacheCompleted();
