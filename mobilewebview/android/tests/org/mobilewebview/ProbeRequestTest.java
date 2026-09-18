@@ -1,19 +1,19 @@
 package org.mobilewebview;
 
+import android.content.Context;
 import android.webkit.WebSettings;
-import android.webkit.WebView;
 
 public final class ProbeRequestTest {
     public static void main(String[] args) {
         shouldPreferHostUserAgentWithoutTouchingSettings();
         shouldOmitCookiesOffTheRecord();
-        shouldFallBackToEmptyUserAgentWhenWebViewIsDead();
+        shouldUsePlatformDefaultUserAgentWhenHostSetsNone();
         shouldOmitCookiesWhenCookieAccessFails();
         System.out.println("ProbeRequestTest passed");
     }
 
     private static void shouldPreferHostUserAgentWithoutTouchingSettings() {
-        ProbeRequest request = ProbeRequest.resolve("host-agent", deadWebView(), false,
+        ProbeRequest request = ProbeRequest.resolve("host-agent", new Context(), false,
                 "https://example.org/file.bin");
         assertEquals("host-agent", request.userAgent);
     }
@@ -24,12 +24,13 @@ public final class ProbeRequestTest {
         assertEquals(null, request.cookieHeader);
     }
 
-    // A download can be re-issued against a WebView the platform already tore
-    // down; probing must degrade to an anonymous request, never throw.
-    private static void shouldFallBackToEmptyUserAgentWhenWebViewIsDead() {
-        ProbeRequest request = ProbeRequest.resolve("", deadWebView(), false,
+    // Probes run from the Qt thread: an empty host agent resolves to the
+    // platform default without touching the WebView.
+    private static void shouldUsePlatformDefaultUserAgentWhenHostSetsNone() {
+        WebSettings.resetDefaultUserAgent();
+        ProbeRequest request = ProbeRequest.resolve("", new Context(), false,
                 "https://example.org/file.bin");
-        assertEquals("", request.userAgent);
+        assertEquals("fake-default-agent", request.userAgent);
     }
 
     // CookieManager.getInstance() dies on devices with no WebView provider;
@@ -45,15 +46,6 @@ public final class ProbeRequestTest {
         } finally {
             android.webkit.CookieManager.resetGetCookieFailure();
         }
-    }
-
-    private static WebView deadWebView() {
-        return new WebView(null) {
-            @Override
-            public WebSettings getSettings() {
-                throw new IllegalStateException("WebView is destroyed");
-            }
-        };
     }
 
     private static void assertEquals(Object expected, Object actual) {
