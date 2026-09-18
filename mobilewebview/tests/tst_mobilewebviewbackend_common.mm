@@ -320,6 +320,7 @@ private slots:
     void recreateReinstallsBridgeAndPreservesUserScripts();
     void httpUserAgentDefaultsEmptyAndAppliesWithoutRecreate();
     void httpUserAgentSurvivesStoreRecreate();
+    void defaultHttpUserAgentComesFromPlatformNotOverride();
     void downloadUrlEmitsRequestedAndAcceptStartsTransfer();
     void downloadUrlEchoesTokenOnRequested();
     void downloadCancelFromRequestedDoesNotStartTransfer();
@@ -1306,6 +1307,30 @@ void MobileWebViewBackendCommonTest::httpUserAgentDefaultsEmptyAndAppliesWithout
     QCOMPARE(backend.httpUserAgent(), QString());
     QCOMPARE(spy.count(), 2);
     QCOMPARE(d->lastHttpUserAgent, QString());
+}
+
+void MobileWebViewBackendCommonTest::defaultHttpUserAgentComesFromPlatformNotOverride()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+    auto *d = g_lastCreatedPrivate;
+
+    QCOMPARE(backend.defaultHttpUserAgent(), QString());
+
+    QSignalSpy spy(&backend, &MobileWebViewBackend::defaultHttpUserAgentChanged);
+    const QString engineDefault = QStringLiteral("Mozilla/5.0 Engine/1.0");
+    d->setDefaultHttpUserAgent(engineDefault);
+    QCOMPARE(backend.defaultHttpUserAgent(), engineDefault);
+    QCOMPARE(spy.count(), 1);
+
+    d->setDefaultHttpUserAgent(engineDefault);
+    QCOMPARE(spy.count(), 1);
+
+    // The override never changes what the engine would send on its own.
+    backend.setHttpUserAgent(QStringLiteral("StatusMobile/1.0"));
+    QCOMPARE(backend.defaultHttpUserAgent(), engineDefault);
+    QCOMPARE(spy.count(), 1);
 }
 
 void MobileWebViewBackendCommonTest::httpUserAgentSurvivesStoreRecreate()

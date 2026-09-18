@@ -24,6 +24,8 @@
 
 #include <QQuickWindow>
 #include <QDebug>
+#include <QCoreApplication>
+#include <QPointer>
 #include <QPointer>
 #include <QFile>
 #include <QVariantMap>
@@ -230,6 +232,8 @@ public:
     void resumeDownloadImpl(quint64 downloadId) override;
 
 private:
+    void fetchDefaultHttpUserAgent();
+
     WKWebView *m_webView = nullptr;
     NavigationDelegate *m_navigationDelegate = nullptr;
     DownloadDelegate *m_downloadDelegate = nullptr;
@@ -241,9 +245,49 @@ private:
     std::optional<QRect> m_lastGeometry;
 };
 
+namespace {
+// WebKit's default User-Agent, fetched once per process (Qt thread only).
+QString s_defaultHttpUserAgent;
+}
+
 DarwinWebViewPrivate::DarwinWebViewPrivate(MobileWebViewBackend *q)
     : MobileWebViewBackendPrivate(q)
 {
+    fetchDefaultHttpUserAgent();
+}
+
+void DarwinWebViewPrivate::fetchDefaultHttpUserAgent()
+{
+    if (!s_defaultHttpUserAgent.isEmpty()) {
+        m_defaultHttpUserAgent = s_defaultHttpUserAgent;
+        return;
+    }
+
+    // No public API returns it synchronously, and customUserAgent on the real
+    // view would mask it, so ask a separate view that never gets an override.
+    QPointer<MobileWebViewBackend> guard(q_ptr);
+    runOnMainThread(^{
+        WKWebViewConfiguration *config = [[WKWebViewConfiguration alloc] init];
+        WKWebView *probe = [[WKWebView alloc] initWithFrame:CGRectZero configuration:config];
+        [config release];
+        [probe evaluateJavaScript:@"navigator.userAgent"
+                completionHandler:^(id result, NSError *) {
+            const QString userAgent = [result isKindOfClass:[NSString class]]
+                ? QString::fromNSString(static_cast<NSString *>(result))
+                : QString();
+            [probe release];
+            if (userAgent.isEmpty()) {
+                return;
+            }
+            QMetaObject::invokeMethod(qApp, [this, guard, userAgent]() {
+                s_defaultHttpUserAgent = userAgent;
+                // The backend owns this private, so a live guard means a live this.
+                if (guard) {
+                    setDefaultHttpUserAgent(userAgent);
+                }
+            }, Qt::QueuedConnection);
+        }];
+    });
 }
 
 DarwinWebViewPrivate::~DarwinWebViewPrivate()

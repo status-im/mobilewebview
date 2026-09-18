@@ -27,6 +27,10 @@ Expose `httpUserAgent` on `MobileWebViewBackend` as a per-view property:
 - The override is independent of Storage Profile: after an
   `offTheRecord` / `storageName` recreate it is re-applied to the new native view.
 - `MobileWebViewAdapter` binds `profileParams.userAgent` → `backend.httpUserAgent`.
+- A read-only `defaultHttpUserAgent` reports what the engine sends with no
+  override, so a host can build its own string from it. Android reads
+  `WebSettings.getDefaultUserAgent`; Darwin asks a separate `WKWebView` that
+  never gets an override, once per process. It stays empty until known.
 
 ## Consequences
 

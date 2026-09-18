@@ -154,9 +154,37 @@ private:
     QHash<quint64, std::function<void()>> m_pendingClearCompletions;
 };
 
+namespace {
+
+// WebSettings.getDefaultUserAgent needs no WebView, so it is safe on the Qt thread.
+QString platformDefaultHttpUserAgent()
+{
+    static QString cached;
+    if (!cached.isEmpty()) {
+        return cached;
+    }
+    const QJniObject context = QNativeInterface::QAndroidApplication::context();
+    if (!context.isValid()) {
+        return {};
+    }
+    QJniEnvironment env;
+    const QJniObject userAgent = QJniObject::callStaticObjectMethod(
+        "android/webkit/WebSettings", "getDefaultUserAgent",
+        "(Landroid/content/Context;)Ljava/lang/String;", context.object());
+    // Throws on devices with no WebView provider.
+    if (env.checkAndClearExceptions() || !userAgent.isValid()) {
+        return {};
+    }
+    cached = userAgent.toString();
+    return cached;
+}
+
+} // namespace
+
 AndroidWebViewPrivate::AndroidWebViewPrivate(MobileWebViewBackend *q)
     : MobileWebViewBackendPrivate(q)
 {
+    m_defaultHttpUserAgent = platformDefaultHttpUserAgent();
 }
 
 AndroidWebViewPrivate::~AndroidWebViewPrivate()

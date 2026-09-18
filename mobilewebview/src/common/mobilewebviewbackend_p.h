@@ -171,6 +171,7 @@ public:
     virtual void updateInteractionEnabled(bool) {}
     virtual void setZoomFactorImpl(qreal) {}
     virtual void setHttpUserAgentImpl(const QString &) {}
+    void setDefaultHttpUserAgent(const QString &userAgent);
 
     // Called when platform snapshot is ready (Qt thread)
     void notifySnapshotReady(quint64 requestId, const QImage &image);
@@ -261,6 +262,7 @@ public:
     QString m_favicon;
     qreal m_zoomFactor = 1.0;
     QString m_httpUserAgent;
+    QString m_defaultHttpUserAgent;
     QVariantList m_userScripts;
     QString m_webChannelNamespace = QStringLiteral("qt");
     QString m_invokeKey;
