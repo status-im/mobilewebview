@@ -699,7 +699,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     public void probeDownload(final String url, final String token) {
         // Never throws: a dead WebView or missing provider degrades to an
         // anonymous probe instead of losing the request (see ProbeRequest).
-        final ProbeRequest request = ProbeRequest.resolve(mHttpUserAgent, mWebView,
+        final ProbeRequest request = ProbeRequest.resolve(mHttpUserAgent, mContext,
                 mOffTheRecord, url);
         final String ua = request.userAgent;
         final String cookies = request.cookieHeader;
@@ -722,10 +722,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
      * Start a self-fetch download after the host accepted a Download Target.
      */
     public void startDownload(long downloadId, String url, String destination) {
-        String ua = mHttpUserAgent;
-        if ((ua == null || ua.isEmpty()) && mWebView != null) {
-            ua = mWebView.getSettings().getUserAgentString();
-        }
+        String ua = RequestUserAgent.resolve(mHttpUserAgent, mContext);
         mDownloadFetcher.start(downloadId, url, destination, ua, mOffTheRecord, mContext);
     }
 
@@ -738,10 +735,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     }
 
     public void resumeDownload(long downloadId) {
-        String ua = mHttpUserAgent;
-        if ((ua == null || ua.isEmpty()) && mWebView != null) {
-            ua = mWebView.getSettings().getUserAgentString();
-        }
+        String ua = RequestUserAgent.resolve(mHttpUserAgent, mContext);
         mDownloadFetcher.resume(downloadId, ua, mOffTheRecord, mContext);
     }
 

@@ -1043,11 +1043,17 @@ void AndroidWebViewPrivate::startDownloadImpl(quint64 downloadId, const QUrl &ur
     jstring jDest = env->NewStringUTF(destinationPath.toUtf8().constData());
     env->CallVoidMethod(m_webViewObject, m_startDownloadMethod,
                         static_cast<jlong>(downloadId), jUrl, jDest);
+    const bool threw = clearJniExceptionIfAny(env);
     if (jUrl)
         env->DeleteLocalRef(jUrl);
     if (jDest)
         env->DeleteLocalRef(jDest);
-    clearJniExceptionIfAny(env);
+    // The download is already InProgress; a start that threw must end it.
+    if (threw) {
+        QMetaObject::invokeMethod(q_ptr, [this, downloadId]() {
+            onDownloadFinished(downloadId, false, QStringLiteral("Download could not start"));
+        }, Qt::QueuedConnection);
+    }
 }
 
 void AndroidWebViewPrivate::cancelDownloadImpl(quint64 downloadId)
@@ -1100,7 +1106,11 @@ void AndroidWebViewPrivate::resumeDownloadImpl(quint64 downloadId)
     }
 
     env->CallVoidMethod(m_webViewObject, m_resumeDownloadMethod, static_cast<jlong>(downloadId));
-    clearJniExceptionIfAny(env);
+    if (clearJniExceptionIfAny(env)) {
+        QMetaObject::invokeMethod(q_ptr, [this, downloadId]() {
+            onDownloadFinished(downloadId, false, QStringLiteral("Download could not resume"));
+        }, Qt::QueuedConnection);
+    }
 }
 
 void AndroidWebViewPrivate::findTextImpl(const QString &text, int flags)

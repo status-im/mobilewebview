@@ -1,7 +1,7 @@
 package org.mobilewebview;
 
+import android.content.Context;
 import android.webkit.CookieManager;
-import android.webkit.WebView;
 
 /**
  * Request context (user agent, cookie header) for a HEAD probe (ADR 0005).
@@ -16,18 +16,9 @@ final class ProbeRequest {
         this.cookieHeader = cookieHeader;
     }
 
-    static ProbeRequest resolve(String httpUserAgent, WebView webView,
+    static ProbeRequest resolve(String httpUserAgent, Context context,
                                 boolean offTheRecord, String url) {
-        String agent = httpUserAgent;
-        if ((agent == null || agent.isEmpty()) && webView != null) {
-            // The platform may have torn the WebView down already; probe
-            // anonymously rather than dropping the download request.
-            try {
-                agent = webView.getSettings().getUserAgentString();
-            } catch (RuntimeException ignored) {
-                agent = "";
-            }
-        }
+        String agent = RequestUserAgent.resolve(httpUserAgent, context);
         String cookies = null;
         if (!offTheRecord) {
             // getInstance() dies on devices with no WebView provider — probe
