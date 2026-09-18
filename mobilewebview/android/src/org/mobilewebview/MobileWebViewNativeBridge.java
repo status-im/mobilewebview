@@ -2,7 +2,6 @@ package org.mobilewebview;
 
 import android.util.Log;
 import android.webkit.JavascriptInterface;
-import android.webkit.WebView;
 
 import java.util.List;
 
@@ -24,14 +23,9 @@ final class MobileWebViewNativeBridge {
             return;
         }
 
-        // Prefer tracked main-frame origin to avoid transient URL mismatches during redirects.
-        String resolvedOrigin = mHost.currentMainFrameOrigin();
-        if (resolvedOrigin == null || resolvedOrigin.isEmpty()) {
-            WebView webView = mHost.webView();
-            String currentUrl = webView != null ? webView.getUrl() : null;
-            resolvedOrigin = OriginUtils.extractOrigin(currentUrl);
-        }
-        final String origin = resolvedOrigin;
+        // Runs on the JavaBridge thread, so the origin comes from navigation tracking,
+        // never from the WebView. No origin yet means the message is rejected.
+        final String origin = mHost.currentMainFrameOrigin();
 
         final List<String> allowedOrigins = mHost.allowedOriginsSnapshot();
         if (!OriginUtils.isOriginAllowed(origin, allowedOrigins)) {
