@@ -338,6 +338,7 @@ private slots:
     void findCapabilitiesAreReadableWithoutABackend();
     void clearSiteDataSupportedReflectsPlatformImpl();
     void clearSiteDataSupportedIsReadableWithoutABackend();
+    void fitsLocalImageToViewIsReadableWithoutABackend();
 };
 
 void MobileWebViewBackendCommonTest::forwardsCallsAndStateChanges()
@@ -1752,6 +1753,20 @@ void MobileWebViewBackendCommonTest::clearSiteDataSupportedReflectsPlatformImpl(
     d->clearSiteDataSupportedValue = false;
     QVERIFY(!backend.clearSiteDataSupported());
     QCOMPARE(backend.property("clearSiteDataSupported").toBool(), false);
+}
+
+void MobileWebViewBackendCommonTest::fitsLocalImageToViewIsReadableWithoutABackend()
+{
+    // A host decides with no instance whether a downloaded image needs a page
+    // of its own to fit the screen.
+    const bool fits = MobileWebViewCapabilities::fitsLocalImageToView();
+
+    // WKWebView scales a directly loaded image to the view; this suite runs on macOS.
+    QVERIFY(fits);
+
+    // Same answer through the QML-facing singleton object.
+    MobileWebViewCapabilities capabilities;
+    QCOMPARE(capabilities.property("fitsLocalImageToView").toBool(), fits);
 }
 
 void MobileWebViewBackendCommonTest::clearSiteDataSupportedIsReadableWithoutABackend()

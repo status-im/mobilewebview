@@ -25,6 +25,7 @@ class MobileWebViewCapabilities : public QObject
     Q_PROPERTY(bool hasNativeFindPanel READ hasNativeFindPanel CONSTANT)
     Q_PROPERTY(bool clearSiteDataSupported READ clearSiteDataSupported CONSTANT)
     Q_PROPERTY(bool inPageMediaPlaybackSupported READ inPageMediaPlaybackSupported CONSTANT)
+    Q_PROPERTY(bool fitsLocalImageToView READ fitsLocalImageToView CONSTANT)
 
 public:
     explicit MobileWebViewCapabilities(QObject *parent = nullptr);
@@ -45,6 +46,12 @@ public:
     /// Answering "no" means an in-page player would come up dead, so a host
     /// should hand the file to the OS instead.
     static bool isInPageMediaPlaybackSupported();
+
+    /// Does the engine scale a directly loaded local image to fit the view?
+    /// Answering "no" means a large photo shows at its natural size, so a host
+    /// should wrap it in a page that fits it. No instance twin: the name
+    /// already reads as a predicate, so the property reads this directly.
+    static bool fitsLocalImageToView();
 
     bool findSupported() const { return isFindSupported(); }
     bool clearSiteDataSupported() const { return isClearSiteDataSupported(); }

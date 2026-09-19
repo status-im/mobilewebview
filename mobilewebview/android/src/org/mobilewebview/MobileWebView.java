@@ -213,6 +213,9 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         settings.setAllowFileAccessFromFileURLs(false);
         settings.setAllowUniversalAccessFromFileURLs(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+        // Viewport and zoom stay at the WebView defaults (a local image is not
+        // fitted, pinch zoom is off); MobileWebViewCapabilities::fitsLocalImageToView
+        // reports that to the host.
 
         // Enable WebView debugging only for debuggable app builds.
         boolean isDebuggableBuild =

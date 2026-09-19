@@ -53,4 +53,10 @@ bool MobileWebViewCapabilities::isInPageMediaPlaybackSupported()
 #endif
 }
 
+bool MobileWebViewCapabilities::fitsLocalImageToView()
+{
+    // WKWebView shows a directly loaded image scaled to the view.
+    return true;
+}
+
 #endif // Q_OS_MACOS || Q_OS_IOS

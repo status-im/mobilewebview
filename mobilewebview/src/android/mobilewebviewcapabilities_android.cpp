@@ -59,4 +59,12 @@ bool MobileWebViewCapabilities::isInPageMediaPlaybackSupported()
     return true;
 }
 
+bool MobileWebViewCapabilities::fitsLocalImageToView()
+{
+    // MobileWebView leaves the viewport and zoom settings at the WebView
+    // defaults, so a local image is drawn at its natural size and pinch zoom
+    // is off (see the WebSettings block in MobileWebView.java).
+    return false;
+}
+
 #endif // Q_OS_ANDROID
