@@ -202,17 +202,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
      * Initialize WebView settings and clients
      */
     private void setupWebView() {
-        WebSettings settings = mWebView.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(true);
-        settings.setDatabaseEnabled(true);
-        // Top-level file:// for opening Downloads / local media. Web→file stays
-        // blocked; flags below keep file-origin JS from reading other local files.
-        settings.setAllowFileAccess(true);
-        settings.setAllowContentAccess(true);
-        settings.setAllowFileAccessFromFileURLs(false);
-        settings.setAllowUniversalAccessFromFileURLs(false);
-        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+        WebViewSettingsPolicy.apply(mWebView.getSettings());
 
         // Enable WebView debugging only for debuggable app builds.
         boolean isDebuggableBuild =
