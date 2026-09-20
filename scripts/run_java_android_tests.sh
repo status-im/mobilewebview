@@ -44,6 +44,7 @@ SOURCES=(
   "$ANDROID_SRC/RangeFetchPolicy.java"
   "$ANDROID_SRC/DownloadProbe.java"
   "$ANDROID_SRC/RequestUserAgent.java"
+  "$ANDROID_SRC/WebViewSettingsPolicy.java"
   "$ANDROID_SRC/ProbeRequest.java"
   "$ANDROID_SRC/DownloadIo.java"
   "$ANDROID_SRC/DownloadMediaStore.java"
@@ -63,6 +64,7 @@ SOURCES=(
   "$ANDROID_TEST/RangeFetchPolicyTest.java"
   "$ANDROID_TEST/DownloadProbeTest.java"
   "$ANDROID_TEST/RequestUserAgentTest.java"
+  "$ANDROID_TEST/WebViewSettingsPolicyTest.java"
   "$ANDROID_TEST/ProbeRequestTest.java"
   "$ANDROID_TEST/DownloadFetcherRaceTest.java"
   "$ANDROID_TEST/SelfFetchDownloadsTest.java"
@@ -83,6 +85,7 @@ TESTS=(
   org.mobilewebview.RangeFetchPolicyTest
   org.mobilewebview.DownloadProbeTest
   org.mobilewebview.RequestUserAgentTest
+  org.mobilewebview.WebViewSettingsPolicyTest
   org.mobilewebview.ProbeRequestTest
   org.mobilewebview.DownloadFetcherRaceTest
   org.mobilewebview.SelfFetchDownloadsTest
