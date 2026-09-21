@@ -179,12 +179,40 @@ QString platformDefaultHttpUserAgent()
     return cached;
 }
 
+/// Hands a finished file to the Java side, which copies it into
+/// MediaStore.Downloads so the system file UI can see it.
+void publishDownloadToSystem(const QString &path, const QString &mimeType)
+{
+    const QJniObject context = QNativeInterface::QAndroidApplication::context();
+    if (!context.isValid()) {
+        return;
+    }
+    QJniEnvironment env;
+    QJniObject::callStaticMethod<void>(
+        "org/mobilewebview/MobileWebView", "publishInlineDownload",
+        "(Ljava/lang/String;Landroid/content/Context;Ljava/lang/String;)V",
+        QJniObject::fromString(path).object<jstring>(), context.object(),
+        QJniObject::fromString(mimeType).object<jstring>());
+    env.checkAndClearExceptions();
+}
 } // namespace
 
 AndroidWebViewPrivate::AndroidWebViewPrivate(MobileWebViewBackend *q)
     : MobileWebViewBackendPrivate(q)
 {
     m_defaultHttpUserAgent = platformDefaultHttpUserAgent();
+
+    // Inline Downloads are written by Qt, so they miss the publish step the
+    // Java fetcher runs for network transfers. Incognito is never published.
+    if (m_downloadRegistry) {
+        m_downloadRegistry->setInlinePublisher(
+            [this](const QString &path, const QString &mimeType) {
+                if (m_offTheRecord) {
+                    return;
+                }
+                publishDownloadToSystem(path, mimeType);
+            });
+    }
 }
 
 AndroidWebViewPrivate::~AndroidWebViewPrivate()

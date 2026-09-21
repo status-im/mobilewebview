@@ -47,6 +47,8 @@ private slots:
     void finishRemovesAndDeleteLater();
     void cancelAllInvokesPlatformAndMarksCancelled();
     void inlineAcceptWritesPayload();
+    void inlineWriteIsPublished();
+    void failedInlineWriteIsNotPublished();
     void pauseResumeTransitions();
     void cancelAllCancelsPaused();
     void retryFromInterruptedEmitsNewRequest();
@@ -265,6 +267,64 @@ void DownloadRegistryTest::inlineAcceptWritesPayload()
     QFile file(path);
     QVERIFY(file.open(QIODevice::ReadOnly));
     QCOMPARE(file.readAll(), payload);
+}
+
+void DownloadRegistryTest::inlineWriteIsPublished()
+{
+    QObject parent;
+    RecordingTransfer transfer;
+    DownloadRegistry registry(&parent, {}, &transfer);
+
+    QStringList publishedPaths;
+    QStringList publishedTypes;
+    registry.setInlinePublisher([&](const QString &path, const QString &mimeType) {
+        publishedPaths << path;
+        publishedTypes << mimeType;
+    });
+
+    auto *download = registry.create(
+        QUrl(QStringLiteral("blob:https://example.com/uuid")),
+        QStringLiteral("hello.txt"),
+        QString(),
+        QStringLiteral("text/plain"),
+        -1,
+        QByteArray("hello-inline"));
+    QVERIFY(download);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("out.txt"));
+    download->accept(path);
+
+    QCOMPARE(publishedPaths, QStringList{path});
+    QCOMPARE(publishedTypes, QStringList{QStringLiteral("text/plain")});
+}
+
+void DownloadRegistryTest::failedInlineWriteIsNotPublished()
+{
+    QObject parent;
+    RecordingTransfer transfer;
+    DownloadRegistry registry(&parent, {}, &transfer);
+
+    int published = 0;
+    registry.setInlinePublisher([&](const QString &, const QString &) { ++published; });
+
+    auto *download = registry.create(
+        QUrl(QStringLiteral("blob:https://example.com/uuid")),
+        QStringLiteral("hello.txt"),
+        QString(),
+        QStringLiteral("text/plain"),
+        -1,
+        QByteArray("hello-inline"));
+    QVERIFY(download);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    // A directory that does not exist: the write fails, so nothing is published.
+    download->accept(dir.filePath(QStringLiteral("missing/out.txt")));
+
+    QCOMPARE(published, 0);
+    QCOMPARE(download->state(), MobileWebViewDownload::State::Interrupted);
 }
 
 void DownloadRegistryTest::pauseResumeTransitions()

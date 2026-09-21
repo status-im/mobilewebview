@@ -21,6 +21,11 @@ public:
     /// echoed verbatim; empty for page-initiated Downloads.
     using EmitRequested = std::function<void(MobileWebViewDownload *, const QString &token)>;
 
+    /// Called after an Inline Download (blob:/data:) is written, so the platform
+    /// can publish it the way it publishes fetched ones. Network transfers
+    /// publish inside the platform transfer, never here.
+    using PublishInline = std::function<void(const QString &path, const QString &mimeType)>;
+
     DownloadRegistry(QObject *parent,
                      EmitRequested emitRequested,
                      DownloadTransfer *transfer);
@@ -55,6 +60,8 @@ public:
 
     InlineDownloadWriter &inlineWriter() { return m_inlineWriter; }
 
+    void setInlinePublisher(PublishInline publish) { m_publishInline = std::move(publish); }
+
 private:
     void bindHooks(MobileWebViewDownload *download);
 
@@ -62,6 +69,7 @@ private:
     EmitRequested m_emitRequested;
     DownloadTransfer *m_transfer = nullptr;
     InlineDownloadWriter m_inlineWriter;
+    PublishInline m_publishInline;
     quint64 m_nextDownloadId = 0;
     QHash<quint64, MobileWebViewDownload *> m_downloads;
 };

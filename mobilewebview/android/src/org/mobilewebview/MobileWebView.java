@@ -698,6 +698,16 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     }
 
     /**
+     * Publishes an Inline Download (blob:/data:, written by Qt) into
+     * MediaStore.Downloads. Fetched downloads take the same step inside
+     * DownloadFetcher; this is only the JNI door for the ones Qt writes.
+     * The caller filters Incognito out.
+     */
+    public static void publishInlineDownload(String path, Context context, String mimeType) {
+        DownloadMediaStore.registerCompleted(path, context, mimeType);
+    }
+
+    /**
      * HEAD-probe Content-Disposition/Type for unnamed downloadUrl, then the same
      * nativeOnDownloadDetected path as DownloadListener.
      */

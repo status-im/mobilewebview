@@ -25,6 +25,10 @@ void DownloadRegistry::bindHooks(MobileWebViewDownload *download)
                     onFinished(downloadId, false, result.error);
                     return;
                 }
+                if (m_publishInline) {
+                    const auto *item = downloadById(downloadId);
+                    m_publishInline(path, item ? item->mimeType() : QString());
+                }
                 onProgress(downloadId, result.bytesWritten, result.bytesWritten);
                 onFinished(downloadId, true, QString());
                 return;
