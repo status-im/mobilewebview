@@ -67,6 +67,7 @@ SOURCES=(
   "$ANDROID_TEST/WebViewSettingsPolicyTest.java"
   "$ANDROID_TEST/ProbeRequestTest.java"
   "$ANDROID_TEST/DownloadFetcherRaceTest.java"
+  "$ANDROID_TEST/DownloadMediaStoreTest.java"
   "$ANDROID_TEST/SelfFetchDownloadsTest.java"
   "$ANDROID_TEST/MobileWebViewNativeBridgeTest.java"
 )
@@ -88,6 +89,7 @@ TESTS=(
   org.mobilewebview.WebViewSettingsPolicyTest
   org.mobilewebview.ProbeRequestTest
   org.mobilewebview.DownloadFetcherRaceTest
+  org.mobilewebview.DownloadMediaStoreTest
   org.mobilewebview.SelfFetchDownloadsTest
   org.mobilewebview.MobileWebViewNativeBridgeTest
 )
