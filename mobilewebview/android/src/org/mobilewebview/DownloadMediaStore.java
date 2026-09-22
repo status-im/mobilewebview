@@ -49,6 +49,22 @@ final class DownloadMediaStore {
         }
     }
 
+    /**
+     * The MIME to publish with, or null to let MediaStore derive it from the name.
+     * A name with an extension decides the type: AOSP silently appends the MIME's
+     * own extension when the two disagree ("photo.jpg.png"), and vendor providers
+     * can reject the insert instead, leaving the file unpublished.
+     */
+    static String mimeForPublish(String displayName, String mime) {
+        if (mime == null || mime.isEmpty()) {
+            return null;
+        }
+        final String name = displayName == null ? "" : displayName;
+        final int dot = name.lastIndexOf('.');
+        final boolean hasExtension = dot > 0 && dot < name.length() - 1;
+        return hasExtension ? null : mime;
+    }
+
     private static void publishToMediaStoreDownloads(File file, Context context, String mime)
             throws Exception {
         final ContentResolver resolver = context.getContentResolver();
@@ -57,8 +73,9 @@ final class DownloadMediaStore {
         values.put(MediaStore.Downloads.DISPLAY_NAME, file.getName());
         values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
         values.put(MediaStore.Downloads.IS_PENDING, 1);
-        if (mime != null && !mime.isEmpty()) {
-            values.put(MediaStore.Downloads.MIME_TYPE, mime);
+        final String publishMime = mimeForPublish(file.getName(), mime);
+        if (publishMime != null && !publishMime.isEmpty()) {
+            values.put(MediaStore.Downloads.MIME_TYPE, publishMime);
         }
 
         // MediaStore uniquifies DISPLAY_NAME itself ("name (1).ext") on collision.
