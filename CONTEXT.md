@@ -63,6 +63,14 @@ has completed. Completion order across overlapping clears is not part of the
 contract.
 _Avoid_: busy, in-flight clear, clear in progress.
 
+### Logical pixel
+The unit the host lays out a WebView in: its position and size in the Qt scene.
+The library always places the native view so that it covers exactly the WebView's
+logical area, whatever scale the host applies to its interface (e.g. an
+interface zoom). That scale changes how large the native view is on screen, not
+how large the page content is drawn inside it.
+_Avoid_: point, px, device pixel.
+
 ### Snapshot
 An asynchronous capture of the WebView's current frame as an image. Taken either
 on the host's explicit request or as the first step of a Freeze.
