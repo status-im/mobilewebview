@@ -270,6 +270,27 @@ if(APPLE)
     )
     add_test(NAME tst_world_isolation COMMAND tst_world_isolation)
 
+    if(NOT IOS)
+        add_executable(tst_native_geometry
+            tst_native_geometry.mm
+        )
+        target_include_directories(tst_native_geometry PRIVATE
+            ../include
+        )
+        target_link_libraries(tst_native_geometry PRIVATE
+            MobileWebView
+            Qt::Core
+            Qt::Gui
+            Qt::Qml
+            Qt::Quick
+            Qt::WebChannel
+            Qt::Test
+            "-framework AppKit"
+            "-framework WebKit"
+        )
+        add_test(NAME tst_native_geometry COMMAND tst_native_geometry)
+    endif()
+
     add_executable(tst_mobilewebviewbackend_common
         tst_mobilewebviewbackend_common.mm
         ../include/MobileWebView/mobilewebviewbackend.h

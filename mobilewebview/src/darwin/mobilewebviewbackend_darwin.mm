@@ -80,6 +80,26 @@ int currentHistoryIndex(WKWebView *webView)
     return static_cast<int>(webView.backForwardList.backList.count);
 }
 
+// Native points per Qt logical pixel; differs from 1 under QT_SCALE_FACTOR.
+qreal nativePointsPerQtPixel(QQuickWindow *win, void *hostView)
+{
+#ifdef Q_OS_IOS
+    UIView *view = reinterpret_cast<UIView *>(hostView);
+    CGFloat nativeScale = view.window.screen.scale;
+    if (nativeScale <= 0) {
+        nativeScale = UIScreen.mainScreen.scale;
+    }
+#else
+    NSView *view = reinterpret_cast<NSView *>(hostView);
+    CGFloat nativeScale = view.window.backingScaleFactor;
+    if (nativeScale <= 0) {
+        nativeScale = NSScreen.mainScreen.backingScaleFactor;
+    }
+#endif
+    const qreal dpr = win ? win->devicePixelRatio() : 0;
+    return nativeScale > 0 && dpr > 0 ? dpr / nativeScale : 1.0;
+}
+
 } // namespace
 
 @interface WebViewStateObserver : NSObject
@@ -743,9 +763,10 @@ void DarwinWebViewPrivate::updateNativeGeometry(const QRectF &rect)
         return;
     }
 
-    QPointF scenePos = q_ptr->mapToScene(QPointF(0, 0));
-    qreal itemWidth = rect.width();
-    qreal itemHeight = rect.height();
+    const qreal scale = nativePointsPerQtPixel(win, m_hostView);
+    const QPointF scenePos = q_ptr->mapToScene(QPointF(0, 0)) * scale;
+    const qreal itemWidth = rect.width() * scale;
+    const qreal itemHeight = rect.height() * scale;
 
     if (itemWidth <= 0 || itemHeight <= 0) {
         return;
@@ -1038,11 +1059,12 @@ void DarwinWebViewPrivate::setupNativeViewImpl()
     });
 
     // Snapshot geometry now (on Qt thread) before jumping to main thread.
-    QPointF scenePos = q_ptr->mapToScene(QPointF(0, 0));
+    const qreal scale = nativePointsPerQtPixel(win, hostView);
+    const QPointF scenePos = q_ptr->mapToScene(QPointF(0, 0)) * scale;
     CGFloat geoX = scenePos.x();
     CGFloat geoY = scenePos.y();
-    CGFloat geoW = q_ptr->width();
-    CGFloat geoH = q_ptr->height();
+    CGFloat geoW = q_ptr->width() * scale;
+    CGFloat geoH = q_ptr->height() * scale;
     const bool currentVisible = q_ptr->isVisible();
     const bool showNativeWeb = shouldShowNativeWebView(currentVisible);
 
