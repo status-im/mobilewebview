@@ -2,6 +2,8 @@ package org.mobilewebview;
 
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.ProviderInfo;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 
@@ -20,6 +22,7 @@ import android.view.ViewParent;
 import android.webkit.WebSettings;
 import android.webkit.WebBackForwardList;
 import android.webkit.WebHistoryItem;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.os.Bundle;
 import android.os.Handler;
@@ -27,9 +30,11 @@ import android.os.Looper;
 import android.os.Message;
 import android.graphics.Rect;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -100,6 +105,10 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     private boolean mOffTheRecord = false;
     private String mActiveProfileName = null;
     private String mHttpUserAgent = "";
+
+    // Read Grant (ADR 0007): a browsing view reaches no local content;
+    // loadFileUrl grants a preview its file (or directory) or content:// URI.
+    private volatile LocalReadGrant mReadGrant = LocalReadGrant.NONE;
 
     // WebView-local px; HitTestResult has no coordinates.
     private float mLastTouchX = 0f;
@@ -306,6 +315,53 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
             if (mWebView == null) return;
             mWebView.loadUrl(url);
         });
+    }
+
+    /**
+     * Load local content as a preview under a Read Grant: the file (or the
+     * directory readAccessUrl names) over file://, or the content:// URI
+     * itself. The grant lasts until the next loadFileUrl on this view.
+     */
+    public void loadFileUrl(String requestedUrl, String readAccessUrl) {
+        final String url = withProviderAuthority(requestedUrl);
+        LocalReadGrant grant = LocalReadGrant.forPreview(url, readAccessUrl);
+        if (grant == LocalReadGrant.NONE) {
+            Log.w(TAG, "loadFileUrl: the read-access URL does not cover the file; not loaded");
+            return;
+        }
+        // The URL stays out of the log: a content:// URI can carry an account.
+        Log.d(TAG, "loadFileUrl: " + (grant.allowsContentScheme() ? "content" : "file") + " preview");
+        mReadGrant = grant;
+        mPendingUrl = url;
+        runOnMainThread(() -> {
+            if (mWebView == null) return;
+            WebViewSettingsPolicy.applyReadGrant(mWebView.getSettings(), grant);
+            mWebView.loadUrl(url);
+        });
+    }
+
+    // The host's QUrl lowercases a content:// authority; providers match it
+    // case-sensitively. The provider that granted the URI is visible to us.
+    @SuppressWarnings("deprecation")
+    private String withProviderAuthority(String url) {
+        if (url == null || !url.regionMatches(true, 0, "content:", 0, 8)) {
+            return url;
+        }
+        try {
+            PackageManager pm = mContext.getPackageManager();
+            String authority = Uri.parse(url).getAuthority();
+            if (authority == null || pm.resolveContentProvider(authority, 0) != null) {
+                return url;
+            }
+            List<String> authorities = new ArrayList<>();
+            for (ProviderInfo provider : pm.queryContentProviders(null, 0, 0)) {
+                authorities.add(provider.authority);
+            }
+            return ContentAuthorities.restoreCase(url, authorities);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "withProviderAuthority: provider lookup failed", e);
+            return url;
+        }
     }
 
     /**
@@ -851,6 +907,22 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     @Override
     public boolean handleCustomScheme(WebView view, Uri uri) {
         return CustomSchemeUrlHandler.handle(view, uri);
+    }
+
+    @Override
+    public boolean permitsNavigation(String url) {
+        return mReadGrant.permits(url);
+    }
+
+    @Override
+    public WebResourceResponse interceptRequest(String url, boolean mainFrame) {
+        if (mReadGrant.permits(url)) {
+            return null;
+        }
+        Log.w(TAG, "Refused local " + (mainFrame ? "navigation" : "subresource")
+                + " outside the Read Grant");
+        return new WebResourceResponse("text/plain", "utf-8", 403, "Forbidden",
+                Collections.emptyMap(), new ByteArrayInputStream(new byte[0]));
     }
 
     // --- NativeBridgeHost ---

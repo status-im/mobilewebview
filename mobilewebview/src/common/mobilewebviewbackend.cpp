@@ -193,9 +193,7 @@ void MobileWebViewBackendPrivate::clearSiteDataImpl(const QString &origin,
     }
 }
 
-// Default local-file load: a plain URL load. Engines that accept a top-level
-// file:// through the normal load path (Android WebView) need nothing more;
-// the read-access directory has no equivalent there. Darwin overrides.
+// Default local-file load: a plain URL load. Darwin and Android override it.
 void MobileWebViewBackendPrivate::loadFileUrlImpl(const QUrl &fileUrl,
                                                   const QUrl &readAccessDirUrl)
 {
@@ -1159,22 +1157,34 @@ void MobileWebViewBackend::loadFileUrl(const QUrl &fileUrl, const QUrl &readAcce
 {
     Q_D(MobileWebViewBackend);
 
-    if (!fileUrl.isValid() || !fileUrl.isLocalFile()) {
+#if defined(Q_OS_ANDROID)
+    // "Open with" hands Android previews a content:// URI, read in place.
+    const bool contentUri =
+        fileUrl.scheme().compare(QLatin1String("content"), Qt::CaseInsensitive) == 0
+        && !fileUrl.host().isEmpty();
+#else
+    const bool contentUri = false;
+#endif
+    if (!fileUrl.isValid() || (!fileUrl.isLocalFile() && !contentUri)) {
         qWarning() << "MobileWebViewBackend::loadFileUrl: not a local file URL:" << fileUrl;
         return;
     }
-    if (!readAccessUrl.isEmpty() && !readAccessUrl.isLocalFile()) {
+    // A content:// grant is the URI itself; nothing else may be named.
+    const bool readAccessOk = readAccessUrl.isEmpty()
+        || (contentUri ? readAccessUrl == fileUrl : readAccessUrl.isLocalFile());
+    if (!readAccessOk) {
         qWarning() << "MobileWebViewBackend::loadFileUrl: read-access URL is not a local"
-                      " directory URL:" << readAccessUrl;
+                      " file or directory URL:" << readAccessUrl;
         return;
     }
 
     // Empty read access = the file's own directory: the narrowest grant that
     // still lets the page (and its sibling resources) load.
-    const QUrl readAccessDirUrl =
-        readAccessUrl.isEmpty()
-            ? QUrl::fromLocalFile(QFileInfo(fileUrl.toLocalFile()).absolutePath())
-            : readAccessUrl;
+    QUrl readAccessDirUrl = readAccessUrl;
+    if (contentUri)
+        readAccessDirUrl = fileUrl;
+    else if (readAccessUrl.isEmpty())
+        readAccessDirUrl = QUrl::fromLocalFile(QFileInfo(fileUrl.toLocalFile()).absolutePath());
 
     QString origin = extractOrigin(fileUrl);
     if (!origin.isEmpty()) {

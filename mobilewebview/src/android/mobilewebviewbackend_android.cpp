@@ -43,6 +43,7 @@ public:
     void destroyNativeView() override;
     void loadUrlImpl(const QUrl &url) override;
     void loadHtmlImpl(const QString &html, const QUrl &baseUrl) override;
+    void loadFileUrlImpl(const QUrl &fileUrl, const QUrl &readAccessUrl) override;
     void goBackImpl() override;
     void goForwardImpl() override;
     void goBackOrForwardImpl(int offset) override;
@@ -118,6 +119,7 @@ private:
     // JNI method IDs (cached for performance)
     jmethodID m_loadUrlMethod = nullptr;
     jmethodID m_loadHtmlMethod = nullptr;
+    jmethodID m_loadFileUrlMethod = nullptr;
     jmethodID m_goBackMethod = nullptr;
     jmethodID m_goForwardMethod = nullptr;
     jmethodID m_goBackOrForwardMethod = nullptr;
@@ -272,6 +274,7 @@ bool AndroidWebViewPrivate::initNativeView()
     // Cache method IDs
     m_loadUrlMethod = env->GetMethodID(m_webViewClass, "loadUrl", "(Ljava/lang/String;)V");
     m_loadHtmlMethod = env->GetMethodID(m_webViewClass, "loadHtml", "(Ljava/lang/String;Ljava/lang/String;)V");
+    m_loadFileUrlMethod = env->GetMethodID(m_webViewClass, "loadFileUrl", "(Ljava/lang/String;Ljava/lang/String;)V");
     m_goBackMethod = env->GetMethodID(m_webViewClass, "goBack", "()V");
     m_goForwardMethod = env->GetMethodID(m_webViewClass, "goForward", "()V");
     m_goBackOrForwardMethod = env->GetMethodID(m_webViewClass, "goBackOrForward", "(I)V");
@@ -525,11 +528,6 @@ jobjectArray AndroidWebViewPrivate::createJavaStringArray(QJniEnvironment &env, 
     return array;
 }
 
-// loadFileUrlImpl is deliberately not overridden here: Android WebView loads a
-// top-level file:// through this very path (MobileWebView.setupWebView enables
-// setAllowFileAccess, and WebViewUrlPolicy lists "file" as supported), and it
-// has no read-access-directory concept to honour. The base default forwards to
-// loadUrlImpl, which is exactly what this platform needs.
 void AndroidWebViewPrivate::loadUrlImpl(const QUrl &url)
 {
     QMutexLocker locker(&m_jniMutex);
@@ -570,6 +568,32 @@ void AndroidWebViewPrivate::loadHtmlImpl(const QString &html, const QUrl &baseUr
     env->CallVoidMethod(m_webViewObject, m_loadHtmlMethod, jHtml, jBaseUrl);
     env->DeleteLocalRef(jHtml);
     env->DeleteLocalRef(jBaseUrl);
+
+    clearJniExceptionIfAny(env);
+}
+
+// The Android WebView has no read-access concept of its own: the Java side
+// records the Read Grant and opens file:// or content:// for this view only.
+void AndroidWebViewPrivate::loadFileUrlImpl(const QUrl &fileUrl, const QUrl &readAccessUrl)
+{
+    QMutexLocker locker(&m_jniMutex);
+
+    if (!m_jniInitialized) {
+        qWarning() << "AndroidWebViewPrivate: JNI not initialized";
+        return;
+    }
+
+    QJniEnvironment env;
+    if (!env.isValid() || !m_webViewObject || !m_loadFileUrlMethod) {
+        return;
+    }
+
+    jstring jUrl = env->NewStringUTF(fileUrl.toString(QUrl::FullyEncoded).toUtf8().constData());
+    jstring jReadAccess =
+        env->NewStringUTF(readAccessUrl.toString(QUrl::FullyEncoded).toUtf8().constData());
+    env->CallVoidMethod(m_webViewObject, m_loadFileUrlMethod, jUrl, jReadAccess);
+    env->DeleteLocalRef(jUrl);
+    env->DeleteLocalRef(jReadAccess);
 
     clearJniExceptionIfAny(env);
 }

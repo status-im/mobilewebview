@@ -112,10 +112,8 @@ ScreenScaffold {
     function startLoad(step, url) {
         root.pendingLoad = step
         root.loadStartedAt = Date.now()
-        if (url.indexOf("file:") === 0)
-            root.webView.loadFileUrl(url, url) // read grant: this one file
-        else
-            root.webView.loadUrl(url)
+        // Read Grant: this one file (content:// is the URI itself).
+        root.webView.loadFileUrl(url, url)
         loadWatch.restart()
     }
 

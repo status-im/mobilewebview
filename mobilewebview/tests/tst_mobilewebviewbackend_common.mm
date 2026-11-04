@@ -1071,6 +1071,12 @@ void MobileWebViewBackendCommonTest::loadFileUrlRejectsNonFileUrls()
     QCOMPARE(d->loadFileUrlCalls, 0);
     QCOMPARE(d->loadUrlCalls, 0);
 
+    // content:// is Android's "Open with" hand-over; anywhere else it names no
+    // local file.
+    backend.loadFileUrl(QUrl(QStringLiteral("content://com.example.provider/1")));
+    QCOMPARE(d->loadFileUrlCalls, 0);
+    QCOMPARE(d->loadUrlCalls, 0);
+
     // A read-access URL that is not a local directory URL is rejected too, so a
     // bad grant can never reach the platform.
     backend.loadFileUrl(QUrl::fromLocalFile(QStringLiteral("/tmp/mwv/report.pdf")),
@@ -1108,6 +1114,11 @@ void MobileWebViewBackendCommonTest::loadFileUrlDefaultsReadAccessToOwnDirectory
     backend.loadFileUrl(fileUrl, explicitDir);
     QCOMPARE(d->loadFileUrlCalls, 2);
     QCOMPARE(d->lastFileReadAccessUrl, explicitDir);
+
+    // So is the file itself: a one-file Read Grant.
+    backend.loadFileUrl(fileUrl, fileUrl);
+    QCOMPARE(d->loadFileUrlCalls, 3);
+    QCOMPARE(d->lastFileReadAccessUrl, fileUrl);
 }
 
 void MobileWebViewBackendCommonTest::loadFileUrlContentSurvivesStoreRecreateAsFileLoad()

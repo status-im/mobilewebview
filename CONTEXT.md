@@ -83,6 +83,12 @@ static; unfreezing shows the live view again. Used to keep the page visually
 present when the native view cannot be (e.g. during scene transitions).
 _Avoid_: pause, suspend.
 
+### Read Grant
+The local content one WebView may read, given by `loadFileUrl`: a file, a
+directory holding it, or (Android) the one `content://` URI it was handed. A
+WebView without one reads no local content at all.
+_Avoid_: file access, sandbox extension.
+
 ### Download
 A file transfer the library performs and tracks on the host's behalf; it is not a
 navigation. Triggered either by page content the WebView will not render inline

@@ -18,10 +18,10 @@ final class WebViewSettingsPolicy {
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
 
-        // Top-level file:// for opening Downloads / local media. Web→file stays
-        // blocked; flags below keep file-origin JS from reading other local files.
-        settings.setAllowFileAccess(true);
-        settings.setAllowContentAccess(true);
+        // No local content until a preview is granted some (applyReadGrant);
+        // a file origin never reads other local files.
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
         settings.setAllowFileAccessFromFileURLs(false);
         settings.setAllowUniversalAccessFromFileURLs(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
@@ -33,5 +33,14 @@ final class WebViewSettingsPolicy {
         settings.setLoadWithOverviewMode(true);
         settings.setBuiltInZoomControls(true);
         settings.setDisplayZoomControls(false);
+    }
+
+    /** Opens the one scheme a preview's Read Grant needs; NONE closes both. */
+    static void applyReadGrant(WebSettings settings, LocalReadGrant grant) {
+        if (settings == null) {
+            return;
+        }
+        settings.setAllowFileAccess(grant.allowsFileScheme());
+        settings.setAllowContentAccess(grant.allowsContentScheme());
     }
 }
