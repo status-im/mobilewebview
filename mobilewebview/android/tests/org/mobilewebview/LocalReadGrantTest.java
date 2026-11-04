@@ -13,7 +13,6 @@ public final class LocalReadGrantTest {
         shouldGrantAContentPreviewOnlyItsOwnUri();
         shouldRefuseAGrantThatDoesNotCoverTheFile();
         shouldRefuseAGrantForAWebUrl();
-        shouldTellTheTargetApartFromOtherGrantedFiles();
         System.out.println("LocalReadGrantTest passed");
     }
 
@@ -78,7 +77,6 @@ public final class LocalReadGrantTest {
                 + "Open%20with%20sample%20%E2%80%94%20%D0%BF%D1%80%D0%BE%D0%B1%D0%B5%D0%BB.pdf";
         LocalReadGrant grant = LocalReadGrant.forPreview(pretty, pretty);
         assertTrue(grant.permits(encoded));
-        assertTrue(grant.isTarget(encoded));
     }
 
     private static void shouldGrantAContentPreviewOnlyItsOwnUri() {
@@ -108,14 +106,6 @@ public final class LocalReadGrantTest {
         assertSame(LocalReadGrant.NONE, LocalReadGrant.forPreview("https://example.com/x.pdf", ""));
         assertSame(LocalReadGrant.NONE, LocalReadGrant.forPreview("", ""));
         assertSame(LocalReadGrant.NONE, LocalReadGrant.forPreview(null, null));
-    }
-
-    private static void shouldTellTheTargetApartFromOtherGrantedFiles() {
-        LocalReadGrant grant = LocalReadGrant.forPreview(
-                "file:///storage/emulated/0/Download/report.pdf", "");
-        assertTrue(grant.isTarget("file:///storage/emulated/0/Download/report.pdf"));
-        assertFalse(grant.isTarget("file:///storage/emulated/0/Download/other.pdf"));
-        assertFalse(LocalReadGrant.NONE.isTarget("file:///storage/emulated/0/Download/report.pdf"));
     }
 
     private static void assertTrue(boolean condition) {

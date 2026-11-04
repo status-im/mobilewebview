@@ -1,0 +1,46 @@
+# 8. Android PDF previews through PdfRenderer
+
+Date: 2026-11-04
+
+## Status
+
+Accepted
+
+## Context
+
+The Android system WebView has no PDF viewer: a PDF handed to it turns into a
+Download. For a `content://` URI the WebView asks the provider for the MIME
+type and starts that Download before any request reaches
+`shouldInterceptRequest`, so serving a viewer in place of the document is not
+possible there. A page whose base URL is `content://` cannot load `content://`
+subresources either; the renderer blocks them before the browser sees them.
+
+Every provider measured for "Open with" (Files by Google, Gmail, Drive) hands
+out a seekable file descriptor, which is what `PdfRenderer` needs.
+
+## Decision
+
+`loadFileUrl()` on Android sniffs the content for a `%PDF-` signature. A PDF
+opens a `PdfRenderer` on the provider's (or the file's) own descriptor; only a
+descriptor that cannot seek is copied to the app cache first. The view then
+loads a viewer page with `loadDataWithBaseURL(url, html, …, historyUrl = url)`,
+so the Tab still shows the document's URL and title.
+
+The viewer page lists one lazily loaded image per page, sized to the page's
+shape. Images come from `https://pdf.mobilewebview.invalid/<token>/<page>?w=…`:
+a host no network serves, which the WebView always offers to
+`shouldInterceptRequest`, under a random token per open document so no other
+page can request them. The view renders each page with `PdfRenderer` at the
+requested width (bounded) and answers with a PNG. A PDF `PdfRenderer` refuses
+(corrupt, password-protected) gets a page that says it can't be shown.
+
+`MobileWebViewCapabilities::isPdfViewerSupported()` answers true on Android and
+Darwin (WKWebView renders PDF itself).
+
+## Consequences
+
+- One Web View per Tab still: zoom, snapshot, freeze and history work as for
+  any page.
+- Pages are images: no text selection or find-in-page yet. `PdfRenderer`
+  exposes page text from API 35, which a text layer could use later.
+- The session closes with the next `loadFileUrl` or the view.

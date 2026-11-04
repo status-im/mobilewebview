@@ -1008,6 +1008,12 @@ bool MobileWebViewBackend::inPageMediaPlaybackSupported() const
     return d->inPageMediaPlaybackSupportedImpl();
 }
 
+bool MobileWebViewBackend::pdfViewerSupported() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->pdfViewerSupportedImpl();
+}
+
 bool MobileWebViewBackend::freeze() const
 {
     Q_D(const MobileWebViewBackend);

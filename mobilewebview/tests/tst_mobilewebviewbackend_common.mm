@@ -114,6 +114,8 @@ public:
         return inPageMediaPlaybackSupportedValue;
     }
 
+    bool pdfViewerSupportedImpl() const override { return pdfViewerSupportedValue; }
+
     void evaluateJavaScript(const QString &script) override
     {
         ++evaluateCalls;
@@ -228,6 +230,7 @@ public:
     bool findSupportedValue = true;
     bool hasNativeFindPanelValue = true;
     bool inPageMediaPlaybackSupportedValue = true;
+    bool pdfViewerSupportedValue = true;
     QString lastClearSiteDataOrigin;
     int evaluateCalls = 0;
     int updateGeometryCalls = 0;
@@ -334,6 +337,8 @@ private slots:
     void downloadRetryInlineEmitsNewRequest();
     void inPageMediaPlaybackSupportedReflectsPlatformImpl();
     void inPageMediaPlaybackSupportedIsReadableWithoutABackend();
+    void pdfViewerSupportedReflectsPlatformImpl();
+    void pdfViewerSupportedIsReadableWithoutABackend();
     void findCapabilitiesReflectPlatformImpl();
     void findCapabilitiesAreReadableWithoutABackend();
     void clearSiteDataSupportedReflectsPlatformImpl();
@@ -1704,6 +1709,34 @@ void MobileWebViewBackendCommonTest::inPageMediaPlaybackSupportedIsReadableWitho
     MobileWebViewCapabilities capabilities;
     QCOMPARE(capabilities.inPageMediaPlaybackSupported(), supported);
     QCOMPARE(capabilities.property("inPageMediaPlaybackSupported").toBool(), supported);
+}
+
+void MobileWebViewBackendCommonTest::pdfViewerSupportedReflectsPlatformImpl()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d);
+
+    d->pdfViewerSupportedValue = true;
+    QVERIFY(backend.pdfViewerSupported());
+    QCOMPARE(backend.property("pdfViewerSupported").toBool(), true);
+
+    d->pdfViewerSupportedValue = false;
+    QVERIFY(!backend.pdfViewerSupported());
+    QCOMPARE(backend.property("pdfViewerSupported").toBool(), false);
+}
+
+void MobileWebViewBackendCommonTest::pdfViewerSupportedIsReadableWithoutABackend()
+{
+    // WKWebView renders PDF in the view; a host asks this instead of keeping a
+    // platform table of its own.
+    const bool supported = MobileWebViewCapabilities::isPdfViewerSupported();
+    QVERIFY(supported);
+
+    MobileWebViewCapabilities capabilities;
+    QCOMPARE(capabilities.pdfViewerSupported(), supported);
+    QCOMPARE(capabilities.property("pdfViewerSupported").toBool(), supported);
 }
 
 void MobileWebViewBackendCommonTest::findCapabilitiesReflectPlatformImpl()

@@ -14,7 +14,7 @@ import java.util.Locale;
  * tests state the whole rule.
  */
 final class LocalReadGrant {
-    static final LocalReadGrant NONE = new LocalReadGrant(null, null, null);
+    static final LocalReadGrant NONE = new LocalReadGrant(null, null);
 
     private static final String FILE = "file";
     private static final String CONTENT = "content";
@@ -23,13 +23,10 @@ final class LocalReadGrant {
     // file: the granted canonical path (the file itself or a directory);
     // content: the decoded URI without its fragment.
     private final String mRoot;
-    // The decoded identity of the URL the preview shows.
-    private final String mTarget;
 
-    private LocalReadGrant(String scheme, String root, String target) {
+    private LocalReadGrant(String scheme, String root) {
         mScheme = scheme;
         mRoot = root;
-        mTarget = target;
     }
 
     static boolean isLocal(String url) {
@@ -47,8 +44,7 @@ final class LocalReadGrant {
     static LocalReadGrant forPreview(String url, String readAccessUrl) {
         String scheme = schemeOf(url);
         if (CONTENT.equals(scheme)) {
-            String uri = contentIdentity(url);
-            return new LocalReadGrant(CONTENT, uri, uri);
+            return new LocalReadGrant(CONTENT, contentIdentity(url));
         }
         if (!FILE.equals(scheme)) {
             return NONE;
@@ -68,7 +64,7 @@ final class LocalReadGrant {
         if (root == null || !within(path, root)) {
             return NONE;
         }
-        return new LocalReadGrant(FILE, root, path);
+        return new LocalReadGrant(FILE, root);
     }
 
     boolean allowsFileScheme() {
@@ -93,15 +89,6 @@ final class LocalReadGrant {
         }
         String path = canonicalPath(url);
         return path != null && within(path, mRoot);
-    }
-
-    /** Whether {@code url} is the very file or URI this preview shows. */
-    boolean isTarget(String url) {
-        if (mScheme == null || !mScheme.equals(schemeOf(url))) {
-            return false;
-        }
-        String identity = CONTENT.equals(mScheme) ? contentIdentity(url) : canonicalPath(url);
-        return mTarget.equals(identity);
     }
 
     /** The decoded local path of a file:// URL, without query or fragment. */

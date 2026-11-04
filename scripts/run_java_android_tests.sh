@@ -46,6 +46,7 @@ SOURCES=(
   "$ANDROID_SRC/RequestUserAgent.java"
   "$ANDROID_SRC/LocalReadGrant.java"
   "$ANDROID_SRC/ContentAuthorities.java"
+  "$ANDROID_SRC/PdfViewer.java"
   "$ANDROID_SRC/WebViewSettingsPolicy.java"
   "$ANDROID_SRC/ProbeRequest.java"
   "$ANDROID_SRC/DownloadIo.java"
@@ -69,6 +70,7 @@ SOURCES=(
   "$ANDROID_TEST/WebViewSettingsPolicyTest.java"
   "$ANDROID_TEST/LocalReadGrantTest.java"
   "$ANDROID_TEST/ContentAuthoritiesTest.java"
+  "$ANDROID_TEST/PdfViewerTest.java"
   "$ANDROID_TEST/ProbeRequestTest.java"
   "$ANDROID_TEST/DownloadFetcherRaceTest.java"
   "$ANDROID_TEST/DownloadMediaStoreTest.java"
@@ -93,6 +95,7 @@ TESTS=(
   org.mobilewebview.WebViewSettingsPolicyTest
   org.mobilewebview.LocalReadGrantTest
   org.mobilewebview.ContentAuthoritiesTest
+  org.mobilewebview.PdfViewerTest
   org.mobilewebview.ProbeRequestTest
   org.mobilewebview.DownloadFetcherRaceTest
   org.mobilewebview.DownloadMediaStoreTest

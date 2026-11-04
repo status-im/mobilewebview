@@ -38,6 +38,7 @@ class MobileWebViewBackend : public QQuickItem
     Q_PROPERTY(bool hasNativeFindPanel READ hasNativeFindPanel CONSTANT)
     Q_PROPERTY(bool clearSiteDataSupported READ clearSiteDataSupported CONSTANT)
     Q_PROPERTY(bool inPageMediaPlaybackSupported READ inPageMediaPlaybackSupported CONSTANT)
+    Q_PROPERTY(bool pdfViewerSupported READ pdfViewerSupported CONSTANT)
     Q_PROPERTY(bool freeze READ freeze WRITE setFreeze NOTIFY freezeChanged)
     Q_PROPERTY(bool offTheRecord READ offTheRecord WRITE setOffTheRecord NOTIFY offTheRecordChanged)
     Q_PROPERTY(QString storageName READ storageName WRITE setStorageName NOTIFY storageNameChanged)
@@ -77,6 +78,7 @@ public:
     bool hasNativeFindPanel() const;
     bool clearSiteDataSupported() const;
     bool inPageMediaPlaybackSupported() const;
+    bool pdfViewerSupported() const;
     bool freeze() const;
     void setFreeze(bool freeze);
     bool offTheRecord() const;

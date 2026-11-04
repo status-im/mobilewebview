@@ -74,6 +74,7 @@ public:
     // showFindPanelImpl/hideFindPanelImpl: base-class no-ops — the QML find
     // panel is used on Android.
     bool inPageMediaPlaybackSupportedImpl() const override;
+    bool pdfViewerSupportedImpl() const override;
     void captureSnapshotImpl(quint64 requestId) override;
     void detachNativeViewFromSceneImpl() override;
     void startDownloadImpl(quint64 downloadId, const QUrl &url,
@@ -1230,6 +1231,11 @@ bool AndroidWebViewPrivate::hasNativeFindPanelImpl() const
 bool AndroidWebViewPrivate::inPageMediaPlaybackSupportedImpl() const
 {
     return MobileWebViewCapabilities::isInPageMediaPlaybackSupported();
+}
+
+bool AndroidWebViewPrivate::pdfViewerSupportedImpl() const
+{
+    return MobileWebViewCapabilities::isPdfViewerSupported();
 }
 
 void AndroidWebViewPrivate::captureSnapshotImpl(quint64 requestId)

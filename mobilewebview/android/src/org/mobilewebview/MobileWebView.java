@@ -32,6 +32,7 @@ import android.graphics.Rect;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -109,6 +110,11 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     // Read Grant (ADR 0007): a browsing view reaches no local content;
     // loadFileUrl grants a preview its file (or directory) or content:// URI.
     private volatile LocalReadGrant mReadGrant = LocalReadGrant.NONE;
+
+    // The PDF a preview shows: the Android WebView has no viewer, so the view
+    // serves PdfViewer's page and renders its images with PdfRenderer.
+    private final Object mPdfLock = new Object();
+    private PdfDocumentSession mPdf;
 
     // WebView-local px; HitTestResult has no coordinates.
     private float mLastTouchX = 0f;
@@ -333,10 +339,17 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         Log.d(TAG, "loadFileUrl: " + (grant.allowsContentScheme() ? "content" : "file") + " preview");
         mReadGrant = grant;
         mPendingUrl = url;
+        // A PDF loads as the viewer page: the WebView would turn the PDF itself
+        // into a download (for content:// before any request reaches us).
+        final String viewerHtml = openPdfViewer(url);
         runOnMainThread(() -> {
             if (mWebView == null) return;
             WebViewSettingsPolicy.applyReadGrant(mWebView.getSettings(), grant);
-            mWebView.loadUrl(url);
+            if (viewerHtml != null) {
+                mWebView.loadDataWithBaseURL(url, viewerHtml, "text/html", "utf-8", url);
+            } else {
+                mWebView.loadUrl(url);
+            }
         });
     }
 
@@ -813,6 +826,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     public void destroy() {
         mNativePtr = 0;  // zero out immediately so JNI callbacks are ignored
         mDownloads.cancelAll();
+        closePdf();
         runOnMainThread(() -> {
             mBridgeInjector.clearDocumentStartScripts();
             if (mWebView != null) {
@@ -916,12 +930,68 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
 
     @Override
     public WebResourceResponse interceptRequest(String url, boolean mainFrame) {
-        if (mReadGrant.permits(url)) {
+        WebResourceResponse page = pdfPage(url);
+        if (page != null) {
+            return page;
+        }
+        if (LocalReadGrant.isLocal(url) && !mReadGrant.permits(url)) {
+            Log.w(TAG, "Refused local " + (mainFrame ? "navigation" : "subresource")
+                    + " outside the Read Grant");
+            return emptyResponse("text/plain", 403, "Forbidden");
+        }
+        return null;
+    }
+
+    private WebResourceResponse pdfPage(String url) {
+        if (url == null || !url.startsWith(PdfViewer.PAGE_ORIGIN)) {
             return null;
         }
-        Log.w(TAG, "Refused local " + (mainFrame ? "navigation" : "subresource")
-                + " outside the Read Grant");
-        return new WebResourceResponse("text/plain", "utf-8", 403, "Forbidden",
+        PdfDocumentSession pdf;
+        synchronized (mPdfLock) {
+            pdf = mPdf;
+        }
+        PdfViewer.PageRequest page = pdf != null ? PdfViewer.parsePageRequest(url, pdf.token()) : null;
+        if (page == null) {
+            return emptyResponse("image/png", 404, "Not Found");
+        }
+        byte[] png = pdf.renderPng(page.index, page.width);
+        if (png == null) {
+            return emptyResponse("image/png", 404, "Not Found");
+        }
+        return new WebResourceResponse("image/png", null, new ByteArrayInputStream(png));
+    }
+
+    // Replaces the open PDF with the one at url: its viewer page, the
+    // can't-be-shown page for a PDF PdfRenderer refuses, or null for anything
+    // that is not a PDF.
+    private String openPdfViewer(String url) {
+        synchronized (mPdfLock) {
+            closePdfLocked();
+            try {
+                mPdf = PdfDocumentSession.openIfPdf(mContext, url);
+                return mPdf != null ? mPdf.viewerHtml() : null;
+            } catch (IOException | RuntimeException e) {
+                Log.w(TAG, "PDF preview cannot be opened", e);
+                return PdfViewer.unavailableHtml(PdfDocumentSession.displayName(mContext, url));
+            }
+        }
+    }
+
+    private void closePdf() {
+        synchronized (mPdfLock) {
+            closePdfLocked();
+        }
+    }
+
+    private void closePdfLocked() {
+        if (mPdf != null) {
+            mPdf.close();
+            mPdf = null;
+        }
+    }
+
+    private static WebResourceResponse emptyResponse(String mimeType, int status, String reason) {
+        return new WebResourceResponse(mimeType, null, status, reason,
                 Collections.emptyMap(), new ByteArrayInputStream(new byte[0]));
     }
 

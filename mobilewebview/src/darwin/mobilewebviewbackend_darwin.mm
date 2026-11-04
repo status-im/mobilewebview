@@ -243,6 +243,7 @@ public:
     void showFindPanelImpl() override;
     void hideFindPanelImpl() override;
     bool inPageMediaPlaybackSupportedImpl() const override;
+    bool pdfViewerSupportedImpl() const override;
     void captureSnapshotImpl(quint64 requestId) override;
     void detachNativeViewFromSceneImpl() override;
     void startDownloadImpl(quint64 downloadId, const QUrl &url,
@@ -959,6 +960,11 @@ void DarwinWebViewPrivate::hideFindPanelImpl()
 bool DarwinWebViewPrivate::inPageMediaPlaybackSupportedImpl() const
 {
     return MobileWebViewCapabilities::isInPageMediaPlaybackSupported();
+}
+
+bool DarwinWebViewPrivate::pdfViewerSupportedImpl() const
+{
+    return MobileWebViewCapabilities::isPdfViewerSupported();
 }
 
 void DarwinWebViewPrivate::updateInteractionEnabled(bool enabled)

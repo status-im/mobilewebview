@@ -137,6 +137,12 @@ public:
     virtual bool inPageMediaPlaybackSupportedImpl() const { return false; }
 
     // =========================================================================
+    // Optional capability: PDF rendered inside the view. Default: unsupported.
+    // Overrides answer from MobileWebViewCapabilities.
+    // =========================================================================
+    virtual bool pdfViewerSupportedImpl() const { return false; }
+
+    // =========================================================================
     // Optional capability: downloads (ADR 0005).
     // Platform performs the transfer after host accept(). Default
     // startDownloadImpl immediately reports the download as Interrupted.
