@@ -34,6 +34,18 @@ page can request them. The view renders each page with `PdfRenderer` at the
 requested width (bounded) and answers with a PNG. A PDF `PdfRenderer` refuses
 (corrupt, password-protected) gets a page that says it can't be shown.
 
+From Android 15, where `PdfRenderer` reads page text, each page also gets a
+transparent text layer, so the WebView's own text selection, copy and
+find-in-page work on the document. A page's text comes from
+`…/<token>/<page>/text` as runs: words the page draws side by side on one row,
+each placed over its rectangle and stretched to its width. `getTextContents()`
+gives the page's text without positions; selecting each word by index gives its
+rectangle, and a word drawn on several rows is placed character by character.
+Runs break at line breaks, at gaps wider than the text is tall and where the
+text jumps to another row: pdfium reports a row spread across the page, or two
+cells of a grid, as one line in one wide rectangle. The viewer loads every
+page's text, visible pages first, so find-in-page covers the whole document.
+
 `MobileWebViewCapabilities::isPdfViewerSupported()` answers true on Android and
 Darwin (WKWebView renders PDF itself).
 
@@ -41,6 +53,12 @@ Darwin (WKWebView renders PDF itself).
 
 - One Web View per Tab still: zoom, snapshot, freeze and history work as for
   any page.
-- Pages are images: no text selection or find-in-page yet. `PdfRenderer`
-  exposes page text from API 35, which a text layer could use later.
+- Before Android 15 pages are images only: no selection or find-in-page.
+  `PdfRendererPreV` brings the same text API to Android 12–14 with SDK
+  extension 13, at the cost of a second renderer type.
+- Text costs about 9 ms a page on a Nothing Phone (3a); a 49-page document is
+  searchable about 3 s after it opens. Until a page's text arrives, find does
+  not see it.
+- Find-in-page matches within a run: a phrase that wraps onto the next line, or
+  crosses a gap, is not found, though each of its words is.
 - The session closes with the next `loadFileUrl` or the view.

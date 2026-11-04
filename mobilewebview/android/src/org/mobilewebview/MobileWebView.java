@@ -954,6 +954,16 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         if (page == null) {
             return emptyResponse("image/png", 404, "Not Found");
         }
+        if (page.text) {
+            byte[] json = pdf.textJson(page.index);
+            if (json == null) {
+                return emptyResponse("application/json", 404, "Not Found");
+            }
+            // The viewer page fetches it from its own file:// or content:// origin.
+            return new WebResourceResponse("application/json", "utf-8", 200, "OK",
+                    Collections.singletonMap("Access-Control-Allow-Origin", "*"),
+                    new ByteArrayInputStream(json));
+        }
         byte[] png = pdf.renderPng(page.index, page.width);
         if (png == null) {
             return emptyResponse("image/png", 404, "Not Found");

@@ -8,9 +8,11 @@ public final class PdfViewerTest {
     public static void main(String[] args) {
         shouldAskForPagesOnTheSessionsOwnPath();
         shouldServeOnlyThisSessionsPageRequests();
+        shouldServeAPagesTextBesideItsImage();
         shouldBoundTheRenderWidth();
         shouldKeepThePageShapeWithinTheBitmapLimits();
         shouldListEveryPageWithItsShape();
+        shouldLayTextOverThePagesOnlyWhenAndroidReadsIt();
         shouldEscapeTheTitle();
         shouldRecognisePdfBySignature();
         shouldSayWhenAPdfCannotBeShown();
@@ -31,6 +33,7 @@ public final class PdfViewerTest {
         assertTrue(page != null);
         assertEquals(2, page.index);
         assertEquals(1080, page.width);
+        assertFalse(page.text);
 
         // Another session, a non-page path, and junk are not page requests.
         assertTrue(PdfViewer.parsePageRequest(
@@ -43,6 +46,20 @@ public final class PdfViewerTest {
         assertTrue(PdfViewer.parsePageRequest("https://example.com/" + TOKEN + "/1?w=900", TOKEN) == null);
         assertTrue(PdfViewer.parsePageRequest(null, TOKEN) == null);
         assertTrue(PdfViewer.parsePageRequest(base + "1?w=900", null) == null);
+    }
+
+    private static void shouldServeAPagesTextBesideItsImage() {
+        String base = PdfViewer.pageBase(TOKEN);
+        PdfViewer.PageRequest text = PdfViewer.parsePageRequest(base + "2/text", TOKEN);
+        assertTrue(text != null);
+        assertEquals(2, text.index);
+        assertTrue(text.text);
+
+        assertTrue(PdfViewer.parsePageRequest(base + "/text", TOKEN) == null);
+        assertTrue(PdfViewer.parsePageRequest(base + "x/text", TOKEN) == null);
+        assertTrue(PdfViewer.parsePageRequest(base + "2/text?w=900", TOKEN) == null);
+        assertTrue(PdfViewer.parsePageRequest(
+                PdfViewer.pageBase("ffffffffffffffffffffffffffffffff") + "2/text", TOKEN) == null);
     }
 
     private static void shouldBoundTheRenderWidth() {
@@ -67,18 +84,31 @@ public final class PdfViewerTest {
 
     private static void shouldListEveryPageWithItsShape() {
         String html = PdfViewer.html("report.pdf",
-                new float[] {612f, 842f}, new float[] {792f, 595f}, TOKEN);
+                new float[] {612f, 842f}, new float[] {792f, 595f}, TOKEN, true);
         assertEquals(2, count(html, "data-page=\""));
-        assertTrue(html.contains("data-page=\"0\" width=\"612\" height=\"792\""));
-        assertTrue(html.contains("data-page=\"1\" width=\"842\" height=\"595\""));
+        assertTrue(html.contains("data-page=\"0\" data-w=\"612\" data-h=\"792\""));
+        assertTrue(html.contains("data-page=\"1\" data-w=\"842\" data-h=\"595\""));
+        assertTrue(html.contains("width=\"612\" height=\"792\""));
         assertTrue(html.contains("<meta charset=\"utf-8\">"));
         assertTrue(html.contains("<title>report.pdf</title>"));
         assertTrue(html.contains(PdfViewer.pageBase(TOKEN)));
     }
 
+    // Selection and find-in-page work on a transparent text layer over each
+    // page image, filled with the page's text where Android can read it.
+    private static void shouldLayTextOverThePagesOnlyWhenAndroidReadsIt() {
+        String withText = PdfViewer.html("a.pdf", new float[] {612f}, new float[] {792f}, TOKEN, true);
+        assertEquals(1, count(withText, "<div class=\"text\"></div>"));
+        assertTrue(withText.contains("'/text'"));
+
+        String imagesOnly = PdfViewer.html("a.pdf", new float[] {612f}, new float[] {792f}, TOKEN, false);
+        assertFalse(imagesOnly.contains("class=\"text\""));
+        assertTrue(imagesOnly.contains("withText=false"));
+    }
+
     private static void shouldEscapeTheTitle() {
         String html = PdfViewer.html("<b>\"x\" & y</b>.pdf",
-                new float[] {612f}, new float[] {792f}, TOKEN);
+                new float[] {612f}, new float[] {792f}, TOKEN, false);
         assertTrue(html.contains("<title>&lt;b&gt;&quot;x&quot; &amp; y&lt;/b&gt;.pdf</title>"));
     }
 

@@ -1,11 +1,17 @@
 package org.mobilewebview;
 
+import android.annotation.TargetApi;
 import android.content.Context;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.graphics.RectF;
 import android.graphics.pdf.PdfRenderer;
+import android.graphics.pdf.content.PdfPageTextContent;
+import android.graphics.pdf.models.selection.PageSelection;
+import android.graphics.pdf.models.selection.SelectionBoundary;
 import android.net.Uri;
+import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
 import android.system.Os;
@@ -17,6 +23,9 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * One PDF open for a preview: PdfRenderer on the document's own descriptor,
@@ -95,7 +104,12 @@ final class PdfDocumentSession {
     }
 
     String viewerHtml() {
-        return PdfViewer.html(mTitle, mWidths, mHeights, mToken);
+        return PdfViewer.html(mTitle, mWidths, mHeights, mToken, readsText());
+    }
+
+    /** PdfRenderer reads page text from Android 15. */
+    static boolean readsText() {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM;
     }
 
     /** The page as PNG bytes at the given width, or null when it does not exist. */
@@ -115,6 +129,42 @@ final class PdfDocumentSession {
         } finally {
             bitmap.recycle();
         }
+    }
+
+    /** The page's text layer as JSON (see PdfTextLayer.json), or null when there is none. */
+    synchronized byte[] textJson(int index) {
+        if (mClosed || index < 0 || index >= mWidths.length || !readsText()) {
+            return null;
+        }
+        try (PdfRenderer.Page page = mRenderer.openPage(index)) {
+            StringBuilder text = new StringBuilder();
+            for (PdfPageTextContent content : page.getTextContents()) {
+                text.append(content.getText());
+            }
+            List<PdfTextLayer.Run> runs = PdfTextLayer.runs(text.toString(),
+                    (start, end) -> bounds(page, start, end));
+            return PdfTextLayer.json(runs).getBytes(StandardCharsets.UTF_8);
+        } catch (RuntimeException e) {
+            // A page pdfium cannot read stays an image.
+            return null;
+        }
+    }
+
+    // Selecting by index answers with the text's rectangles, one per row.
+    @TargetApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
+    private static List<float[]> bounds(PdfRenderer.Page page, int start, int end) {
+        List<float[]> rects = new ArrayList<>();
+        PageSelection selection = page.selectContent(
+                new SelectionBoundary(start), new SelectionBoundary(end));
+        if (selection == null) {
+            return rects;
+        }
+        for (PdfPageTextContent content : selection.getSelectedTextContents()) {
+            for (RectF r : content.getBounds()) {
+                rects.add(new float[] {r.left, r.top, r.right, r.bottom});
+            }
+        }
+        return rects;
     }
 
     synchronized void close() {
