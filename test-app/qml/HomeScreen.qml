@@ -74,6 +74,12 @@ Item {
             title: "Downloads",
             subtitle: "downloadUrl, page/inline, pause/resume, retry, profiles",
             screen: Qt.resolvedUrl("screens/DownloadsScreen.qml")
+        },
+        {
+            screenId: "opened-file",
+            title: "Opened file",
+            subtitle: "“Open with” receipt, in-place read, copy, Web View load",
+            screen: Qt.resolvedUrl("screens/OpenedFileScreen.qml")
         }
     ]
 
