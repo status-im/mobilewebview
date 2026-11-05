@@ -4,6 +4,7 @@
 #include <QJsonObject>
 #include <QQuickWindow>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QVariantMap>
 
 #include "MobileWebView/mobilewebviewbackend.h"
@@ -88,6 +89,7 @@ class MobileWebViewE2ETest : public QObject
 private slots:
     void bridgeRoundtripSmoke();
     void defaultHttpUserAgentIsTheEngineDefault();
+    void utf8PlainTextFileReadsAsUtf8();
 };
 
 void MobileWebViewE2ETest::bridgeRoundtripSmoke()
@@ -176,6 +178,35 @@ void MobileWebViewE2ETest::defaultHttpUserAgentIsTheEngineDefault()
     // Known for the whole process once fetched: the next view has it at once.
     MobileWebViewBackend next;
     QCOMPARE(next.defaultHttpUserAgent(), engineDefault);
+}
+
+void MobileWebViewE2ETest::utf8PlainTextFileReadsAsUtf8()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("notes.txt"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(QStringLiteral("Привет, Status").toUtf8());
+    file.close();
+
+    QQuickWindow window;
+    window.setGeometry(0, 0, 480, 320);
+    MobileWebViewBackend backend;
+    backend.setParentItem(window.contentItem());
+    backend.setWidth(320);
+    backend.setHeight(240);
+    backend.setVisible(true);
+    window.show();
+
+    QSignalSpy loadSpy(&backend, &MobileWebViewBackend::loadingChanged);
+    backend.loadFileUrl(QUrl::fromLocalFile(path), QUrl::fromLocalFile(path));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 2 && !backend.loading(), 10000);
+
+    QSignalSpy jsResultSpy(&backend, &MobileWebViewBackend::javaScriptResult);
+    backend.runJavaScript(QStringLiteral("document.body.innerText"));
+    QVERIFY(jsResultSpy.wait(5000));
+    QCOMPARE(jsResultSpy.takeFirst().at(0).toString().trimmed(), QStringLiteral("Привет, Status"));
 }
 
 QTEST_MAIN(MobileWebViewE2ETest)
