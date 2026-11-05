@@ -16,6 +16,7 @@ SOURCES=(
   "$JVM_SHADOW/android/webkit/ValueCallback.java"
   "$JVM_SHADOW/android/webkit/JavascriptInterface.java"
   "$JVM_SHADOW/android/webkit/WebView.java"
+  "$JVM_SHADOW/android/webkit/WebResourceResponse.java"
   "$JVM_SHADOW/android/webkit/CookieManager.java"
   "$JVM_SHADOW/android/webkit/WebSettings.java"
   "$JVM_SHADOW/android/webkit/WebStorage.java"
@@ -48,6 +49,7 @@ SOURCES=(
   "$ANDROID_SRC/ContentAuthorities.java"
   "$ANDROID_SRC/PdfViewer.java"
   "$ANDROID_SRC/PdfTextLayer.java"
+  "$ANDROID_SRC/LocalPreview.java"
   "$ANDROID_SRC/WebViewSettingsPolicy.java"
   "$ANDROID_SRC/ProbeRequest.java"
   "$ANDROID_SRC/DownloadIo.java"
@@ -73,6 +75,7 @@ SOURCES=(
   "$ANDROID_TEST/ContentAuthoritiesTest.java"
   "$ANDROID_TEST/PdfViewerTest.java"
   "$ANDROID_TEST/PdfTextLayerTest.java"
+  "$ANDROID_TEST/LocalPreviewTest.java"
   "$ANDROID_TEST/ProbeRequestTest.java"
   "$ANDROID_TEST/DownloadFetcherRaceTest.java"
   "$ANDROID_TEST/DownloadMediaStoreTest.java"
@@ -99,6 +102,7 @@ TESTS=(
   org.mobilewebview.ContentAuthoritiesTest
   org.mobilewebview.PdfViewerTest
   org.mobilewebview.PdfTextLayerTest
+  org.mobilewebview.LocalPreviewTest
   org.mobilewebview.ProbeRequestTest
   org.mobilewebview.DownloadFetcherRaceTest
   org.mobilewebview.DownloadMediaStoreTest

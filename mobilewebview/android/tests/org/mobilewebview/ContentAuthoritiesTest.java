@@ -15,6 +15,7 @@ public final class ContentAuthoritiesTest {
         shouldMatchAnyAuthorityOfAProvider();
         shouldLeaveAnUnknownOrExactAuthorityAsItIs();
         shouldLeaveOtherSchemesAlone();
+        shouldRefuseAnAuthorityTwoProvidersSpellDifferently();
         System.out.println("ContentAuthoritiesTest passed");
     }
 
@@ -52,6 +53,16 @@ public final class ContentAuthoritiesTest {
         String file = "file:///storage/emulated/0/Download/x.pdf";
         assertEquals(file, ContentAuthorities.restoreCase(file, PROVIDERS));
         assertEquals(null, ContentAuthorities.restoreCase(null, PROVIDERS));
+    }
+
+    // Another app can declare the lowercase spelling of a provider's authority;
+    // a lowercased URI then names either provider, so it names none.
+    private static void shouldRefuseAnAuthorityTwoProvidersSpellDifferently() {
+        List<String> providers = Arrays.asList("com.Example.Docs", "com.example.docs");
+        assertEquals(null, ContentAuthorities.restoreCase("content://com.example.docs/1", providers));
+        // Spelled with capitals, the URI did not come through QUrl: it names its provider.
+        assertEquals("content://com.Example.Docs/1",
+                ContentAuthorities.restoreCase("content://com.Example.Docs/1", providers));
     }
 
     private static void assertEquals(Object expected, Object actual) {

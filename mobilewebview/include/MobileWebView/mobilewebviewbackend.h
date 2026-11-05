@@ -149,9 +149,9 @@ public slots:
     /// loaded by WebKit"
     /// (https://developer.apple.com/documentation/webkit/wkwebview/loadfileurl(_:allowingreadaccessto:)).
     /// An empty \a readAccessUrl means "the file's own directory". A non-empty
-    /// \a readAccessUrl must be a local file URL (for a content:// URI: the URI
-    /// itself); otherwise the call is a no-op with a warning. Grant no more
-    /// than the content needs.
+    /// \a readAccessUrl must be a local file URL that covers the file (for a
+    /// content:// URI: the URI itself); otherwise the call is a no-op with a
+    /// warning and the view keeps its URL. Grant no more than the content needs.
     ///
     /// The file load is recorded and replayed (through the same file path, not
     /// as a plain URL load) when the native view is recreated — a storage

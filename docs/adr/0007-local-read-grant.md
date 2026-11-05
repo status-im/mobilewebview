@@ -30,6 +30,12 @@ and it gives that view a **Read Grant**:
 - content:// (Android) — the URI itself; `readAccessUrl` must be empty or the
   same URI.
 
+The common backend refuses a grant that does not cover the file before the
+view's URL changes, comparing paths with symlinks resolved as far as they
+exist. Whether a platform reads content:// at all is a backend capability
+(`readsContentUrisImpl`), not a build switch, so the desktop test runs cover
+both rules.
+
 On Android every view starts with no local access (`allowFileAccess` and
 `allowContentAccess` off). `loadFileUrl` opens the one scheme its grant needs,
 and the view checks every local request against the grant —
@@ -37,6 +43,12 @@ and the view checks every local request against the grant —
 everything else (a refused request gets an empty 403). The grant lasts until
 the next `loadFileUrl` on the view, so history within the preview keeps
 working. `loadUrl()` / `url` never grants anything.
+
+The Android view checks the rest itself and refuses rather than guesses: a
+path the file system cannot name (a NUL byte, a symlink loop) is outside every
+grant, and a lowercased `content://` authority (QUrl lowercases hosts) that
+two visible providers spell differently names neither. A refused
+`loadFileUrl` reports a failed navigation.
 
 ## Consequences
 

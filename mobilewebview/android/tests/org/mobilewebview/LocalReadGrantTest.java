@@ -13,6 +13,7 @@ public final class LocalReadGrantTest {
         shouldGrantAContentPreviewOnlyItsOwnUri();
         shouldRefuseAGrantThatDoesNotCoverTheFile();
         shouldRefuseAGrantForAWebUrl();
+        shouldRefuseAPathTheFileSystemCannotName();
         System.out.println("LocalReadGrantTest passed");
     }
 
@@ -106,6 +107,16 @@ public final class LocalReadGrantTest {
         assertSame(LocalReadGrant.NONE, LocalReadGrant.forPreview("https://example.com/x.pdf", ""));
         assertSame(LocalReadGrant.NONE, LocalReadGrant.forPreview("", ""));
         assertSame(LocalReadGrant.NONE, LocalReadGrant.forPreview(null, null));
+    }
+
+    // A NUL byte names no file; a page must not crash the view by asking for one.
+    private static void shouldRefuseAPathTheFileSystemCannotName() {
+        String dir = "file:///storage/emulated/0/Download";
+        assertSame(LocalReadGrant.NONE, LocalReadGrant.forPreview(dir + "/a%00b.html", ""));
+        assertSame(LocalReadGrant.NONE, LocalReadGrant.forPreview(dir + "/a.html", dir + "/%00"));
+        LocalReadGrant grant = LocalReadGrant.forPreview(dir + "/a.html", "");
+        assertFalse(grant.permits(dir + "/%00"));
+        assertFalse(grant.permits(dir + "/a%00.png"));
     }
 
     private static void assertTrue(boolean condition) {

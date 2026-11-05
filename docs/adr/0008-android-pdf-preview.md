@@ -22,9 +22,16 @@ out a seekable file descriptor, which is what `PdfRenderer` needs.
 
 `loadFileUrl()` on Android sniffs the content for a `%PDF-` signature. A PDF
 opens a `PdfRenderer` on the provider's (or the file's) own descriptor; only a
-descriptor that cannot seek is copied to the app cache first. The view then
-loads a viewer page with `loadDataWithBaseURL(url, html, …, historyUrl = url)`,
-so the Tab still shows the document's URL and title.
+descriptor that cannot seek is copied to the app cache first. Content that
+cannot be read before the signature (gone, a lapsed grant) is not a PDF: the
+WebView loads it and reports what it finds. The view then loads a viewer page
+with `loadDataWithBaseURL(url, html, …, historyUrl = url)`, so the Tab still
+shows the document's URL and title.
+
+Opening happens on one background thread, since the provider, a copy or a long
+document can take a while and `loadFileUrl` is called on the Qt thread. The
+load is applied on the UI thread unless a later load came first; a superseded
+PDF is closed.
 
 The viewer page lists one lazily loaded image per page, sized to the page's
 shape. Images come from `https://pdf.mobilewebview.invalid/<token>/<page>?w=…`:

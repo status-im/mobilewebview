@@ -32,7 +32,7 @@ import java.util.List;
  * or on a private copy when the provider hands out a stream that cannot seek.
  * PdfRenderer opens one page at a time, so rendering is serialized.
  */
-final class PdfDocumentSession {
+final class PdfDocumentSession implements LocalPreview.PdfDocument {
     private final String mToken = PdfViewer.newToken();
     private final String mTitle;
     private final PdfRenderer mRenderer;
@@ -58,21 +58,34 @@ final class PdfDocumentSession {
 
     /**
      * The PDF behind {@code url} (as the WebView requests it), or null when the
-     * content is not a PDF. Throws when it is one PdfRenderer cannot open.
+     * content is not a PDF or cannot be read here: the WebView then loads it as
+     * it is. Throws when it is a PDF PdfRenderer cannot open.
      */
     static PdfDocumentSession openIfPdf(Context context, String url) throws IOException {
-        ParcelFileDescriptor fd = openDescriptor(context, url);
-        File copy = null;
+        ParcelFileDescriptor fd;
+        byte[] head = new byte[PdfViewer.SIGNATURE_WINDOW];
+        boolean seekable;
+        int n;
         try {
-            byte[] head = new byte[PdfViewer.SIGNATURE_WINDOW];
-            boolean seekable = fd.getStatSize() >= 0;
-            int n = seekable
+            fd = openDescriptor(context, url);
+        } catch (IOException | RuntimeException e) {
+            return null;
+        }
+        try {
+            seekable = fd.getStatSize() >= 0;
+            n = seekable
                     ? Os.pread(fd.getFileDescriptor(), head, 0, head.length, 0)
                     : readHead(fd, head);
             if (!PdfViewer.isPdf(head, n)) {
                 fd.close();
                 return null;
             }
+        } catch (Exception e) {
+            closeQuietly(fd);
+            return null;
+        }
+        File copy = null;
+        try {
             if (!seekable) {
                 // A pipe: PdfRenderer needs to seek, so render a private copy.
                 copy = copyToCache(context, head, n, fd);
@@ -91,19 +104,17 @@ final class PdfDocumentSession {
             closeQuietly(fd);
             deleteCopy(copy);
             throw e;
-        } catch (Exception e) {
-            closeQuietly(fd);
-            deleteCopy(copy);
-            throw new IOException(e);
         }
     }
 
     /** Names this document's page requests; see PdfViewer.pageBase. */
-    String token() {
+    @Override
+    public String token() {
         return mToken;
     }
 
-    String viewerHtml() {
+    @Override
+    public String viewerHtml() {
         return PdfViewer.html(mTitle, mWidths, mHeights, mToken, readsText());
     }
 
@@ -112,13 +123,20 @@ final class PdfDocumentSession {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM;
     }
 
-    /** The page as PNG bytes at the given width, or null when it does not exist. */
-    synchronized byte[] renderPng(int index, int width) {
+    /** The page as PNG bytes at the given width, or null when it does not exist or cannot be drawn. */
+    @Override
+    public synchronized byte[] renderPng(int index, int width) {
         if (mClosed || index < 0 || index >= mWidths.length) {
             return null;
         }
         int[] size = PdfViewer.renderSize(mWidths[index], mHeights[index], width);
-        Bitmap bitmap = Bitmap.createBitmap(size[0], size[1], Bitmap.Config.ARGB_8888);
+        Bitmap bitmap;
+        try {
+            bitmap = Bitmap.createBitmap(size[0], size[1], Bitmap.Config.ARGB_8888);
+        } catch (OutOfMemoryError e) {
+            // Up to 2048 x 8192 pixels: without the memory the page stays blank.
+            return null;
+        }
         try (PdfRenderer.Page page = mRenderer.openPage(index)) {
             // Pages are transparent where they draw nothing.
             bitmap.eraseColor(Color.WHITE);
@@ -126,13 +144,17 @@ final class PdfDocumentSession {
             ByteArrayOutputStream png = new ByteArrayOutputStream();
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, png);
             return png.toByteArray();
+        } catch (RuntimeException e) {
+            // A page pdfium cannot draw stays blank.
+            return null;
         } finally {
             bitmap.recycle();
         }
     }
 
     /** The page's text layer as JSON (see PdfTextLayer.json), or null when there is none. */
-    synchronized byte[] textJson(int index) {
+    @Override
+    public synchronized byte[] textJson(int index) {
         if (mClosed || index < 0 || index >= mWidths.length || !readsText()) {
             return null;
         }
@@ -167,7 +189,8 @@ final class PdfDocumentSession {
         return rects;
     }
 
-    synchronized void close() {
+    @Override
+    public synchronized void close() {
         if (mClosed) {
             return;
         }

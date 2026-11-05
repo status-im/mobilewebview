@@ -137,6 +137,13 @@ public:
     virtual bool inPageMediaPlaybackSupportedImpl() const { return false; }
 
     // =========================================================================
+    // Optional capability: content:// URIs loadFileUrl() reads in place (what
+    // Android's "Open with" hands over); the Read Grant is the URI itself.
+    // Default: file:// only.
+    // =========================================================================
+    virtual bool readsContentUrisImpl() const { return false; }
+
+    // =========================================================================
     // Optional capability: PDF rendered inside the view. Default: unsupported.
     // Overrides answer from MobileWebViewCapabilities.
     // =========================================================================
@@ -292,6 +299,9 @@ public:
     void setLoadProgress(int progress);
     void setFavicon(const QString &favicon);
     void updateUrlState(const QUrl &url);
+    // A URL loadFileUrl() may show: a local file, or a content:// URI where
+    // the platform reads those.
+    bool isLocalPreviewUrl(const QUrl &url) const;
     void updateAllowedOrigins(const QStringList &origins);
     void appendAllowedOrigin(const QString &origin);
     void ensureBridgeInstalled();

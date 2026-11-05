@@ -1,5 +1,7 @@
 package org.mobilewebview;
 
+import java.util.Locale;
+
 /**
  * Restores a content:// URI's authority to its provider's spelling. A host that
  * passes the URI through QUrl gets the host lowercased, while Android provider
@@ -12,9 +14,11 @@ final class ContentAuthorities {
     private ContentAuthorities() { }
 
     /**
-     * {@code uri} with its authority spelled as one of {@code providerAuthorities}
-     * spells it (each entry may list several, separated by ';'); unchanged when
-     * the authority already matches exactly or matches none.
+     * {@code uri} with its lowercase authority spelled as the one provider in
+     * {@code providerAuthorities} that matches it ignoring case (each entry may
+     * list several, separated by ';'). Unchanged when the authority has capitals
+     * of its own or matches no provider; null when providers spell it in more
+     * than one way, since the URI then names none of them for sure.
      */
     static String restoreCase(String uri, Iterable<String> providerAuthorities) {
         if (uri == null || !uri.regionMatches(true, 0, PREFIX, 0, PREFIX.length())) {
@@ -30,20 +34,24 @@ final class ContentAuthorities {
             }
         }
         String authority = uri.substring(start, end);
-        String caseless = null;
+        if (!authority.equals(authority.toLowerCase(Locale.ROOT))) {
+            return uri;
+        }
+        String spelling = null;
         for (String entry : providerAuthorities) {
             if (entry == null) {
                 continue;
             }
             for (String candidate : entry.split(";")) {
-                if (candidate.equals(authority)) {
-                    return uri;
+                if (!candidate.equalsIgnoreCase(authority)) {
+                    continue;
                 }
-                if (caseless == null && candidate.equalsIgnoreCase(authority)) {
-                    caseless = candidate;
+                if (spelling != null && !spelling.equals(candidate)) {
+                    return null;
                 }
+                spelling = candidate;
             }
         }
-        return caseless == null ? uri : uri.substring(0, start) + caseless + uri.substring(end);
+        return spelling == null ? uri : uri.substring(0, start) + spelling + uri.substring(end);
     }
 }

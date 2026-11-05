@@ -1,6 +1,7 @@
 #include <QtTest/QtTest>
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QPointer>
@@ -115,6 +116,8 @@ public:
     }
 
     bool pdfViewerSupportedImpl() const override { return pdfViewerSupportedValue; }
+
+    bool readsContentUrisImpl() const override { return readsContentUrisValue; }
 
     void evaluateJavaScript(const QString &script) override
     {
@@ -231,6 +234,7 @@ public:
     bool hasNativeFindPanelValue = true;
     bool inPageMediaPlaybackSupportedValue = true;
     bool pdfViewerSupportedValue = true;
+    bool readsContentUrisValue = false;
     QString lastClearSiteDataOrigin;
     int evaluateCalls = 0;
     int updateGeometryCalls = 0;
@@ -316,6 +320,9 @@ private slots:
     void loadFileUrlDefaultsReadAccessToOwnDirectory();
     void loadFileUrlContentSurvivesStoreRecreateAsFileLoad();
     void loadFileUrlReplayDroppedAfterNavigatingAwayFromFile();
+    void loadFileUrlRefusesAGrantThatDoesNotCoverTheFile();
+    void loadFileUrlTakesContentUrisWhereThePlatformReadsThem();
+    void loadFileUrlContentPreviewReplaysAsFileLoadAfterAFragmentChange();
     void loadHtmlContentSurvivesStoreRecreate();
     void offTheRecordSameValueDoesNotRecreateNativeView();
     void storageNameChangeRecreatesNativeViewInStandardMode();
@@ -1076,8 +1083,8 @@ void MobileWebViewBackendCommonTest::loadFileUrlRejectsNonFileUrls()
     QCOMPARE(d->loadFileUrlCalls, 0);
     QCOMPARE(d->loadUrlCalls, 0);
 
-    // content:// is Android's "Open with" hand-over; anywhere else it names no
-    // local file.
+    // content:// is Android's "Open with" hand-over; a platform that does not
+    // read content URIs gets none.
     backend.loadFileUrl(QUrl(QStringLiteral("content://com.example.provider/1")));
     QCOMPARE(d->loadFileUrlCalls, 0);
     QCOMPARE(d->loadUrlCalls, 0);
@@ -1175,6 +1182,93 @@ void MobileWebViewBackendCommonTest::loadFileUrlReplayDroppedAfterNavigatingAway
     QCOMPARE(d->loadFileUrlCalls, loadFileUrlBefore);
     QCOMPARE(d->loadUrlCalls, loadUrlBefore + 1);
     QCOMPARE(d->lastLoadedUrl, webUrl);
+}
+
+void MobileWebViewBackendCommonTest::loadFileUrlRefusesAGrantThatDoesNotCoverTheFile()
+{
+    // A grant that misses the file is refused before the view's URL changes,
+    // so the host never sees a URL the view does not show.
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+    auto *d = g_lastCreatedPrivate;
+    QSignalSpy urlSpy(&backend, &MobileWebViewBackend::urlChanged);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QUrl fileUrl = QUrl::fromLocalFile(dir.filePath(QStringLiteral("a/report.pdf")));
+    const QUrl refused[] = {
+        QUrl::fromLocalFile(dir.filePath(QStringLiteral("b"))),             // a sibling directory
+        QUrl::fromLocalFile(dir.filePath(QStringLiteral("a/other.pdf"))),   // another file
+        QUrl::fromLocalFile(dir.filePath(QStringLiteral("a/report.pdf/x"))),
+    };
+    for (const QUrl &readAccess : refused) {
+        backend.loadFileUrl(fileUrl, readAccess);
+        QCOMPARE(d->loadFileUrlCalls, 0);
+    }
+    // Neither dot segments nor a lookalike directory get past a grant.
+    const QUrl grantA = QUrl::fromLocalFile(dir.filePath(QStringLiteral("a")));
+    backend.loadFileUrl(QUrl::fromLocalFile(dir.path() + QStringLiteral("/a/../b/x.pdf")), grantA);
+    backend.loadFileUrl(QUrl::fromLocalFile(dir.filePath(QStringLiteral("ab/x.pdf"))), grantA);
+    QCOMPARE(d->loadFileUrlCalls, 0);
+    QVERIFY(backend.url().isEmpty());
+    QCOMPARE(urlSpy.count(), 0);
+
+    // The same directory spelled through a symlink still covers the file.
+    QVERIFY(QDir(dir.path()).mkpath(QStringLiteral("a")));
+    QVERIFY(QFile::link(dir.filePath(QStringLiteral("a")), dir.filePath(QStringLiteral("link"))));
+    backend.loadFileUrl(fileUrl, QUrl::fromLocalFile(dir.filePath(QStringLiteral("link"))));
+    QCOMPARE(d->loadFileUrlCalls, 1);
+}
+
+void MobileWebViewBackendCommonTest::loadFileUrlTakesContentUrisWhereThePlatformReadsThem()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+    auto *d = g_lastCreatedPrivate;
+    d->readsContentUrisValue = true;
+
+    // The grant for a content:// URI is the URI itself; nothing else may be named.
+    const QUrl contentUrl(QStringLiteral("content://com.example.provider/1"));
+    backend.loadFileUrl(contentUrl, QUrl(QStringLiteral("content://com.example.provider/2")));
+    backend.loadFileUrl(contentUrl, QUrl::fromLocalFile(QStringLiteral("/tmp")));
+    backend.loadFileUrl(QUrl(QStringLiteral("content:///1")));
+    QCOMPARE(d->loadFileUrlCalls, 0);
+
+    backend.loadFileUrl(contentUrl);
+    QCOMPARE(d->loadFileUrlCalls, 1);
+    QCOMPARE(d->lastLoadedFileUrl, contentUrl);
+    QCOMPARE(d->lastFileReadAccessUrl, contentUrl);
+    QCOMPARE(backend.url(), contentUrl);
+
+    backend.loadFileUrl(contentUrl, contentUrl);
+    QCOMPARE(d->loadFileUrlCalls, 2);
+}
+
+void MobileWebViewBackendCommonTest::loadFileUrlContentPreviewReplaysAsFileLoadAfterAFragmentChange()
+{
+    // A content:// preview stays a file load while the view shows that URI, so
+    // a recreated view gets its Read Grant back instead of a plain load.
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+    auto *d = g_lastCreatedPrivate;
+    d->readsContentUrisValue = true;
+
+    const QUrl contentUrl(QStringLiteral("content://com.example.provider/1"));
+    backend.loadFileUrl(contentUrl);
+    d->m_nativeViewSetup = true;
+    backend.updateUrlState(QUrl(QStringLiteral("content://com.example.provider/1#part")));
+
+    const int loadFileUrlBefore = d->loadFileUrlCalls;
+    const int loadUrlBefore = d->loadUrlCalls;
+
+    backend.setOffTheRecord(true);
+
+    QCOMPARE(d->loadFileUrlCalls, loadFileUrlBefore + 1);
+    QCOMPARE(d->loadUrlCalls, loadUrlBefore);
+    QCOMPARE(d->lastFileReadAccessUrl, contentUrl);
 }
 
 void MobileWebViewBackendCommonTest::loadHtmlContentSurvivesStoreRecreate()

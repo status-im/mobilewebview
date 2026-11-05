@@ -2,8 +2,6 @@ package org.mobilewebview;
 
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
-import android.content.pm.PackageManager;
-import android.content.pm.ProviderInfo;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 
@@ -30,13 +28,13 @@ import android.os.Looper;
 import android.os.Message;
 import android.graphics.Rect;
 
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * MobileWebView - Native Android WebView wrapper for Qt integration
@@ -107,14 +105,19 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     private String mActiveProfileName = null;
     private String mHttpUserAgent = "";
 
-    // Read Grant (ADR 0007): a browsing view reaches no local content;
-    // loadFileUrl grants a preview its file (or directory) or content:// URI.
-    private volatile LocalReadGrant mReadGrant = LocalReadGrant.NONE;
+    // Opens previews off the caller's thread: a provider or a long PDF can take
+    // a while, and the caller is the Qt thread.
+    private static final ExecutorService PREVIEW_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "mobilewebview-preview");
+        thread.setDaemon(true);
+        return thread;
+    });
 
-    // The PDF a preview shows: the Android WebView has no viewer, so the view
-    // serves PdfViewer's page and renders its images with PdfRenderer.
-    private final Object mPdfLock = new Object();
-    private PdfDocumentSession mPdf;
+    // Read Grant and PDF of this view (ADR 0007, 0008); a browsing view has neither.
+    private final LocalPreview mPreview;
+    // Counts load requests, so a preview that finishes opening after a later
+    // load does not replace it.
+    private final AtomicInteger mLoadGeneration = new AtomicInteger();
 
     // WebView-local px; HitTestResult has no coordinates.
     private float mLastTouchX = 0f;
@@ -126,6 +129,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     public MobileWebView(Context context, long nativePtr, View rootView,
                            String storageName, boolean offTheRecord) {
         mContext = context;
+        mPreview = new LocalPreview(new PreviewDocuments(context));
         mNativePtr = nativePtr;
         mRootView = resolveRootView(rootView);
         mStorageName = storageName != null ? storageName : "";
@@ -309,6 +313,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
      */
     public void loadUrl(String url) {
         Log.d(TAG, "loadUrl: " + url);
+        mLoadGeneration.incrementAndGet();
         mPendingUrl = url;
 
         synchronized (mBridgeLock) {
@@ -326,55 +331,48 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     /**
      * Load local content as a preview under a Read Grant: the file (or the
      * directory readAccessUrl names) over file://, or the content:// URI
-     * itself. The grant lasts until the next loadFileUrl on this view.
+     * itself. The grant lasts until the next loadFileUrl on this view. Returns
+     * at once; a preview that must not load reports a failed navigation.
      */
     public void loadFileUrl(String requestedUrl, String readAccessUrl) {
-        final String url = withProviderAuthority(requestedUrl);
-        LocalReadGrant grant = LocalReadGrant.forPreview(url, readAccessUrl);
-        if (grant == LocalReadGrant.NONE) {
-            Log.w(TAG, "loadFileUrl: the read-access URL does not cover the file; not loaded");
-            return;
-        }
-        // The URL stays out of the log: a content:// URI can carry an account.
-        Log.d(TAG, "loadFileUrl: " + (grant.allowsContentScheme() ? "content" : "file") + " preview");
-        mReadGrant = grant;
-        mPendingUrl = url;
-        // A PDF loads as the viewer page: the WebView would turn the PDF itself
-        // into a download (for content:// before any request reaches us).
-        final String viewerHtml = openPdfViewer(url);
-        runOnMainThread(() -> {
-            if (mWebView == null) return;
-            WebViewSettingsPolicy.applyReadGrant(mWebView.getSettings(), grant);
-            if (viewerHtml != null) {
-                mWebView.loadDataWithBaseURL(url, viewerHtml, "text/html", "utf-8", url);
-            } else {
-                mWebView.loadUrl(url);
+        final int generation = mLoadGeneration.incrementAndGet();
+        mPendingUrl = requestedUrl;
+        PREVIEW_EXECUTOR.execute(() -> {
+            LocalPreview.Prepared opened;
+            try {
+                opened = mPreview.prepare(requestedUrl, readAccessUrl);
+            } catch (RuntimeException e) {
+                // An exception escaping this thread would end the process.
+                Log.w(TAG, "loadFileUrl: the preview failed to open", e);
+                opened = null;
             }
+            final LocalPreview.Prepared prepared = opened;
+            runOnMainThread(() -> {
+                if (generation != mLoadGeneration.get() || mWebView == null) {
+                    mPreview.discard(prepared);
+                    return;
+                }
+                if (prepared == null) {
+                    withNativePtr(ptr -> nativeOnNavigationFailed(ptr));
+                    return;
+                }
+                if (!mPreview.apply(prepared)) {
+                    return;
+                }
+                // The URL stays out of the log: a content:// URI can carry an account.
+                Log.d(TAG, "loadFileUrl: " + (prepared.grant.allowsContentScheme() ? "content" : "file")
+                        + " preview");
+                WebViewSettingsPolicy.applyReadGrant(mWebView.getSettings(), prepared.grant);
+                if (prepared.html != null) {
+                    // A PDF loads as the viewer page: the WebView would turn the
+                    // PDF itself into a download.
+                    mWebView.loadDataWithBaseURL(prepared.url, prepared.html, "text/html", "utf-8",
+                            prepared.url);
+                } else {
+                    mWebView.loadUrl(prepared.url);
+                }
+            });
         });
-    }
-
-    // The host's QUrl lowercases a content:// authority; providers match it
-    // case-sensitively. The provider that granted the URI is visible to us.
-    @SuppressWarnings("deprecation")
-    private String withProviderAuthority(String url) {
-        if (url == null || !url.regionMatches(true, 0, "content:", 0, 8)) {
-            return url;
-        }
-        try {
-            PackageManager pm = mContext.getPackageManager();
-            String authority = Uri.parse(url).getAuthority();
-            if (authority == null || pm.resolveContentProvider(authority, 0) != null) {
-                return url;
-            }
-            List<String> authorities = new ArrayList<>();
-            for (ProviderInfo provider : pm.queryContentProviders(null, 0, 0)) {
-                authorities.add(provider.authority);
-            }
-            return ContentAuthorities.restoreCase(url, authorities);
-        } catch (RuntimeException e) {
-            Log.w(TAG, "withProviderAuthority: provider lookup failed", e);
-            return url;
-        }
     }
 
     /**
@@ -382,6 +380,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
      */
     public void loadHtml(String html, String baseUrl) {
         Log.d(TAG, "loadHtml: baseUrl=" + baseUrl);
+        mLoadGeneration.incrementAndGet();
         mPendingUrl = baseUrl;
 
         synchronized (mBridgeLock) {
@@ -826,7 +825,8 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     public void destroy() {
         mNativePtr = 0;  // zero out immediately so JNI callbacks are ignored
         mDownloads.cancelAll();
-        closePdf();
+        mLoadGeneration.incrementAndGet();
+        mPreview.close();
         runOnMainThread(() -> {
             mBridgeInjector.clearDocumentStartScripts();
             if (mWebView != null) {
@@ -925,84 +925,12 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
 
     @Override
     public boolean permitsNavigation(String url) {
-        return mReadGrant.permits(url);
+        return mPreview.permitsNavigation(url);
     }
 
     @Override
     public WebResourceResponse interceptRequest(String url, boolean mainFrame) {
-        WebResourceResponse page = pdfPage(url);
-        if (page != null) {
-            return page;
-        }
-        if (LocalReadGrant.isLocal(url) && !mReadGrant.permits(url)) {
-            Log.w(TAG, "Refused local " + (mainFrame ? "navigation" : "subresource")
-                    + " outside the Read Grant");
-            return emptyResponse("text/plain", 403, "Forbidden");
-        }
-        return null;
-    }
-
-    private WebResourceResponse pdfPage(String url) {
-        if (url == null || !url.startsWith(PdfViewer.PAGE_ORIGIN)) {
-            return null;
-        }
-        PdfDocumentSession pdf;
-        synchronized (mPdfLock) {
-            pdf = mPdf;
-        }
-        PdfViewer.PageRequest page = pdf != null ? PdfViewer.parsePageRequest(url, pdf.token()) : null;
-        if (page == null) {
-            return emptyResponse("image/png", 404, "Not Found");
-        }
-        if (page.text) {
-            byte[] json = pdf.textJson(page.index);
-            if (json == null) {
-                return emptyResponse("application/json", 404, "Not Found");
-            }
-            // The viewer page fetches it from its own file:// or content:// origin.
-            return new WebResourceResponse("application/json", "utf-8", 200, "OK",
-                    Collections.singletonMap("Access-Control-Allow-Origin", "*"),
-                    new ByteArrayInputStream(json));
-        }
-        byte[] png = pdf.renderPng(page.index, page.width);
-        if (png == null) {
-            return emptyResponse("image/png", 404, "Not Found");
-        }
-        return new WebResourceResponse("image/png", null, new ByteArrayInputStream(png));
-    }
-
-    // Replaces the open PDF with the one at url: its viewer page, the
-    // can't-be-shown page for a PDF PdfRenderer refuses, or null for anything
-    // that is not a PDF.
-    private String openPdfViewer(String url) {
-        synchronized (mPdfLock) {
-            closePdfLocked();
-            try {
-                mPdf = PdfDocumentSession.openIfPdf(mContext, url);
-                return mPdf != null ? mPdf.viewerHtml() : null;
-            } catch (IOException | RuntimeException e) {
-                Log.w(TAG, "PDF preview cannot be opened", e);
-                return PdfViewer.unavailableHtml(PdfDocumentSession.displayName(mContext, url));
-            }
-        }
-    }
-
-    private void closePdf() {
-        synchronized (mPdfLock) {
-            closePdfLocked();
-        }
-    }
-
-    private void closePdfLocked() {
-        if (mPdf != null) {
-            mPdf.close();
-            mPdf = null;
-        }
-    }
-
-    private static WebResourceResponse emptyResponse(String mimeType, int status, String reason) {
-        return new WebResourceResponse(mimeType, null, status, reason,
-                Collections.emptyMap(), new ByteArrayInputStream(new byte[0]));
+        return mPreview.interceptRequest(url, mainFrame);
     }
 
     // --- NativeBridgeHost ---

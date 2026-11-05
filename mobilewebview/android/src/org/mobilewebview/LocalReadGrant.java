@@ -113,16 +113,17 @@ final class LocalReadGrant {
         return path.startsWith("/") ? path : null;
     }
 
+    // Null when the file system cannot name the path (a NUL byte, a symlink
+    // loop), which refuses the URL.
     private static String canonicalPath(String fileUrl) {
         String path = filePath(fileUrl);
         if (path == null) {
             return null;
         }
-        File file = new File(path);
         try {
-            return file.getCanonicalPath();
-        } catch (IOException e) {
-            return file.toPath().normalize().toString();
+            return new File(path).getCanonicalPath();
+        } catch (IOException | RuntimeException e) {
+            return null;
         }
     }
 
