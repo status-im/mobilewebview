@@ -80,7 +80,8 @@ _Avoid_: screenshot, thumbnail.
 Replacing the live WebView with its last captured Snapshot rendered in the Qt
 scene. While a Freeze is active the native view is hidden and the page appears
 static; unfreezing shows the live view again. Used to keep the page visually
-present when the native view cannot be (e.g. during scene transitions).
+present when the native view cannot be (e.g. during scene transitions). With no
+Snapshot to show (a page not drawn yet), the native view is hidden all the same.
 _Avoid_: pause, suspend.
 
 ### Read Grant

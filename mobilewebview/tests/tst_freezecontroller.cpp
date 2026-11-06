@@ -14,6 +14,7 @@ private slots:
     void staleRequestIdIgnored();
     void freezeFalseFromFrozenToIdle();
     void clearResets();
+    void emptySnapshotKeepsNativeViewHidden();
 };
 
 namespace {
@@ -154,6 +155,27 @@ void FreezeControllerTest::clearResets()
     QCOMPARE(freeze.state(), FS::Idle);
     QCOMPARE(probe.hideOverlayCalls, 1);
     QCOMPARE(probe.restoreClipCalls, 1);
+}
+
+void FreezeControllerTest::emptySnapshotKeepsNativeViewHidden()
+{
+    Probe probe;
+    FreezeController freeze(probe.callbacks());
+    probe.controller = &freeze;
+
+    using FS = FreezeController::State;
+    freeze.beginFreeze();
+    freeze.notifySnapshotReady(freeze.freezeRequestId(), QImage());
+
+    QCOMPARE(freeze.state(), FS::Frozen);
+    QVERIFY(!freeze.shouldShowNativeWebView(true, true));
+    QCOMPARE(probe.applyOverlayCalls, 0);
+    QCOMPARE(probe.updateVisibilityCalls, 1);
+    QCOMPARE(probe.emitFreezeChangedCalls, 1);
+
+    QVERIFY(freeze.endFreeze());
+    QCOMPARE(freeze.state(), FS::Idle);
+    QVERIFY(freeze.shouldShowNativeWebView(true, true));
 }
 
 QTEST_GUILESS_MAIN(FreezeControllerTest)

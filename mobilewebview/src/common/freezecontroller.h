@@ -18,7 +18,7 @@ public:
     struct Callbacks {
         std::function<void(quint64 requestId)> captureSnapshot;
         std::function<void(const QImage &image)> applyOverlay;
-        /// Tear down overlay immediately (clear / failed capture / cancel while Capturing).
+        /// Tear down overlay immediately (clear / cancel while Capturing).
         std::function<void()> hideOverlay;
         /// Frozen → Idle: detach overlay for deferred deleteLater (do not hideOverlay).
         std::function<void()> unfreezeFromFrozen;

@@ -297,7 +297,7 @@ private slots:
     void freezeOverlayKeepsCaptureSizeOnResize();
     void freezeOverlayUsesCapturedImageSizeNotCurrentBackend();
     void freezeCancelledBeforeNotifyIgnoresStaleCallback();
-    void freezeEmptySnapshotAbortsAndEmits();
+    void freezeEmptySnapshotStillHidesNativeView();
     void freezeDoubleSetTrueOnlyCapturesOnce();
     void unfreezeFromFrozenDefersOverlayRemovalAndEmits();
     void lifecycleHooksTriggerNativeCallbacks();
@@ -602,7 +602,7 @@ void MobileWebViewBackendCommonTest::freezeCancelledBeforeNotifyIgnoresStaleCall
     QVERIFY(d->m_snapshotItem == nullptr);
 }
 
-void MobileWebViewBackendCommonTest::freezeEmptySnapshotAbortsAndEmits()
+void MobileWebViewBackendCommonTest::freezeEmptySnapshotStillHidesNativeView()
 {
     g_lastCreatedPrivate = nullptr;
     MobileWebViewBackend backend;
@@ -618,6 +618,11 @@ void MobileWebViewBackendCommonTest::freezeEmptySnapshotAbortsAndEmits()
     QTest::ignoreMessage(QtWarningMsg, "MobileWebViewBackend: freeze snapshot failed or empty");
     d->notifySnapshotReady(d->m_freeze->freezeRequestId(), QImage());
 
+    QCOMPARE(d->m_freeze->state(), FS::Frozen);
+    QCOMPARE(backend.freeze(), true);
+    QCOMPARE(freezeSpy.count(), 1);
+
+    backend.setFreeze(false);
     QCOMPARE(d->m_freeze->state(), FS::Idle);
     QCOMPARE(backend.freeze(), false);
     QCOMPARE(freezeSpy.count(), 2);
