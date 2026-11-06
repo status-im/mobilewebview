@@ -1,6 +1,7 @@
 #include <QtTest/QtTest>
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QPointer>
@@ -113,6 +114,10 @@ public:
     {
         return inPageMediaPlaybackSupportedValue;
     }
+
+    bool pdfViewerSupportedImpl() const override { return pdfViewerSupportedValue; }
+
+    bool readsContentUrisImpl() const override { return readsContentUrisValue; }
 
     void evaluateJavaScript(const QString &script) override
     {
@@ -228,6 +233,8 @@ public:
     bool findSupportedValue = true;
     bool hasNativeFindPanelValue = true;
     bool inPageMediaPlaybackSupportedValue = true;
+    bool pdfViewerSupportedValue = true;
+    bool readsContentUrisValue = false;
     QString lastClearSiteDataOrigin;
     int evaluateCalls = 0;
     int updateGeometryCalls = 0;
@@ -290,7 +297,7 @@ private slots:
     void freezeOverlayKeepsCaptureSizeOnResize();
     void freezeOverlayUsesCapturedImageSizeNotCurrentBackend();
     void freezeCancelledBeforeNotifyIgnoresStaleCallback();
-    void freezeEmptySnapshotAbortsAndEmits();
+    void freezeEmptySnapshotStillHidesNativeView();
     void freezeDoubleSetTrueOnlyCapturesOnce();
     void unfreezeFromFrozenDefersOverlayRemovalAndEmits();
     void lifecycleHooksTriggerNativeCallbacks();
@@ -313,6 +320,9 @@ private slots:
     void loadFileUrlDefaultsReadAccessToOwnDirectory();
     void loadFileUrlContentSurvivesStoreRecreateAsFileLoad();
     void loadFileUrlReplayDroppedAfterNavigatingAwayFromFile();
+    void loadFileUrlRefusesAGrantThatDoesNotCoverTheFile();
+    void loadFileUrlTakesContentUrisWhereThePlatformReadsThem();
+    void loadFileUrlContentPreviewReplaysAsFileLoadAfterAFragmentChange();
     void loadHtmlContentSurvivesStoreRecreate();
     void offTheRecordSameValueDoesNotRecreateNativeView();
     void storageNameChangeRecreatesNativeViewInStandardMode();
@@ -334,6 +344,8 @@ private slots:
     void downloadRetryInlineEmitsNewRequest();
     void inPageMediaPlaybackSupportedReflectsPlatformImpl();
     void inPageMediaPlaybackSupportedIsReadableWithoutABackend();
+    void pdfViewerSupportedReflectsPlatformImpl();
+    void pdfViewerSupportedIsReadableWithoutABackend();
     void findCapabilitiesReflectPlatformImpl();
     void findCapabilitiesAreReadableWithoutABackend();
     void clearSiteDataSupportedReflectsPlatformImpl();
@@ -590,7 +602,7 @@ void MobileWebViewBackendCommonTest::freezeCancelledBeforeNotifyIgnoresStaleCall
     QVERIFY(d->m_snapshotItem == nullptr);
 }
 
-void MobileWebViewBackendCommonTest::freezeEmptySnapshotAbortsAndEmits()
+void MobileWebViewBackendCommonTest::freezeEmptySnapshotStillHidesNativeView()
 {
     g_lastCreatedPrivate = nullptr;
     MobileWebViewBackend backend;
@@ -606,6 +618,11 @@ void MobileWebViewBackendCommonTest::freezeEmptySnapshotAbortsAndEmits()
     QTest::ignoreMessage(QtWarningMsg, "MobileWebViewBackend: freeze snapshot failed or empty");
     d->notifySnapshotReady(d->m_freeze->freezeRequestId(), QImage());
 
+    QCOMPARE(d->m_freeze->state(), FS::Frozen);
+    QCOMPARE(backend.freeze(), true);
+    QCOMPARE(freezeSpy.count(), 1);
+
+    backend.setFreeze(false);
     QCOMPARE(d->m_freeze->state(), FS::Idle);
     QCOMPARE(backend.freeze(), false);
     QCOMPARE(freezeSpy.count(), 2);
@@ -1071,6 +1088,12 @@ void MobileWebViewBackendCommonTest::loadFileUrlRejectsNonFileUrls()
     QCOMPARE(d->loadFileUrlCalls, 0);
     QCOMPARE(d->loadUrlCalls, 0);
 
+    // content:// is Android's "Open with" hand-over; a platform that does not
+    // read content URIs gets none.
+    backend.loadFileUrl(QUrl(QStringLiteral("content://com.example.provider/1")));
+    QCOMPARE(d->loadFileUrlCalls, 0);
+    QCOMPARE(d->loadUrlCalls, 0);
+
     // A read-access URL that is not a local directory URL is rejected too, so a
     // bad grant can never reach the platform.
     backend.loadFileUrl(QUrl::fromLocalFile(QStringLiteral("/tmp/mwv/report.pdf")),
@@ -1108,6 +1131,11 @@ void MobileWebViewBackendCommonTest::loadFileUrlDefaultsReadAccessToOwnDirectory
     backend.loadFileUrl(fileUrl, explicitDir);
     QCOMPARE(d->loadFileUrlCalls, 2);
     QCOMPARE(d->lastFileReadAccessUrl, explicitDir);
+
+    // So is the file itself: a one-file Read Grant.
+    backend.loadFileUrl(fileUrl, fileUrl);
+    QCOMPARE(d->loadFileUrlCalls, 3);
+    QCOMPARE(d->lastFileReadAccessUrl, fileUrl);
 }
 
 void MobileWebViewBackendCommonTest::loadFileUrlContentSurvivesStoreRecreateAsFileLoad()
@@ -1159,6 +1187,93 @@ void MobileWebViewBackendCommonTest::loadFileUrlReplayDroppedAfterNavigatingAway
     QCOMPARE(d->loadFileUrlCalls, loadFileUrlBefore);
     QCOMPARE(d->loadUrlCalls, loadUrlBefore + 1);
     QCOMPARE(d->lastLoadedUrl, webUrl);
+}
+
+void MobileWebViewBackendCommonTest::loadFileUrlRefusesAGrantThatDoesNotCoverTheFile()
+{
+    // A grant that misses the file is refused before the view's URL changes,
+    // so the host never sees a URL the view does not show.
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+    auto *d = g_lastCreatedPrivate;
+    QSignalSpy urlSpy(&backend, &MobileWebViewBackend::urlChanged);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QUrl fileUrl = QUrl::fromLocalFile(dir.filePath(QStringLiteral("a/report.pdf")));
+    const QUrl refused[] = {
+        QUrl::fromLocalFile(dir.filePath(QStringLiteral("b"))),             // a sibling directory
+        QUrl::fromLocalFile(dir.filePath(QStringLiteral("a/other.pdf"))),   // another file
+        QUrl::fromLocalFile(dir.filePath(QStringLiteral("a/report.pdf/x"))),
+    };
+    for (const QUrl &readAccess : refused) {
+        backend.loadFileUrl(fileUrl, readAccess);
+        QCOMPARE(d->loadFileUrlCalls, 0);
+    }
+    // Neither dot segments nor a lookalike directory get past a grant.
+    const QUrl grantA = QUrl::fromLocalFile(dir.filePath(QStringLiteral("a")));
+    backend.loadFileUrl(QUrl::fromLocalFile(dir.path() + QStringLiteral("/a/../b/x.pdf")), grantA);
+    backend.loadFileUrl(QUrl::fromLocalFile(dir.filePath(QStringLiteral("ab/x.pdf"))), grantA);
+    QCOMPARE(d->loadFileUrlCalls, 0);
+    QVERIFY(backend.url().isEmpty());
+    QCOMPARE(urlSpy.count(), 0);
+
+    // The same directory spelled through a symlink still covers the file.
+    QVERIFY(QDir(dir.path()).mkpath(QStringLiteral("a")));
+    QVERIFY(QFile::link(dir.filePath(QStringLiteral("a")), dir.filePath(QStringLiteral("link"))));
+    backend.loadFileUrl(fileUrl, QUrl::fromLocalFile(dir.filePath(QStringLiteral("link"))));
+    QCOMPARE(d->loadFileUrlCalls, 1);
+}
+
+void MobileWebViewBackendCommonTest::loadFileUrlTakesContentUrisWhereThePlatformReadsThem()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+    auto *d = g_lastCreatedPrivate;
+    d->readsContentUrisValue = true;
+
+    // The grant for a content:// URI is the URI itself; nothing else may be named.
+    const QUrl contentUrl(QStringLiteral("content://com.example.provider/1"));
+    backend.loadFileUrl(contentUrl, QUrl(QStringLiteral("content://com.example.provider/2")));
+    backend.loadFileUrl(contentUrl, QUrl::fromLocalFile(QStringLiteral("/tmp")));
+    backend.loadFileUrl(QUrl(QStringLiteral("content:///1")));
+    QCOMPARE(d->loadFileUrlCalls, 0);
+
+    backend.loadFileUrl(contentUrl);
+    QCOMPARE(d->loadFileUrlCalls, 1);
+    QCOMPARE(d->lastLoadedFileUrl, contentUrl);
+    QCOMPARE(d->lastFileReadAccessUrl, contentUrl);
+    QCOMPARE(backend.url(), contentUrl);
+
+    backend.loadFileUrl(contentUrl, contentUrl);
+    QCOMPARE(d->loadFileUrlCalls, 2);
+}
+
+void MobileWebViewBackendCommonTest::loadFileUrlContentPreviewReplaysAsFileLoadAfterAFragmentChange()
+{
+    // A content:// preview stays a file load while the view shows that URI, so
+    // a recreated view gets its Read Grant back instead of a plain load.
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+    auto *d = g_lastCreatedPrivate;
+    d->readsContentUrisValue = true;
+
+    const QUrl contentUrl(QStringLiteral("content://com.example.provider/1"));
+    backend.loadFileUrl(contentUrl);
+    d->m_nativeViewSetup = true;
+    backend.updateUrlState(QUrl(QStringLiteral("content://com.example.provider/1#part")));
+
+    const int loadFileUrlBefore = d->loadFileUrlCalls;
+    const int loadUrlBefore = d->loadUrlCalls;
+
+    backend.setOffTheRecord(true);
+
+    QCOMPARE(d->loadFileUrlCalls, loadFileUrlBefore + 1);
+    QCOMPARE(d->loadUrlCalls, loadUrlBefore);
+    QCOMPARE(d->lastFileReadAccessUrl, contentUrl);
 }
 
 void MobileWebViewBackendCommonTest::loadHtmlContentSurvivesStoreRecreate()
@@ -1693,6 +1808,34 @@ void MobileWebViewBackendCommonTest::inPageMediaPlaybackSupportedIsReadableWitho
     MobileWebViewCapabilities capabilities;
     QCOMPARE(capabilities.inPageMediaPlaybackSupported(), supported);
     QCOMPARE(capabilities.property("inPageMediaPlaybackSupported").toBool(), supported);
+}
+
+void MobileWebViewBackendCommonTest::pdfViewerSupportedReflectsPlatformImpl()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d);
+
+    d->pdfViewerSupportedValue = true;
+    QVERIFY(backend.pdfViewerSupported());
+    QCOMPARE(backend.property("pdfViewerSupported").toBool(), true);
+
+    d->pdfViewerSupportedValue = false;
+    QVERIFY(!backend.pdfViewerSupported());
+    QCOMPARE(backend.property("pdfViewerSupported").toBool(), false);
+}
+
+void MobileWebViewBackendCommonTest::pdfViewerSupportedIsReadableWithoutABackend()
+{
+    // WKWebView renders PDF in the view; a host asks this instead of keeping a
+    // platform table of its own.
+    const bool supported = MobileWebViewCapabilities::isPdfViewerSupported();
+    QVERIFY(supported);
+
+    MobileWebViewCapabilities capabilities;
+    QCOMPARE(capabilities.pdfViewerSupported(), supported);
+    QCOMPARE(capabilities.property("pdfViewerSupported").toBool(), supported);
 }
 
 void MobileWebViewBackendCommonTest::findCapabilitiesReflectPlatformImpl()

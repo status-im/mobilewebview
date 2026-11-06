@@ -5,6 +5,7 @@ import android.os.Build;
 import android.util.Log;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
@@ -47,11 +48,22 @@ final class MobileWebViewClient extends WebViewClient {
         }
     }
 
+    @Override
+    public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+        if (request == null || request.getUrl() == null) {
+            return null;
+        }
+        return mHost.interceptRequest(request.getUrl().toString(), request.isForMainFrame());
+    }
+
     @SuppressWarnings("deprecation")
     @Override
     public boolean shouldOverrideUrlLoading(WebView view, String url) {
         if (url == null) {
             return false;
+        }
+        if (!mHost.permitsNavigation(url)) {
+            return true;
         }
         // Pre-24 only; no isForMainFrame / hasGesture — stricter only on API 24+.
         return mHost.handleCustomScheme(view, Uri.parse(url));
@@ -63,6 +75,11 @@ final class MobileWebViewClient extends WebViewClient {
             return false;
         }
         Uri u = request.getUrl();
+        // Before the gesture check: a script must not walk a view into local
+        // content either.
+        if (!mHost.permitsNavigation(u.toString())) {
+            return true;
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
             String sch = u.getScheme();
             String sl = sch != null ? sch.toLowerCase(Locale.ROOT) : "";

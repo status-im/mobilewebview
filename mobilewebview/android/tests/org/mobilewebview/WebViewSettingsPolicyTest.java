@@ -5,7 +5,8 @@ import android.webkit.WebSettings;
 public final class WebViewSettingsPolicyTest {
     public static void main(String[] args) {
         shouldEnableTheWebPlatformFeaturesThePagesNeed();
-        shouldAllowTopLevelFilesWithoutLettingFileOriginsReadOthers();
+        shouldGiveABrowsingViewNoLocalAccess();
+        shouldOpenOnlyTheSchemeAPreviewGrantNeeds();
         shouldFitContentToTheScreenAndAllowPinchZoom();
         System.out.println("WebViewSettingsPolicyTest passed");
     }
@@ -25,12 +26,34 @@ public final class WebViewSettingsPolicyTest {
                 settings.mixedContentMode());
     }
 
-    // Downloads open as top-level file:// pages, but a file origin must not read
-    // other local files.
-    private static void shouldAllowTopLevelFilesWithoutLettingFileOriginsReadOthers() {
+    // A browsing view reaches no file:// and no content:// at all: the app's own
+    // files (account data, logs) sit one file:// URL away.
+    private static void shouldGiveABrowsingViewNoLocalAccess() {
         WebSettings settings = applied();
+        assertEquals(Boolean.FALSE, settings.allowFileAccess());
+        assertEquals(Boolean.FALSE, settings.allowContentAccess());
+        assertEquals(Boolean.FALSE, settings.allowFileAccessFromFileURLs());
+        assertEquals(Boolean.FALSE, settings.allowUniversalAccessFromFileURLs());
+    }
+
+    // A preview reaches local content only over the scheme of its Read Grant;
+    // LocalReadGrant enforces the one file within it.
+    private static void shouldOpenOnlyTheSchemeAPreviewGrantNeeds() {
+        WebSettings settings = applied();
+        WebViewSettingsPolicy.applyReadGrant(settings, LocalReadGrant.forPreview(
+                "file:///storage/emulated/0/Download/x.pdf", ""));
         assertEquals(Boolean.TRUE, settings.allowFileAccess());
+        assertEquals(Boolean.FALSE, settings.allowContentAccess());
+
+        WebViewSettingsPolicy.applyReadGrant(settings, LocalReadGrant.forPreview(
+                "content://com.example.provider/1", ""));
+        assertEquals(Boolean.FALSE, settings.allowFileAccess());
         assertEquals(Boolean.TRUE, settings.allowContentAccess());
+
+        WebViewSettingsPolicy.applyReadGrant(settings, LocalReadGrant.NONE);
+        assertEquals(Boolean.FALSE, settings.allowFileAccess());
+        assertEquals(Boolean.FALSE, settings.allowContentAccess());
+        // A file origin never reads other local files, granted or not.
         assertEquals(Boolean.FALSE, settings.allowFileAccessFromFileURLs());
         assertEquals(Boolean.FALSE, settings.allowUniversalAccessFromFileURLs());
     }

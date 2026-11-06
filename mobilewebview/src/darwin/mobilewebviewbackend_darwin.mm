@@ -243,6 +243,7 @@ public:
     void showFindPanelImpl() override;
     void hideFindPanelImpl() override;
     bool inPageMediaPlaybackSupportedImpl() const override;
+    bool pdfViewerSupportedImpl() const override;
     void captureSnapshotImpl(quint64 requestId) override;
     void detachNativeViewFromSceneImpl() override;
     void startDownloadImpl(quint64 downloadId, const QUrl &url,
@@ -518,6 +519,31 @@ void DarwinWebViewPrivate::loadUrlImpl(const QUrl &url)
     });
 }
 
+namespace {
+
+// WebKit reads a .txt file without a charset as Latin-1. Valid UTF-8 text up
+// to this size is handed over as data with its charset instead.
+constexpr NSUInteger kMaxUtf8TextBytes = 16 * 1024 * 1024;
+
+NSData *utf8TextData(NSURL *fileUrl)
+{
+    if ([fileUrl.pathExtension caseInsensitiveCompare:@"txt"] != NSOrderedSame)
+        return nil;
+    NSNumber *size = nil;
+    if (![fileUrl getResourceValue:&size forKey:NSURLFileSizeKey error:nil]
+        || size.unsignedLongLongValue > kMaxUtf8TextBytes)
+        return nil;
+    NSData *data = [NSData dataWithContentsOfURL:fileUrl options:0 error:nil];
+    if (!data)
+        return nil;
+    NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    const bool valid = text != nil;
+    [text release];
+    return valid ? data : nil;
+}
+
+} // namespace
+
 void DarwinWebViewPrivate::loadFileUrlImpl(const QUrl &fileUrl, const QUrl &readAccessDirUrl)
 {
     if (!m_webView) {
@@ -537,6 +563,14 @@ void DarwinWebViewPrivate::loadFileUrlImpl(const QUrl &fileUrl, const QUrl &read
     NSURL *nsReadAccessUrl = (readAccessDirUrl.isValid() && !readAccessDirUrl.isEmpty())
                                  ? readAccessDirUrl.toNSURL()
                                  : [nsFileUrl URLByDeletingLastPathComponent];
+
+    if (NSData *text = utf8TextData(nsFileUrl)) {
+        runOnMainThread(^{
+            [webView loadData:text MIMEType:@"text/plain" characterEncodingName:@"UTF-8"
+                      baseURL:nsFileUrl];
+        });
+        return;
+    }
 
     runOnMainThread(^{
         [webView loadFileURL:nsFileUrl allowingReadAccessToURL:nsReadAccessUrl];
@@ -959,6 +993,11 @@ void DarwinWebViewPrivate::hideFindPanelImpl()
 bool DarwinWebViewPrivate::inPageMediaPlaybackSupportedImpl() const
 {
     return MobileWebViewCapabilities::isInPageMediaPlaybackSupported();
+}
+
+bool DarwinWebViewPrivate::pdfViewerSupportedImpl() const
+{
+    return MobileWebViewCapabilities::isPdfViewerSupported();
 }
 
 void DarwinWebViewPrivate::updateInteractionEnabled(bool enabled)

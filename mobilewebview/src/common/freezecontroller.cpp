@@ -82,12 +82,14 @@ void FreezeController::notifySnapshotReady(quint64 requestId, const QImage &imag
     if (m_state != State::Capturing)
         return;
 
+    // No picture to show (a page not drawn yet), but QML above still needs
+    // the native view out of the way: frozen without an overlay.
     if (image.isNull()) {
         if (m_cb.warnEmptyFreezeSnapshot)
             m_cb.warnEmptyFreezeSnapshot();
-        clear();
-        if (m_cb.emitFreezeChanged)
-            m_cb.emitFreezeChanged();
+        m_state = State::Frozen;
+        if (m_cb.updateNativeVisibility)
+            m_cb.updateNativeVisibility();
         return;
     }
 

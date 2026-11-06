@@ -51,6 +51,13 @@ bool MobileWebViewCapabilities::isClearSiteDataSupported()
     return supported == JNI_TRUE;
 }
 
+bool MobileWebViewCapabilities::isPdfViewerSupported()
+{
+    // The system WebView has no PDF renderer of its own; MobileWebView draws a
+    // previewed PDF with PdfRenderer (API 21+, below this library's floor).
+    return true;
+}
+
 bool MobileWebViewCapabilities::isInPageMediaPlaybackSupported()
 {
     // The system WebView plays WebM/VP8/VP9 and the other open formats in a

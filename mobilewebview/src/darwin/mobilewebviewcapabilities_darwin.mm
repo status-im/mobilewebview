@@ -31,6 +31,12 @@ bool MobileWebViewCapabilities::isClearSiteDataSupported()
     return true;
 }
 
+bool MobileWebViewCapabilities::isPdfViewerSupported()
+{
+    // WKWebView renders PDF in the view on every version this library supports.
+    return true;
+}
+
 bool MobileWebViewCapabilities::isInPageMediaPlaybackSupported()
 {
 #ifdef Q_OS_IOS

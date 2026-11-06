@@ -25,6 +25,7 @@ class MobileWebViewCapabilities : public QObject
     Q_PROPERTY(bool hasNativeFindPanel READ hasNativeFindPanel CONSTANT)
     Q_PROPERTY(bool clearSiteDataSupported READ clearSiteDataSupported CONSTANT)
     Q_PROPERTY(bool inPageMediaPlaybackSupported READ inPageMediaPlaybackSupported CONSTANT)
+    Q_PROPERTY(bool pdfViewerSupported READ pdfViewerSupported CONSTANT)
 
 public:
     explicit MobileWebViewCapabilities(QObject *parent = nullptr);
@@ -46,9 +47,14 @@ public:
     /// should hand the file to the OS instead.
     static bool isInPageMediaPlaybackSupported();
 
+    /// Does a PDF handed to loadFileUrl() render inside the view? Answering
+    /// "no" means the host should hand PDFs to the OS instead.
+    static bool isPdfViewerSupported();
+
     bool findSupported() const { return isFindSupported(); }
     bool clearSiteDataSupported() const { return isClearSiteDataSupported(); }
     bool inPageMediaPlaybackSupported() const { return isInPageMediaPlaybackSupported(); }
+    bool pdfViewerSupported() const { return isPdfViewerSupported(); }
 };
 
 #endif // Q_OS_ANDROID || Q_OS_MACOS || Q_OS_IOS

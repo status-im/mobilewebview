@@ -20,6 +20,7 @@ import android.view.ViewParent;
 import android.webkit.WebSettings;
 import android.webkit.WebBackForwardList;
 import android.webkit.WebHistoryItem;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.os.Bundle;
 import android.os.Handler;
@@ -31,6 +32,9 @@ import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * MobileWebView - Native Android WebView wrapper for Qt integration
@@ -101,6 +105,20 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     private String mActiveProfileName = null;
     private String mHttpUserAgent = "";
 
+    // Opens previews off the caller's thread: a provider or a long PDF can take
+    // a while, and the caller is the Qt thread.
+    private static final ExecutorService PREVIEW_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "mobilewebview-preview");
+        thread.setDaemon(true);
+        return thread;
+    });
+
+    // Read Grant and PDF of this view (ADR 0007, 0008); a browsing view has neither.
+    private final LocalPreview mPreview;
+    // Counts load requests, so a preview that finishes opening after a later
+    // load does not replace it.
+    private final AtomicInteger mLoadGeneration = new AtomicInteger();
+
     // WebView-local px; HitTestResult has no coordinates.
     private float mLastTouchX = 0f;
     private float mLastTouchY = 0f;
@@ -111,6 +129,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     public MobileWebView(Context context, long nativePtr, View rootView,
                            String storageName, boolean offTheRecord) {
         mContext = context;
+        mPreview = new LocalPreview(new PreviewDocuments(context));
         mNativePtr = nativePtr;
         mRootView = resolveRootView(rootView);
         mStorageName = storageName != null ? storageName : "";
@@ -294,6 +313,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
      */
     public void loadUrl(String url) {
         Log.d(TAG, "loadUrl: " + url);
+        mLoadGeneration.incrementAndGet();
         mPendingUrl = url;
 
         synchronized (mBridgeLock) {
@@ -309,10 +329,58 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     }
 
     /**
+     * Load local content as a preview under a Read Grant: the file (or the
+     * directory readAccessUrl names) over file://, or the content:// URI
+     * itself. The grant lasts until the next loadFileUrl on this view. Returns
+     * at once; a preview that must not load reports a failed navigation.
+     */
+    public void loadFileUrl(String requestedUrl, String readAccessUrl) {
+        final int generation = mLoadGeneration.incrementAndGet();
+        mPendingUrl = requestedUrl;
+        PREVIEW_EXECUTOR.execute(() -> {
+            LocalPreview.Prepared opened;
+            try {
+                opened = mPreview.prepare(requestedUrl, readAccessUrl);
+            } catch (RuntimeException e) {
+                // An exception escaping this thread would end the process.
+                Log.w(TAG, "loadFileUrl: the preview failed to open", e);
+                opened = null;
+            }
+            final LocalPreview.Prepared prepared = opened;
+            runOnMainThread(() -> {
+                if (generation != mLoadGeneration.get() || mWebView == null) {
+                    mPreview.discard(prepared);
+                    return;
+                }
+                if (prepared == null) {
+                    withNativePtr(ptr -> nativeOnNavigationFailed(ptr));
+                    return;
+                }
+                if (!mPreview.apply(prepared)) {
+                    return;
+                }
+                // The URL stays out of the log: a content:// URI can carry an account.
+                Log.d(TAG, "loadFileUrl: " + (prepared.grant.allowsContentScheme() ? "content" : "file")
+                        + " preview");
+                WebViewSettingsPolicy.applyReadGrant(mWebView.getSettings(), prepared.grant);
+                if (prepared.html != null) {
+                    // A PDF loads as the viewer page: the WebView would turn the
+                    // PDF itself into a download.
+                    mWebView.loadDataWithBaseURL(prepared.url, prepared.html, "text/html", "utf-8",
+                            prepared.url);
+                } else {
+                    mWebView.loadUrl(prepared.url);
+                }
+            });
+        });
+    }
+
+    /**
      * Load HTML content with base URL
      */
     public void loadHtml(String html, String baseUrl) {
         Log.d(TAG, "loadHtml: baseUrl=" + baseUrl);
+        mLoadGeneration.incrementAndGet();
         mPendingUrl = baseUrl;
 
         synchronized (mBridgeLock) {
@@ -757,6 +825,8 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     public void destroy() {
         mNativePtr = 0;  // zero out immediately so JNI callbacks are ignored
         mDownloads.cancelAll();
+        mLoadGeneration.incrementAndGet();
+        mPreview.close();
         runOnMainThread(() -> {
             mBridgeInjector.clearDocumentStartScripts();
             if (mWebView != null) {
@@ -851,6 +921,16 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     @Override
     public boolean handleCustomScheme(WebView view, Uri uri) {
         return CustomSchemeUrlHandler.handle(view, uri);
+    }
+
+    @Override
+    public boolean permitsNavigation(String url) {
+        return mPreview.permitsNavigation(url);
+    }
+
+    @Override
+    public WebResourceResponse interceptRequest(String url, boolean mainFrame) {
+        return mPreview.interceptRequest(url, mainFrame);
     }
 
     // --- NativeBridgeHost ---

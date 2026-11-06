@@ -13,6 +13,7 @@
 
 #include <QUuid>
 #include <QDebug>
+#include <QDir>
 #include <QFileInfo>
 #include <QMutex>
 #include <QMutexLocker>
@@ -29,6 +30,40 @@
 #include <mutex>
 
 namespace {
+bool isContentUri(const QUrl &url)
+{
+    return url.scheme().compare(QLatin1String("content"), Qt::CaseInsensitive) == 0
+        && !url.host().isEmpty();
+}
+
+// The path with symlinks resolved as far as it exists (/var and /private/var
+// are one directory on Darwin); the part that does not exist yet is only cleaned.
+QString resolvedPath(const QString &path)
+{
+    QString existing = QDir::cleanPath(path);
+    QString rest;
+    while (!QFileInfo::exists(existing)) {
+        const qsizetype slash = existing.lastIndexOf(QLatin1Char('/'));
+        if (slash <= 0) {
+            return QDir::cleanPath(path);
+        }
+        rest.prepend(existing.mid(slash));
+        existing.truncate(slash);
+    }
+    const QString canonical = QFileInfo(existing).canonicalFilePath();
+    return canonical.isEmpty() ? QDir::cleanPath(path) : canonical + rest;
+}
+
+// Whether a file Read Grant (the file itself, or a directory holding it)
+// covers the file.
+bool fileGrantCovers(const QUrl &grantUrl, const QUrl &fileUrl)
+{
+    const QString root = resolvedPath(grantUrl.toLocalFile());
+    const QString file = resolvedPath(fileUrl.toLocalFile());
+    return file == root
+        || file.startsWith(root.endsWith(QLatin1Char('/')) ? root : root + QLatin1Char('/'));
+}
+
 // Delay before hiding native WebView after overlay is ready (freeze) and before removing overlay (unfreeze).
 constexpr int kFreezeOverlayFrameDelayMs = 48;
 
@@ -193,9 +228,7 @@ void MobileWebViewBackendPrivate::clearSiteDataImpl(const QString &origin,
     }
 }
 
-// Default local-file load: a plain URL load. Engines that accept a top-level
-// file:// through the normal load path (Android WebView) need nothing more;
-// the read-access directory has no equivalent there. Darwin overrides.
+// Default local-file load: a plain URL load. Darwin and Android override it.
 void MobileWebViewBackendPrivate::loadFileUrlImpl(const QUrl &fileUrl,
                                                   const QUrl &readAccessDirUrl)
 {
@@ -346,7 +379,7 @@ void MobileWebViewBackendPrivate::updateUrlState(const QUrl &url)
     // directory still covers it); leaving file:// drops the recorded load so a
     // later recreate replays the live URL instead of the stale file.
     if (m_hasLastFileUrl && m_lastFileUrl != url) {
-        if (url.isLocalFile()) {
+        if (isLocalPreviewUrl(url)) {
             m_lastFileUrl = url;
         } else {
             m_hasLastFileUrl = false;
@@ -357,6 +390,11 @@ void MobileWebViewBackendPrivate::updateUrlState(const QUrl &url)
     if (!newOrigin.isEmpty() && newOrigin != prevOrigin) {
         appendAllowedOrigin(newOrigin);
     }
+}
+
+bool MobileWebViewBackendPrivate::isLocalPreviewUrl(const QUrl &url) const
+{
+    return url.isLocalFile() || (readsContentUrisImpl() && isContentUri(url));
 }
 
 void MobileWebViewBackendPrivate::updateAllowedOrigins(const QStringList &origins)
@@ -1010,6 +1048,12 @@ bool MobileWebViewBackend::inPageMediaPlaybackSupported() const
     return d->inPageMediaPlaybackSupportedImpl();
 }
 
+bool MobileWebViewBackend::pdfViewerSupported() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->pdfViewerSupportedImpl();
+}
+
 bool MobileWebViewBackend::freeze() const
 {
     Q_D(const MobileWebViewBackend);
@@ -1159,22 +1203,29 @@ void MobileWebViewBackend::loadFileUrl(const QUrl &fileUrl, const QUrl &readAcce
 {
     Q_D(MobileWebViewBackend);
 
-    if (!fileUrl.isValid() || !fileUrl.isLocalFile()) {
+    if (!fileUrl.isValid() || !d->isLocalPreviewUrl(fileUrl)) {
         qWarning() << "MobileWebViewBackend::loadFileUrl: not a local file URL:" << fileUrl;
         return;
     }
-    if (!readAccessUrl.isEmpty() && !readAccessUrl.isLocalFile()) {
-        qWarning() << "MobileWebViewBackend::loadFileUrl: read-access URL is not a local"
-                      " directory URL:" << readAccessUrl;
+    // A content:// grant is the URI itself; a file grant is the file or a
+    // directory holding it. A grant that misses the file changes nothing.
+    const bool contentUri = !fileUrl.isLocalFile();
+    const bool readAccessOk = readAccessUrl.isEmpty()
+        || (contentUri ? readAccessUrl == fileUrl
+                       : readAccessUrl.isLocalFile() && fileGrantCovers(readAccessUrl, fileUrl));
+    if (!readAccessOk) {
+        qWarning() << "MobileWebViewBackend::loadFileUrl: the read-access URL does not cover"
+                      " the file:" << readAccessUrl;
         return;
     }
 
     // Empty read access = the file's own directory: the narrowest grant that
     // still lets the page (and its sibling resources) load.
-    const QUrl readAccessDirUrl =
-        readAccessUrl.isEmpty()
-            ? QUrl::fromLocalFile(QFileInfo(fileUrl.toLocalFile()).absolutePath())
-            : readAccessUrl;
+    QUrl readAccessDirUrl = readAccessUrl;
+    if (contentUri)
+        readAccessDirUrl = fileUrl;
+    else if (readAccessUrl.isEmpty())
+        readAccessDirUrl = QUrl::fromLocalFile(QFileInfo(fileUrl.toLocalFile()).absolutePath());
 
     QString origin = extractOrigin(fileUrl);
     if (!origin.isEmpty()) {
