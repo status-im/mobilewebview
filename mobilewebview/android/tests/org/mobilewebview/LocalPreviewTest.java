@@ -17,6 +17,9 @@ public final class LocalPreviewTest {
         shouldGiveABrowsingViewNoLocalContent();
         shouldServeThePagesOfTheAppliedPdfOnly();
         shouldLoadContentThatIsNotAPdfAsItIs();
+        shouldPlayAVideoInAPageWithItsControls();
+        shouldPlayAudioInAPageWithItsControls();
+        shouldEscapeTheMediaUrlAndName();
         shouldShowAPdfTheRendererRefusesAsUnavailable();
         shouldRefuseAPreviewItsGrantDoesNotCover();
         shouldRefuseAContentUriTwoProvidersCouldName();
@@ -68,6 +71,35 @@ public final class LocalPreviewTest {
         assertEquals(DOWNLOADS + "/notes.txt", prepared.url);
         assertTrue(preview.apply(prepared));
         assertTrue(preview.permitsNavigation(DOWNLOADS + "/notes.txt"));
+    }
+
+    // The WebView's own media document starts playing and hides its controls.
+    private static void shouldPlayAVideoInAPageWithItsControls() {
+        LocalPreview preview = new LocalPreview(new FakeDocuments());
+        LocalPreview.Prepared prepared = preview.prepare(DOWNLOADS + "/clip.mp4", "");
+        assertEquals(DOWNLOADS + "/clip.mp4", prepared.url);
+        assertTrue(prepared.html.contains("<video src=\"" + DOWNLOADS + "/clip.mp4\" controls"));
+        assertTrue(prepared.html.contains("<title>clip.mp4</title>"));
+        assertFalse(prepared.html.contains("autoplay"));
+        assertTrue(preview.apply(prepared));
+        assertEquals(null, preview.interceptRequest(DOWNLOADS + "/clip.mp4", false));
+    }
+
+    private static void shouldPlayAudioInAPageWithItsControls() {
+        LocalPreview.Prepared prepared =
+                new LocalPreview(new FakeDocuments()).prepare(DOWNLOADS + "/song.mp3", "");
+        assertTrue(prepared.html.contains("<audio src=\"" + DOWNLOADS + "/song.mp3\" controls"));
+        assertFalse(prepared.html.contains("autoplay"));
+    }
+
+    private static void shouldEscapeTheMediaUrlAndName() {
+        String url = "content://com.example.files/doc/1?a=1&b=\"2\"";
+        FakeDocuments documents = new FakeDocuments();
+        documents.types.put(url, "video/mp4");
+        documents.names.put(url, "<b>clip</b>.mp4");
+        LocalPreview.Prepared prepared = new LocalPreview(documents).prepare(url, url);
+        assertTrue(prepared.html.contains("src=\"content://com.example.files/doc/1?a=1&amp;b=&quot;2&quot;\""));
+        assertTrue(prepared.html.contains("<title>&lt;b&gt;clip&lt;/b&gt;.mp4</title>"));
     }
 
     private static void shouldShowAPdfTheRendererRefusesAsUnavailable() {
@@ -149,6 +181,8 @@ public final class LocalPreviewTest {
     private static final class FakeDocuments implements LocalPreview.Documents {
         final Map<String, FakePdf> pdfs = new HashMap<>();
         final List<String> refused = new ArrayList<>();
+        final Map<String, String> types = new HashMap<>();
+        final Map<String, String> names = new HashMap<>();
         List<String> providers = new ArrayList<>();
         boolean failLookup = false;
         int opened = 0;
@@ -170,7 +204,18 @@ public final class LocalPreviewTest {
 
         @Override
         public String displayName(String url) {
-            return url.substring(url.lastIndexOf('/') + 1);
+            return names.getOrDefault(url, url.substring(url.lastIndexOf('/') + 1));
+        }
+
+        @Override
+        public String mimeType(String url) {
+            if (types.containsKey(url)) {
+                return types.get(url);
+            }
+            if (url.endsWith(".mp4")) {
+                return "video/mp4";
+            }
+            return url.endsWith(".mp3") ? "audio/mpeg" : "";
         }
 
         @Override

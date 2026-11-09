@@ -221,7 +221,7 @@ final class PdfViewer {
         return Integer.parseInt(digits);
     }
 
-    private static String escapeHtml(String s) {
+    static String escapeHtml(String s) {
         StringBuilder sb = new StringBuilder(s.length());
         for (int i = 0; i < s.length(); i++) {
             char c = s.charAt(i);

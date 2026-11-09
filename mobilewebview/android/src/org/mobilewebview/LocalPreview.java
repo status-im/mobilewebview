@@ -25,6 +25,9 @@ final class LocalPreview {
 
         String displayName(String url);
 
+        /** The content's MIME type, or "" when it is not known. */
+        String mimeType(String url);
+
         /** The visible content providers' authorities; an entry may list several, separated by ';'. */
         List<String> providerAuthorities();
     }
@@ -46,7 +49,7 @@ final class LocalPreview {
     static final class Prepared {
         final String url;
         final LocalReadGrant grant;
-        /** The page to load in place of url (the PDF viewer), or null to load url itself. */
+        /** The page to load in place of url (the PDF viewer, a media player), or null to load url itself. */
         final String html;
         private final PdfDocument mPdf;
 
@@ -88,7 +91,8 @@ final class LocalPreview {
         Prepared prepared;
         try {
             PdfDocument pdf = mDocuments.openIfPdf(url);
-            prepared = new Prepared(url, grant, pdf != null ? pdf.viewerHtml() : null, pdf);
+            String html = pdf != null ? pdf.viewerHtml() : mediaHtml(url);
+            prepared = new Prepared(url, grant, html, pdf);
         } catch (IOException | RuntimeException e) {
             Log.w(TAG, "PDF preview cannot be opened", e);
             prepared = new Prepared(url, grant,
@@ -199,6 +203,11 @@ final class LocalPreview {
             return emptyResponse("image/png", 404, "Not Found");
         }
         return new WebResourceResponse("image/png", null, new ByteArrayInputStream(png));
+    }
+
+    private String mediaHtml(String url) {
+        String element = MediaPage.element(mDocuments.mimeType(url));
+        return element == null ? null : MediaPage.html(element, url, mDocuments.displayName(url));
     }
 
     // The host's QUrl lowercases a content:// authority; providers match it

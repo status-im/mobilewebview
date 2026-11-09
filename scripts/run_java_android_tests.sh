@@ -48,6 +48,7 @@ SOURCES=(
   "$ANDROID_SRC/LocalReadGrant.java"
   "$ANDROID_SRC/ContentAuthorities.java"
   "$ANDROID_SRC/PdfViewer.java"
+  "$ANDROID_SRC/MediaPage.java"
   "$ANDROID_SRC/PdfTextLayer.java"
   "$ANDROID_SRC/LocalPreview.java"
   "$ANDROID_SRC/WebViewSettingsPolicy.java"
