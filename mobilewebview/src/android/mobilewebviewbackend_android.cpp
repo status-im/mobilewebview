@@ -43,7 +43,7 @@ public:
     void destroyNativeView() override;
     void loadUrlImpl(const QUrl &url) override;
     void loadHtmlImpl(const QString &html, const QUrl &baseUrl) override;
-    void loadFileUrlImpl(const QUrl &fileUrl, const QUrl &readAccessUrl) override;
+    void loadFileUrlImpl(const QString &fileUrl, const QString &readAccessUrl) override;
     void goBackImpl() override;
     void goForwardImpl() override;
     void goBackOrForwardImpl(int offset) override;
@@ -339,6 +339,24 @@ void AndroidWebViewPrivate::cleanupJni()
     finishAllPendingClears();
 }
 
+namespace {
+
+// pdf_viewer.js, read once per process from the resources.
+const QByteArray &pdfViewerScript()
+{
+    static const QByteArray script = [] {
+        QFile file(QStringLiteral(":/CustomWebView/js/pdf_viewer.js"));
+        if (!file.open(QIODevice::ReadOnly)) {
+            qWarning() << "AndroidWebViewPrivate: Failed to load pdf_viewer.js";
+            return QByteArray();
+        }
+        return file.readAll();
+    }();
+    return script;
+}
+
+} // namespace
+
 jobject AndroidWebViewPrivate::createWebView()
 {
     QJniEnvironment env;
@@ -399,6 +417,14 @@ jobject AndroidWebViewPrivate::createWebView()
     // Create global reference
     jobject globalObj = env->NewGlobalRef(localObj);
     env->DeleteLocalRef(localObj);
+
+    // The PDF viewer page's script lives with the other page scripts.
+    if (jmethodID setScript = env->GetMethodID(m_webViewClass, "setPdfViewerScript",
+                                               "(Ljava/lang/String;)V")) {
+        jstring script = env->NewStringUTF(pdfViewerScript().constData());
+        env->CallVoidMethod(globalObj, setScript, script);
+        env->DeleteLocalRef(script);
+    }
 
     if (env->ExceptionCheck()) {
         env->ExceptionDescribe();
@@ -576,7 +602,7 @@ void AndroidWebViewPrivate::loadHtmlImpl(const QString &html, const QUrl &baseUr
 
 // The Android WebView has no read-access concept of its own: the Java side
 // records the Read Grant and opens file:// or content:// for this view only.
-void AndroidWebViewPrivate::loadFileUrlImpl(const QUrl &fileUrl, const QUrl &readAccessUrl)
+void AndroidWebViewPrivate::loadFileUrlImpl(const QString &fileUrl, const QString &readAccessUrl)
 {
     QMutexLocker locker(&m_jniMutex);
 
@@ -590,9 +616,9 @@ void AndroidWebViewPrivate::loadFileUrlImpl(const QUrl &fileUrl, const QUrl &rea
         return;
     }
 
-    jstring jUrl = env->NewStringUTF(fileUrl.toString(QUrl::FullyEncoded).toUtf8().constData());
-    jstring jReadAccess =
-        env->NewStringUTF(readAccessUrl.toString(QUrl::FullyEncoded).toUtf8().constData());
+    // As the host named them: Java opens a content:// URI by its exact authority.
+    jstring jUrl = env->NewStringUTF(fileUrl.toUtf8().constData());
+    jstring jReadAccess = env->NewStringUTF(readAccessUrl.toUtf8().constData());
     env->CallVoidMethod(m_webViewObject, m_loadFileUrlMethod, jUrl, jReadAccess);
     env->DeleteLocalRef(jUrl);
     env->DeleteLocalRef(jReadAccess);

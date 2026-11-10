@@ -36,7 +36,8 @@ load is applied on the UI thread unless a later load came first; a superseded
 PDF is closed.
 
 The viewer page lists one lazily loaded image per page, sized to the page's
-shape. Images come from `https://pdf.mobilewebview.invalid/<token>/<page>?w=…`:
+shape. Its script is `src/js/pdf_viewer.js`, bundled with the other page
+scripts, handed to each view when it is created and tested under `tests/js`. Images come from `https://pdf.mobilewebview.invalid/<token>/<page>?w=…`:
 a host no network serves, which the WebView always offers to
 `shouldInterceptRequest`, under a random token per open document so no other
 page can request them. The view renders each page with `PdfRenderer` at the
@@ -75,6 +76,12 @@ Darwin (WKWebView renders PDF itself).
   crash in it closes the app, not one Tab, and before Android 15 it is only
   patched with the OS. Accepted for now; an `isolatedProcess` service (as
   androidx.pdf does) would contain it.
-- Only the viewer page runs script. Any other preview, the file's own page, the
-  media and image pages, loads with JavaScript off: a provider can serve
-  `text/html` under any name.
+- Only the viewer page runs script: a provider can serve `text/html` under any
+  name. A file's own page is served from `shouldInterceptRequest` as its own
+  type only when that type runs no script (text other than HTML and XML,
+  JSON, raster images); anything else shows as `text/plain`. The WebView drops
+  a `content://` response's headers but keeps its type, so the type is the
+  guard; the page also carries `Content-Security-Policy: script-src 'none'`,
+  and the media and image pages carry it in a meta tag. The guard belongs to
+  the document, so it holds through history and the back-forward cache, and a
+  link out of a preview leads to a page that runs script as usual.

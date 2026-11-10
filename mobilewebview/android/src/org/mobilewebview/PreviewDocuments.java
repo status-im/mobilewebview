@@ -1,17 +1,18 @@
 package org.mobilewebview;
 
 import android.content.Context;
-import android.content.pm.ProviderInfo;
+import android.database.Cursor;
+import android.provider.OpenableColumns;
 import android.net.Uri;
 import android.webkit.MimeTypeMap;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
+import java.io.InputStream;
 import java.util.Locale;
 
-/** What a LocalPreview reads on Android: PDFs through PdfRenderer, providers through PackageManager. */
+/** What a LocalPreview reads on Android: PDFs through PdfRenderer, everything through its provider or file. */
 final class PreviewDocuments implements LocalPreview.Documents {
     private final Context mContext;
 
@@ -26,7 +27,26 @@ final class PreviewDocuments implements LocalPreview.Documents {
 
     @Override
     public String displayName(String url) {
-        return PdfDocumentSession.displayName(mContext, url);
+        return displayName(mContext, url);
+    }
+
+    /** The provider's name for the file, else its URL's last segment. */
+    static String displayName(Context context, String url) {
+        String path = LocalReadGrant.filePath(url);
+        if (path != null) {
+            return new File(path).getName();
+        }
+        Uri uri = Uri.parse(url);
+        try (Cursor c = context.getContentResolver().query(
+                uri, new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (c != null && c.moveToFirst() && !c.isNull(0)) {
+                return c.getString(0);
+            }
+        } catch (RuntimeException ignored) {
+            // Fall back to the last path segment.
+        }
+        String last = uri.getLastPathSegment();
+        return last != null ? last : "file";
     }
 
     @Override
@@ -48,11 +68,14 @@ final class PreviewDocuments implements LocalPreview.Documents {
     }
 
     @Override
-    public List<String> providerAuthorities() {
-        List<String> authorities = new ArrayList<>();
-        for (ProviderInfo provider : mContext.getPackageManager().queryContentProviders(null, 0, 0)) {
-            authorities.add(provider.authority);
+    public InputStream open(String url) throws IOException {
+        String path = LocalReadGrant.filePath(url);
+        InputStream in = path != null ? new FileInputStream(path)
+                : mContext.getContentResolver().openInputStream(Uri.parse(url));
+        if (in == null) {
+            throw new IOException("no stream for the preview");
         }
-        return authorities;
+        return in;
     }
+
 }

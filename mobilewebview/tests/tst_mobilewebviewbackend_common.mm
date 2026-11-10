@@ -48,11 +48,12 @@ public:
         lastLoadedUrl = url;
     }
 
-    void loadFileUrlImpl(const QUrl &fileUrl, const QUrl &readAccessDirUrl) override
+    void loadFileUrlImpl(const QString &fileUrl, const QString &readAccessDirUrl) override
     {
         ++loadFileUrlCalls;
-        lastLoadedFileUrl = fileUrl;
-        lastFileReadAccessUrl = readAccessDirUrl;
+        lastLoadedFileText = fileUrl;
+        lastLoadedFileUrl = QUrl(fileUrl);
+        lastFileReadAccessUrl = QUrl(readAccessDirUrl);
     }
 
     void loadHtmlImpl(const QString &html, const QUrl &baseUrl) override
@@ -274,6 +275,7 @@ public:
     QStringList lastBridgeOrigins;
     QUrl lastLoadedUrl;
     QUrl lastLoadedFileUrl;
+    QString lastLoadedFileText;
     QUrl lastFileReadAccessUrl;
     QUrl lastHtmlBaseUrl;
     QRectF lastGeometry;
@@ -323,6 +325,8 @@ private slots:
     void loadFileUrlRefusesAGrantThatDoesNotCoverTheFile();
     void loadFileUrlTakesContentUrisWhereThePlatformReadsThem();
     void loadFileUrlContentPreviewReplaysAsFileLoadAfterAFragmentChange();
+    void loadFileUrlHandsTheContentUriOverAsItWasNamed();
+    void loadFileUrlAgreesWithTheSharedReadGrantCases();
     void loadHtmlContentSurvivesStoreRecreate();
     void offTheRecordSameValueDoesNotRecreateNativeView();
     void storageNameChangeRecreatesNativeViewInStandardMode();
@@ -1274,6 +1278,60 @@ void MobileWebViewBackendCommonTest::loadFileUrlContentPreviewReplaysAsFileLoadA
     QCOMPARE(d->loadFileUrlCalls, loadFileUrlBefore + 1);
     QCOMPARE(d->loadUrlCalls, loadUrlBefore);
     QCOMPARE(d->lastFileReadAccessUrl, contentUrl);
+}
+
+// A content:// authority is case-sensitive to Android, and QUrl lowercases it.
+void MobileWebViewBackendCommonTest::loadFileUrlHandsTheContentUriOverAsItWasNamed()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    QVERIFY(g_lastCreatedPrivate != nullptr);
+    auto *d = g_lastCreatedPrivate;
+    d->readsContentUrisValue = true;
+
+    const QString contentUrl = QStringLiteral("content://com.Example.Files/doc/A%20b");
+    backend.loadFileUrl(contentUrl, contentUrl);
+    QCOMPARE(d->loadFileUrlCalls, 1);
+    QCOMPARE(d->lastLoadedFileText, contentUrl);
+
+    // So does the replay after a recreate, even once the view reported a fragment.
+    d->m_nativeViewSetup = true;
+    backend.updateUrlState(QUrl(contentUrl + QStringLiteral("#p2")));
+    backend.setOffTheRecord(true);
+    QCOMPARE(d->loadFileUrlCalls, 2);
+    QCOMPARE(d->lastLoadedFileText, contentUrl);
+}
+
+void MobileWebViewBackendCommonTest::loadFileUrlAgreesWithTheSharedReadGrantCases()
+{
+    const QString casesPath = QFINDTESTDATA("read_grant_cases.txt");
+    QFile cases(casesPath);
+    QVERIFY2(cases.open(QIODevice::ReadOnly | QIODevice::Text), "read_grant_cases.txt not found");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(QDir(dir.path()).mkpath(QStringLiteral("a")));
+    QVERIFY(QFile::link(dir.filePath(QStringLiteral("a")), dir.filePath(QStringLiteral("link"))));
+
+    int checked = 0;
+    for (const QString &line : QString::fromUtf8(cases.readAll()).split(QLatin1Char('\n'))) {
+        if (line.trimmed().isEmpty() || line.startsWith(QLatin1Char('#')))
+            continue;
+        const QStringList fields = line.split(QLatin1Char('|'));
+        QCOMPARE(fields.size(), 3);
+        const bool granted = fields[0].trimmed() == QLatin1String("yes");
+        const QString fileUrl = fields[1].trimmed().replace(QLatin1String("{dir}"), dir.path());
+        const QString readAccess = fields[2].trimmed().replace(QLatin1String("{dir}"), dir.path());
+
+        g_lastCreatedPrivate = nullptr;
+        MobileWebViewBackend backend;
+        auto *d = g_lastCreatedPrivate;
+        d->readsContentUrisValue = true;
+        backend.loadFileUrl(fileUrl, readAccess);
+        QVERIFY2((d->loadFileUrlCalls == 1) == granted, qPrintable(line));
+        ++checked;
+    }
+    QVERIFY(checked > 10);
 }
 
 void MobileWebViewBackendCommonTest::loadHtmlContentSurvivesStoreRecreate()

@@ -3,6 +3,9 @@ package org.mobilewebview;
 import java.nio.charset.StandardCharsets;
 
 public final class PdfViewerTest {
+    // pdf_viewer.js is tested on its own (tests/js); the page only fills in its arguments.
+    private static final String SCRIPT = "run(%BASE%, %MAX_WIDTH%, %WITH_TEXT%)";
+
     private static final String TOKEN = "0123456789abcdef0123456789abcdef";
 
     public static void main(String[] args) {
@@ -84,7 +87,7 @@ public final class PdfViewerTest {
 
     private static void shouldListEveryPageWithItsShape() {
         String html = PdfViewer.html("report.pdf",
-                new float[] {612f, 842f}, new float[] {792f, 595f}, TOKEN, true);
+                new float[] {612f, 842f}, new float[] {792f, 595f}, TOKEN, true, SCRIPT);
         assertEquals(2, count(html, "data-page=\""));
         assertTrue(html.contains("data-page=\"0\" data-w=\"612\" data-h=\"792\""));
         assertTrue(html.contains("data-page=\"1\" data-w=\"842\" data-h=\"595\""));
@@ -97,18 +100,18 @@ public final class PdfViewerTest {
     // Selection and find-in-page work on a transparent text layer over each
     // page image, filled with the page's text where Android can read it.
     private static void shouldLayTextOverThePagesOnlyWhenAndroidReadsIt() {
-        String withText = PdfViewer.html("a.pdf", new float[] {612f}, new float[] {792f}, TOKEN, true);
+        String withText = PdfViewer.html("a.pdf", new float[] {612f}, new float[] {792f}, TOKEN, true, SCRIPT);
         assertEquals(1, count(withText, "<div class=\"text\"></div>"));
-        assertTrue(withText.contains("'/text'"));
+        assertTrue(withText.contains("<script>run(\"" + PdfViewer.pageBase(TOKEN) + "\", 2048, true)</script>"));
 
-        String imagesOnly = PdfViewer.html("a.pdf", new float[] {612f}, new float[] {792f}, TOKEN, false);
+        String imagesOnly = PdfViewer.html("a.pdf", new float[] {612f}, new float[] {792f}, TOKEN, false, SCRIPT);
         assertFalse(imagesOnly.contains("class=\"text\""));
-        assertTrue(imagesOnly.contains("withText=false"));
+        assertTrue(imagesOnly.contains(", false)</script>"));
     }
 
     private static void shouldEscapeTheTitle() {
         String html = PdfViewer.html("<b>\"x\" & y</b>.pdf",
-                new float[] {612f}, new float[] {792f}, TOKEN, false);
+                new float[] {612f}, new float[] {792f}, TOKEN, false, SCRIPT);
         assertTrue(html.contains("<title>&lt;b&gt;&quot;x&quot; &amp; y&lt;/b&gt;.pdf</title>"));
     }
 

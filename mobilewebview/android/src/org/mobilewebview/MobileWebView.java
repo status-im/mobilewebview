@@ -328,9 +328,13 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
 
         runOnMainThread(() -> {
             if (mWebView == null) return;
-            WebViewSettingsPolicy.allowScripts(mWebView.getSettings(), true);
             mWebView.loadUrl(url);
         });
+    }
+
+    /** The PDF viewer page's script (pdf_viewer.js); the host sets it once, before any load. */
+    public void setPdfViewerScript(String script) {
+        mPreview.setViewerScript(script);
     }
 
     /**
@@ -375,7 +379,6 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
             Log.d(TAG, "loadFileUrl: " + (prepared.grant.allowsContentScheme() ? "content" : "file")
                     + " preview");
             WebViewSettingsPolicy.applyReadGrant(mWebView.getSettings(), prepared.grant);
-            WebViewSettingsPolicy.allowScripts(mWebView.getSettings(), prepared.runsScript());
             if (prepared.html != null) {
                 // A PDF loads as the viewer page: the WebView would turn the
                 // PDF itself into a download.
@@ -403,7 +406,6 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
 
         runOnMainThread(() -> {
             if (mWebView == null) return;
-            WebViewSettingsPolicy.allowScripts(mWebView.getSettings(), true);
             mWebView.loadDataWithBaseURL(baseUrl, html, "text/html", "UTF-8", null);
         });
     }

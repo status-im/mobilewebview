@@ -1,5 +1,11 @@
 package org.mobilewebview;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
 public final class LocalReadGrantTest {
     private static final String APP_FILES = "file:///data/user/0/app.example/files";
 
@@ -14,6 +20,7 @@ public final class LocalReadGrantTest {
         shouldRefuseAGrantThatDoesNotCoverTheFile();
         shouldRefuseAGrantForAWebUrl();
         shouldRefuseAPathTheFileSystemCannotName();
+        shouldAgreeWithTheSharedCases();
         System.out.println("LocalReadGrantTest passed");
     }
 
@@ -117,6 +124,34 @@ public final class LocalReadGrantTest {
         LocalReadGrant grant = LocalReadGrant.forPreview(dir + "/a.html", "");
         assertFalse(grant.permits(dir + "/%00"));
         assertFalse(grant.permits(dir + "/a%00.png"));
+    }
+
+    // tests/read_grant_cases.txt, which the C++ check of loadFileUrl reads too.
+    private static void shouldAgreeWithTheSharedCases() {
+        try {
+            Path cases = Paths.get(System.getProperty("mwv.tests", "mobilewebview/tests"), "read_grant_cases.txt");
+            Path dir = Files.createTempDirectory("grant").toRealPath();
+            Files.createDirectories(dir.resolve("a"));
+            Files.createSymbolicLink(dir.resolve("link"), dir.resolve("a"));
+            int checked = 0;
+            for (String line : Files.readAllLines(cases, StandardCharsets.UTF_8)) {
+                if (line.trim().isEmpty() || line.startsWith("#")) {
+                    continue;
+                }
+                String[] fields = line.split("\\|", -1);
+                boolean granted = fields[0].trim().equals("yes");
+                String file = fields[1].trim().replace("{dir}", dir.toString());
+                String access = fields[2].trim().replace("{dir}", dir.toString());
+                boolean actual = LocalReadGrant.forPreview(file, access) != LocalReadGrant.NONE;
+                if (actual != granted) {
+                    throw new AssertionError("Read Grant case disagrees: " + line);
+                }
+                checked++;
+            }
+            assertTrue(checked > 10);
+        } catch (IOException e) {
+            throw new AssertionError(e);
+        }
     }
 
     private static void assertTrue(boolean condition) {

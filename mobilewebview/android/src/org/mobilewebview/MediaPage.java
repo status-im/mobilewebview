@@ -9,6 +9,9 @@ import java.util.Locale;
  * WebView shows blank by its type (image/x-ms-bmp), which an img decodes.
  */
 final class MediaPage {
+    /** No script runs in a page of a file another app handed over. */
+    static final String NO_SCRIPT_POLICY = "script-src 'none'";
+
     private MediaPage() {}
 
     /** "video", "audio" or "img" for a file of mimeType, null for anything else. */
@@ -22,12 +25,13 @@ final class MediaPage {
 
     static String html(String element, String url, String title) {
         return "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+                + "<meta http-equiv=\"Content-Security-Policy\" content=\"" + NO_SCRIPT_POLICY + "\">"
                 + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-                + "<title>" + PdfViewer.escapeHtml(title) + "</title><style>"
+                + "<title>" + PreviewHtml.escape(title) + "</title><style>"
                 + "html,body{margin:0;height:100%;background:#000}"
                 + "body{display:flex;align-items:center;justify-content:center}"
                 + "video,img{max-width:100%;max-height:100%}audio{width:90%}"
-                + "</style></head><body>" + tag(element, PdfViewer.escapeHtml(url)) + "</body></html>";
+                + "</style></head><body>" + tag(element, PreviewHtml.escape(url)) + "</body></html>";
     }
 
     private static String tag(String element, String src) {

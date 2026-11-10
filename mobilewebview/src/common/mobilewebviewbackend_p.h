@@ -115,7 +115,8 @@ public:
     // URI, the URI itself), already resolved by loadFileUrl() to the file's
     // own directory when the caller passed an empty URL.
     // =========================================================================
-    virtual void loadFileUrlImpl(const QUrl &fileUrl, const QUrl &readAccessDirUrl);
+    // The URLs as the host named them (see MobileWebViewBackend::loadFileUrl).
+    virtual void loadFileUrlImpl(const QString &fileUrl, const QString &readAccessDirUrl);
 
     // =========================================================================
     // Optional capability: find-in-page. Defaults: unsupported, no-ops.
@@ -263,8 +264,8 @@ public:
     // URL load, which iOS drops for file://) after a store recreate or a
     // native-view rebuild. Cleared as soon as the view leaves that file.
     bool m_hasLastFileUrl = false;
-    QUrl m_lastFileUrl;
-    QUrl m_lastFileReadAccessUrl;
+    QString m_lastFileUrl;
+    QString m_lastFileReadAccessUrl;
     QUrl m_url;
     QString m_title;
     bool m_canGoBack = false;

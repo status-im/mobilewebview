@@ -38,13 +38,17 @@ final class LocalReadGrant {
      * The grant for a preview of {@code url}. For file:// the
      * {@code readAccessUrl} names the file itself or a directory holding it;
      * empty means the file's own directory. For content:// the grant is the
-     * URI itself. {@link #NONE} when the URL is not local or the access URL
-     * does not cover it.
+     * URI itself, which must name a provider, and the access URL is empty or
+     * that URI. {@link #NONE} when the URL is not local or the access URL does
+     * not cover it. The host checks the same cases (tests/read_grant_cases.txt).
      */
     static LocalReadGrant forPreview(String url, String readAccessUrl) {
         String scheme = schemeOf(url);
         if (CONTENT.equals(scheme)) {
-            return new LocalReadGrant(CONTENT, contentIdentity(url));
+            boolean ownAccess = readAccessUrl == null || readAccessUrl.isEmpty()
+                    || readAccessUrl.equals(url);
+            return ownAccess && hasAuthority(url) ? new LocalReadGrant(CONTENT, contentIdentity(url))
+                                                  : NONE;
         }
         if (!FILE.equals(scheme)) {
             return NONE;
@@ -132,6 +136,11 @@ final class LocalReadGrant {
             return true;
         }
         return path.startsWith(root.endsWith("/") ? root : root + "/");
+    }
+
+    private static boolean hasAuthority(String url) {
+        int start = url.indexOf("://");
+        return start > 0 && start + 3 < url.length() && url.charAt(start + 3) != '/';
     }
 
     private static String contentIdentity(String url) {

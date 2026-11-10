@@ -5,8 +5,11 @@ import android.webkit.WebResourceResponse;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 /**
  * The local content one view may show: its Read Grant (ADR 0007) and the PDF
@@ -17,6 +20,8 @@ import java.util.List;
  */
 final class LocalPreview {
     private static final String TAG = "LocalPreview";
+    private static final Map<String, String> NO_SCRIPT = Collections.singletonMap(
+            "Content-Security-Policy", MediaPage.NO_SCRIPT_POLICY);
 
     /** What a preview reads from the platform. */
     interface Documents {
@@ -28,15 +33,16 @@ final class LocalPreview {
         /** The content's MIME type, or "" when it is not known. */
         String mimeType(String url);
 
-        /** The visible content providers' authorities; an entry may list several, separated by ';'. */
-        List<String> providerAuthorities();
+        /** The content itself, for a preview's own page. */
+        InputStream open(String url) throws IOException;
+
     }
 
     /** An open PDF whose pages a preview serves. */
     interface PdfDocument {
         String token();
 
-        String viewerHtml();
+        String viewerHtml(String script);
 
         byte[] renderPng(int index, int width);
 
@@ -59,11 +65,6 @@ final class LocalPreview {
             this.html = html;
             mPdf = pdf;
         }
-
-        /** Only the PDF viewer page runs script; a file's own page never does. */
-        boolean runsScript() {
-            return mPdf != null;
-        }
     }
 
     private final Documents mDocuments;
@@ -71,6 +72,9 @@ final class LocalPreview {
     private volatile LocalReadGrant mGrant = LocalReadGrant.NONE;
     private Prepared mPending;
     private PdfDocument mPdf;
+    // The page of the applied preview that is the file itself (not one of ours).
+    private String mOwnPageUrl;
+    private volatile String mViewerScript = "";
     private boolean mClosed = false;
 
     LocalPreview(Documents documents) {
@@ -78,16 +82,11 @@ final class LocalPreview {
     }
 
     /**
-     * Resolves the grant and opens the PDF for a preview of requestedUrl. Null
-     * when it must not load: the grant does not cover it, or its content://
-     * authority could name another provider. Waits on the provider.
+     * Resolves the grant and opens the PDF for a preview of url, which the host
+     * passes as it was named. Null when it must not load: the grant does not
+     * cover it. Waits on the provider.
      */
-    Prepared prepare(String requestedUrl, String readAccessUrl) {
-        String url = withProviderAuthority(requestedUrl);
-        if (url == null) {
-            Log.w(TAG, "The content:// authority could name another provider; not loaded");
-            return null;
-        }
+    Prepared prepare(String url, String readAccessUrl) {
         LocalReadGrant grant = LocalReadGrant.forPreview(url, readAccessUrl);
         if (grant == LocalReadGrant.NONE) {
             Log.w(TAG, "The read-access URL does not cover the file; not loaded");
@@ -96,8 +95,8 @@ final class LocalPreview {
         Prepared prepared;
         try {
             PdfDocument pdf = mDocuments.openIfPdf(url);
-            String html = pdf != null ? pdf.viewerHtml() : mediaHtml(url);
-            prepared = new Prepared(url, grant, html, pdf);
+            prepared = pdf != null ? new Prepared(url, grant, pdf.viewerHtml(mViewerScript), pdf)
+                                   : new Prepared(url, grant, pageHtml(url), null);
         } catch (IOException | RuntimeException e) {
             Log.w(TAG, "PDF preview cannot be opened", e);
             prepared = new Prepared(url, grant,
@@ -116,6 +115,11 @@ final class LocalPreview {
         return prepared;
     }
 
+    /** pdf_viewer.js, read by the host from its resources. */
+    void setViewerScript(String script) {
+        mViewerScript = script != null ? script : "";
+    }
+
     /** Makes prepared the view's preview; false when a later one replaced it. */
     boolean apply(Prepared prepared) {
         synchronized (mLock) {
@@ -126,6 +130,7 @@ final class LocalPreview {
             closePdf(mPdf);
             mPdf = prepared.mPdf;
             mGrant = prepared.grant;
+            mOwnPageUrl = prepared.html == null ? prepared.url : null;
             return true;
         }
     }
@@ -150,6 +155,7 @@ final class LocalPreview {
             closePdf(mPdf);
             mPdf = null;
             mGrant = LocalReadGrant.NONE;
+            mOwnPageUrl = null;
         }
     }
 
@@ -172,6 +178,9 @@ final class LocalPreview {
             if (url != null && url.startsWith(PdfViewer.PAGE_ORIGIN)) {
                 return pdfPage(url);
             }
+            if (mainFrame && url != null && url.equals(ownPageUrl())) {
+                return ownPage(url);
+            }
             if (LocalReadGrant.isLocal(url) && !mGrant.permits(url)) {
                 Log.w(TAG, "Refused local " + (mainFrame ? "navigation" : "subresource")
                         + " outside the Read Grant");
@@ -182,6 +191,40 @@ final class LocalPreview {
             Log.w(TAG, "Refused a request that failed to resolve", e);
             return emptyResponse("text/plain", 403, "Forbidden");
         }
+    }
+
+    private String ownPageUrl() {
+        synchronized (mLock) {
+            return mOwnPageUrl;
+        }
+    }
+
+    // The file's own page, served here so it runs no script: a provider can
+    // serve text/html under any name. The WebView drops the headers of a
+    // content:// response but keeps its type, so a type that could run script
+    // shows as text; the policy header covers the rest.
+    private WebResourceResponse ownPage(String url) {
+        try {
+            return new WebResourceResponse(shownType(mDocuments.mimeType(url)), null, 200, "OK",
+                    NO_SCRIPT, mDocuments.open(url));
+        } catch (IOException e) {
+            Log.w(TAG, "The previewed file does not open");
+            return emptyResponse("text/plain", 404, "Not Found");
+        }
+    }
+
+    /** The type a file's own page shows as: its own when that runs no script, else text. */
+    static String shownType(String type) {
+        String t = type == null ? "" : type.toLowerCase(Locale.ROOT);
+        int params = t.indexOf(';');
+        if (params >= 0) {
+            t = t.substring(0, params).trim();
+        }
+        boolean scriptFree = t.equals("application/json")
+                || (t.startsWith("image/") && !t.contains("svg"))
+                || (t.startsWith("text/") && !t.equals("text/html") && !t.contains("xml")
+                        && !t.equals("text/xsl"));
+        return scriptFree ? t : "text/plain";
     }
 
     private WebResourceResponse pdfPage(String url) {
@@ -210,22 +253,13 @@ final class LocalPreview {
         return new WebResourceResponse("image/png", null, new ByteArrayInputStream(png));
     }
 
-    private String mediaHtml(String url) {
-        String element = MediaPage.element(mDocuments.mimeType(url));
-        return element == null ? null : MediaPage.html(element, url, mDocuments.displayName(url));
-    }
-
-    // The host's QUrl lowercases a content:// authority; providers match it
-    // case-sensitively. The provider that granted the URI is visible to us.
-    // Null when the authority cannot be told apart from another provider's.
-    private String withProviderAuthority(String url) {
-        if (url == null || !url.regionMatches(true, 0, "content:", 0, 8)) {
-            return url;
-        }
+    // The page of ours a file shows in (a player, an image), or null for its own.
+    private String pageHtml(String url) {
         try {
-            return ContentAuthorities.restoreCase(url, mDocuments.providerAuthorities());
+            String element = MediaPage.element(mDocuments.mimeType(url));
+            return element == null ? null : MediaPage.html(element, url, mDocuments.displayName(url));
         } catch (RuntimeException e) {
-            Log.w(TAG, "Provider lookup failed", e);
+            Log.w(TAG, "No page for the preview; the file shows as itself", e);
             return null;
         }
     }

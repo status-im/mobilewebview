@@ -156,7 +156,12 @@ public slots:
     /// The file load is recorded and replayed (through the same file path, not
     /// as a plain URL load) when the native view is recreated — a storage
     /// profile switch or a native-view rebuild does not blank the tab.
-    Q_INVOKABLE void loadFileUrl(const QUrl &fileUrl, const QUrl &readAccessUrl = QUrl());
+    ///
+    /// The URLs are strings so a content:// URI reaches the platform as it was
+    /// named: its authority is case-sensitive, and QUrl lowercases it.
+    Q_INVOKABLE void loadFileUrl(const QString &fileUrl, const QString &readAccessUrl = QString());
+    /// For C++ that already holds the URLs as QUrl (file:// ones).
+    void loadFileUrl(const QUrl &fileUrl, const QUrl &readAccessUrl = QUrl());
 
     void loadHtml(const QString &html, const QUrl &baseUrl = QUrl());
     void goBack();

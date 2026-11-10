@@ -118,12 +118,12 @@ final class PdfViewer {
      * under the page's text layer when {@code withText}.
      */
     static String html(String title, float[] pageWidths, float[] pageHeights, String token,
-                       boolean withText) {
+                       boolean withText, String script) {
         StringBuilder sb = new StringBuilder(2048 + pageWidths.length * 160);
         sb.append("<!DOCTYPE html><html><head><meta charset=\"utf-8\">")
           .append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1,")
           .append(" minimum-scale=1, maximum-scale=8\">")
-          .append("<title>").append(escapeHtml(title)).append("</title><style>")
+          .append("<title>").append(PreviewHtml.escape(title)).append("</title><style>")
           .append("html,body{margin:0;background:#525659}")
           .append("body{display:flex;flex-direction:column;align-items:center;gap:8px;padding:8px 0;")
           .append("user-select:none}")
@@ -152,57 +152,20 @@ final class PdfViewer {
             }
             sb.append("</div>");
         }
-        sb.append("<script>(function(){var base=").append(jsString(pageBase(token)))
-          .append(",maxWidth=").append(MAX_RENDER_WIDTH)
-          .append(",withText=").append(withText).append(';')
-          .append(VIEWER_SCRIPT).append("})();</script></body></html>");
+        // pdf_viewer.js, which the host hands over (MobileWebView.setPdfViewerScript).
+        sb.append("<script>")
+          .append(script.replace("%BASE%", jsString(pageBase(token)))
+                        .replace("%MAX_WIDTH%", String.valueOf(MAX_RENDER_WIDTH))
+                        .replace("%WITH_TEXT%", String.valueOf(withText)))
+          .append("</script></body></html>");
         return sb.toString();
     }
-
-    // Images render at the device's pixel width and scale with pinch zoom.
-    // Each text run is a transparent span over its place on the page, in units
-    // of the page's width, stretched to the width the page draws it at; line
-    // breaks between runs keep copied text in lines. The text of every page
-    // loads, visible pages first, so find-in-page covers the whole document.
-    private static final String VIEWER_SCRIPT =
-            "var pages=document.querySelectorAll('.page');"
-            + "var w=Math.round(Math.min(Math.max(document.documentElement.clientWidth,1)"
-            + "*(window.devicePixelRatio||1),maxWidth));"
-            + "for(var i=0;i<pages.length;i++)pages[i].querySelector('img').src=base+i+'?w='+w;"
-            + "if(!withText)return;"
-            + "var ctx=document.createElement('canvas').getContext('2d');"
-            + "function lay(page,runs){"
-            + "var pw=+page.getAttribute('data-w'),ph=+page.getAttribute('data-h'),"
-            + "f=document.createDocumentFragment();"
-            + "for(var j=0;j<runs.length;j++){"
-            + "var r=runs[j],h=r[3]-r[1];if(h<=0||r[2]<=r[0])continue;"
-            + "ctx.font=h+'px sans-serif';"
-            + "var m=ctx.measureText(r[4]).width,s=document.createElement('span');"
-            + "s.textContent=r[4]+(r[5]===' '?' ':'');"
-            + "s.style.left=r[0]*100/pw+'%';s.style.top=r[1]*100/ph+'%';"
-            + "s.style.fontSize='calc('+h+'*100cqw/'+pw+')';"
-            + "if(m>0)s.style.transform='scaleX('+(r[2]-r[0])/m+')';"
-            + "f.appendChild(s);if(r[5]==='\\n')f.appendChild(document.createElement('br'));}"
-            + "f.appendChild(document.createElement('br'));"
-            + "page.querySelector('.text').appendChild(f);}"
-            + "var queue=[],busy=0;for(i=0;i<pages.length;i++)queue.push(i);"
-            + "var seen=new IntersectionObserver(function(es){es.forEach(function(e){"
-            + "var k=queue.indexOf(+e.target.getAttribute('data-page'));"
-            + "if(e.isIntersecting&&k>0)queue.unshift(queue.splice(k,1)[0]);});});"
-            + "for(i=0;i<pages.length;i++)seen.observe(pages[i]);"
-            + "function load(n){busy++;"
-            + "fetch(base+n+'/text').then(function(r){return r.ok?r.json():[];})"
-            + ".then(function(runs){lay(pages[n],runs);},function(){})"
-            + ".then(function(){busy--;pump();});}"
-            + "function pump(){while(busy<2&&queue.length)load(queue.shift());"
-            + "if(!queue.length)seen.disconnect();}"
-            + "pump();";
 
     /** The page for a PDF PdfRenderer cannot open (corrupt, password-protected). */
     static String unavailableHtml(String title) {
         return "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
                 + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-                + "<title>" + escapeHtml(title) + "</title><style>"
+                + "<title>" + PreviewHtml.escape(title) + "</title><style>"
                 + "html,body{margin:0;height:100%;background:#525659;color:#fff;"
                 + "font:16px sans-serif}body{display:flex;align-items:center;"
                 + "justify-content:center;text-align:center;padding:0 24px}"
@@ -219,22 +182,6 @@ final class PdfViewer {
             }
         }
         return Integer.parseInt(digits);
-    }
-
-    static String escapeHtml(String s) {
-        StringBuilder sb = new StringBuilder(s.length());
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            switch (c) {
-                case '&': sb.append("&amp;"); break;
-                case '<': sb.append("&lt;"); break;
-                case '>': sb.append("&gt;"); break;
-                case '"': sb.append("&quot;"); break;
-                case '\'': sb.append("&#39;"); break;
-                default: sb.append(c);
-            }
-        }
-        return sb.toString();
     }
 
     /** A coordinate with at most two decimals and no trailing zeros. */

@@ -46,7 +46,7 @@ SOURCES=(
   "$ANDROID_SRC/DownloadProbe.java"
   "$ANDROID_SRC/RequestUserAgent.java"
   "$ANDROID_SRC/LocalReadGrant.java"
-  "$ANDROID_SRC/ContentAuthorities.java"
+  "$ANDROID_SRC/PreviewHtml.java"
   "$ANDROID_SRC/PdfViewer.java"
   "$ANDROID_SRC/MediaPage.java"
   "$ANDROID_SRC/PdfTextLayer.java"
@@ -74,8 +74,8 @@ SOURCES=(
   "$ANDROID_TEST/RequestUserAgentTest.java"
   "$ANDROID_TEST/WebViewSettingsPolicyTest.java"
   "$ANDROID_TEST/LocalReadGrantTest.java"
-  "$ANDROID_TEST/ContentAuthoritiesTest.java"
   "$ANDROID_TEST/PdfViewerTest.java"
+  "$ANDROID_TEST/PreviewHtmlTest.java"
   "$ANDROID_TEST/PdfTextLayerTest.java"
   "$ANDROID_TEST/LocalPreviewTest.java"
   "$ANDROID_TEST/PreviewCopiesTest.java"
@@ -102,8 +102,8 @@ TESTS=(
   org.mobilewebview.RequestUserAgentTest
   org.mobilewebview.WebViewSettingsPolicyTest
   org.mobilewebview.LocalReadGrantTest
-  org.mobilewebview.ContentAuthoritiesTest
   org.mobilewebview.PdfViewerTest
+  org.mobilewebview.PreviewHtmlTest
   org.mobilewebview.PdfTextLayerTest
   org.mobilewebview.LocalPreviewTest
   org.mobilewebview.PreviewCopiesTest
@@ -116,7 +116,7 @@ TESTS=(
 
 for test in "${TESTS[@]}"; do
   echo "Running $test..."
-  java -cp "$OUT" "$test"
+  java -Dmwv.tests="$ROOT/mobilewebview/tests" -cp "$OUT" "$test"
 done
 
 echo "All Java tests passed."

@@ -2,7 +2,6 @@ package org.mobilewebview;
 
 import android.annotation.TargetApi;
 import android.content.Context;
-import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.RectF;
@@ -13,7 +12,6 @@ import android.graphics.pdf.models.selection.SelectionBoundary;
 import android.net.Uri;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
-import android.provider.OpenableColumns;
 import android.system.Os;
 
 import java.io.ByteArrayOutputStream;
@@ -96,7 +94,7 @@ final class PdfDocumentSession implements LocalPreview.PdfDocument {
             PdfRenderer renderer = new PdfRenderer(fd);
             fd = null; // the renderer owns it now and closes it
             try {
-                return new PdfDocumentSession(displayName(context, url), renderer, copy);
+                return new PdfDocumentSession(PreviewDocuments.displayName(context, url), renderer, copy);
             } catch (RuntimeException e) {
                 renderer.close();
                 throw e;
@@ -115,8 +113,8 @@ final class PdfDocumentSession implements LocalPreview.PdfDocument {
     }
 
     @Override
-    public String viewerHtml() {
-        return PdfViewer.html(mTitle, mWidths, mHeights, mToken, readsText());
+    public String viewerHtml(String script) {
+        return PdfViewer.html(mTitle, mWidths, mHeights, mToken, readsText(), script);
     }
 
     /** PdfRenderer reads page text from Android 15. */
@@ -198,24 +196,6 @@ final class PdfDocumentSession implements LocalPreview.PdfDocument {
         mClosed = true;
         mRenderer.close();
         deleteCopy(mCopy);
-    }
-
-    static String displayName(Context context, String url) {
-        String path = LocalReadGrant.filePath(url);
-        if (path != null) {
-            return new File(path).getName();
-        }
-        Uri uri = Uri.parse(url);
-        try (Cursor c = context.getContentResolver().query(
-                uri, new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
-            if (c != null && c.moveToFirst() && !c.isNull(0)) {
-                return c.getString(0);
-            }
-        } catch (RuntimeException ignored) {
-            // Fall back to the last path segment.
-        }
-        String last = uri.getLastPathSegment();
-        return last != null ? last : "PDF";
     }
 
     private static ParcelFileDescriptor openDescriptor(Context context, String url)

@@ -212,7 +212,7 @@ public:
     bool initNativeView() override;
     void destroyNativeView() override;
     void loadUrlImpl(const QUrl &url) override;
-    void loadFileUrlImpl(const QUrl &fileUrl, const QUrl &readAccessDirUrl) override;
+    void loadFileUrlImpl(const QString &fileUrl, const QString &readAccessDirUrl) override;
     void loadHtmlImpl(const QString &html, const QUrl &baseUrl) override;
     void goBackImpl() override;
     void goForwardImpl() override;
@@ -277,8 +277,8 @@ private:
     bool m_loadDeferredForUa = false;
 
     // A .txt loads as data (see loadFileUrlImpl), so a reload loads it anew.
-    QUrl m_textFileUrl;
-    QUrl m_textReadAccessUrl;
+    QString m_textFileUrl;
+    QString m_textReadAccessUrl;
     // Counts navigations, so a text read in the background never replaces a later one.
     std::shared_ptr<std::atomic<quint64>> m_navigations = std::make_shared<std::atomic<quint64>>(0);
 };
@@ -555,8 +555,11 @@ NSData *utf8TextData(NSURL *fileUrl)
 
 } // namespace
 
-void DarwinWebViewPrivate::loadFileUrlImpl(const QUrl &fileUrl, const QUrl &readAccessDirUrl)
+void DarwinWebViewPrivate::loadFileUrlImpl(const QString &fileUrlText,
+                                           const QString &readAccessDirText)
 {
+    const QUrl fileUrl(fileUrlText);
+    const QUrl readAccessDirUrl(readAccessDirText);
     if (!m_webView) {
         qWarning() << "DarwinWebViewPrivate: webView is null";
         return;
@@ -577,8 +580,8 @@ void DarwinWebViewPrivate::loadFileUrlImpl(const QUrl &fileUrl, const QUrl &read
 
     const quint64 navigation = ++*m_navigations;
     const bool text = [nsFileUrl.pathExtension caseInsensitiveCompare:@"txt"] == NSOrderedSame;
-    m_textFileUrl = text ? fileUrl : QUrl();
-    m_textReadAccessUrl = text ? readAccessDirUrl : QUrl();
+    m_textFileUrl = text ? fileUrlText : QString();
+    m_textReadAccessUrl = text ? readAccessDirText : QString();
     if (!text) {
         runOnMainThread(^{
             [webView loadFileURL:nsFileUrl allowingReadAccessToURL:nsReadAccessUrl];
@@ -607,10 +610,10 @@ void DarwinWebViewPrivate::loadFileUrlImpl(const QUrl &fileUrl, const QUrl &read
 // read again: load the file anew instead of reloading its URL.
 bool DarwinWebViewPrivate::reloadText()
 {
-    if (!m_textFileUrl.isValid())
+    if (m_textFileUrl.isEmpty())
         return false;
     NSString *shown = m_webView.URL.URLByResolvingSymlinksInPath.path;
-    NSString *text = m_textFileUrl.toNSURL().URLByResolvingSymlinksInPath.path;
+    NSString *text = QUrl(m_textFileUrl).toNSURL().URLByResolvingSymlinksInPath.path;
     if (!shown || ![shown isEqualToString:text])
         return false;
     loadFileUrlImpl(m_textFileUrl, m_textReadAccessUrl);

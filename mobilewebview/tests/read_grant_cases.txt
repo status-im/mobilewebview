@@ -1,0 +1,24 @@
+# Read Grant cases both layers must agree on: MobileWebViewBackend::loadFileUrl
+# in C++ (tst_mobilewebviewbackend_common) and LocalReadGrant.forPreview in Java
+# (LocalReadGrantTest). A case C++ lets through and Java refuses changes the
+# view's URL and then fails the navigation.
+#
+# grant | file URL | read-access URL
+# {dir} is a fresh directory holding a/ and a symlink link -> a.
+yes | file://{dir}/a/report.pdf |
+yes | file://{dir}/a/report.pdf | file://{dir}/a
+yes | file://{dir}/a/report.pdf | file://{dir}/a/report.pdf
+yes | file://{dir}/a/report.pdf | file://{dir}
+yes | file://{dir}/a/report.pdf | file://{dir}/link
+no  | file://{dir}/a/report.pdf | file://{dir}/b
+no  | file://{dir}/a/report.pdf | file://{dir}/a/other.pdf
+no  | file://{dir}/a/report.pdf | file://{dir}/a/report.pdf/x
+no  | file://{dir}/a/../b/x.pdf | file://{dir}/a
+no  | file://{dir}/ab/x.pdf     | file://{dir}/a
+no  | file://{dir}/a/report.pdf | https://example.com/
+yes | content://com.example.provider/1 |
+yes | content://com.example.provider/1 | content://com.example.provider/1
+no  | content://com.example.provider/1 | content://com.example.provider/2
+no  | content://com.example.provider/1 | file://{dir}
+no  | content:///1 |
+no  | https://example.com/x.pdf |
