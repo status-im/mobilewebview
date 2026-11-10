@@ -125,6 +125,7 @@ final class WebViewWindow {
     private int flags() {
         int f = WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
                 | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
                 | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                 | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS;
         if (!mFocusable) f |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
@@ -191,9 +192,12 @@ final class WebViewWindow {
         return loc[1];
     }
 
-    private void takeFocus() {
-        if (mFocusable || !mVisible) return;
-        mFocusable = true;
+    // The topmost focusable window keeps the focus, so while this window is focusable the
+    // activity window gets no key or IME focus: give it back on any touch outside the WebView.
+    private void setFocusable(boolean focusable) {
+        focusable = focusable && mVisible;
+        if (mFocusable == focusable) return;
+        mFocusable = focusable;
         update();
     }
 
@@ -220,9 +224,13 @@ final class WebViewWindow {
 
         @Override
         public boolean dispatchTouchEvent(MotionEvent ev) {
+            if (ev.getActionMasked() == MotionEvent.ACTION_OUTSIDE) {
+                setFocusable(false);
+                return false;
+            }
             if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) {
                 mRouteTo = hostViewAbove(ev.getRawX(), ev.getRawY());
-                if (mRouteTo == null) takeFocus();
+                setFocusable(mRouteTo == null);
             }
             if (mRouteTo != null) {
                 final View target = mRouteTo;
