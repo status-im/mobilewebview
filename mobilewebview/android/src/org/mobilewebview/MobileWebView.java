@@ -44,6 +44,18 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     private Context mContext;
     private volatile long mNativePtr;  // Pointer to C++ AndroidWebViewBackend
     private ViewGroup mRootView;
+    private WebViewWindow mOwnWindow;
+
+    private static volatile boolean sOwnWindows = false;
+
+    /**
+     * Host each WebView in its own panel window instead of the activity's content view. For
+     * activities whose window draws no views (e.g. it took its surface); set before creating
+     * WebViews.
+     */
+    public static void setOwnWindows(boolean ownWindows) {
+        sOwnWindows = ownWindows;
+    }
 
     private final Object mBridgeLock = new Object();
     private String mBridgeNamespace = "qt";
@@ -237,7 +249,9 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
 
         // Add to view hierarchy (initially hidden). Must happen on UI thread.
         mWebView.setVisibility(View.GONE);
-        if (mRootView != null) {
+        if (sOwnWindows && mRootView != null && mContext instanceof Activity) {
+            mOwnWindow = new WebViewWindow((Activity) mContext, mRootView, mWebView);
+        } else if (mRootView != null) {
             ViewParent parent = mWebView.getParent();
             if (parent instanceof ViewGroup && parent != mRootView) {
                 ((ViewGroup) parent).removeView(mWebView);
@@ -555,6 +569,10 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     public void setGeometry(int x, int y, int width, int height) {
         runOnMainThread(() -> {
             if (mWebView == null) return;
+            if (mOwnWindow != null) {
+                mOwnWindow.setGeometry(x, y, width, height);
+                return;
+            }
             ViewGroup.LayoutParams params = mWebView.getLayoutParams();
             if (params == null) {
                 params = new ViewGroup.LayoutParams(width, height);
@@ -583,6 +601,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         runOnMainThread(() -> {
             if (mWebView == null) return;
             mWebView.setVisibility(visible ? View.VISIBLE : View.GONE);
+            if (mOwnWindow != null) mOwnWindow.setVisible(visible, grabFocus);
             if (visible && grabFocus) {
                 mWebView.requestFocus();
             }
@@ -613,6 +632,10 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
             }
 
             try {
+                if (mOwnWindow != null) {
+                    captureFreezeFromOwnWindow(requestId, w, h);
+                    return;
+                }
                 final Window window = resolveWindow(mWebView.getContext());
                 if (window == null) {
                     captureFreezeSoftware(requestId, w, h);
@@ -638,6 +661,31 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
                 Log.e(TAG, "captureSnapshotForFreeze failed", e);
                 reportFreezeSnapshotFailure(requestId);
             }
+        });
+    }
+
+    // The activity Window does not hold this WebView's pixels; copy from the WebView's own window.
+    private void captureFreezeFromOwnWindow(long requestId, int w, int h) {
+        if (android.os.Build.VERSION.SDK_INT < 34) {
+            captureFreezeSoftware(requestId, w, h);
+            return;
+        }
+        final Bitmap bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        final int[] location = new int[2];
+        mWebView.getLocationInWindow(location);
+        final PixelCopy.Request request = PixelCopy.Request.Builder.ofWindow(mWebView)
+                .setSourceRect(new Rect(location[0], location[1], location[0] + w, location[1] + h))
+                .setDestinationBitmap(bitmap)
+                .build();
+        PixelCopy.request(request, mMainHandler::post, result -> {
+            if (result.getStatus() == PixelCopy.SUCCESS) {
+                deliverFreezeSnapshot(requestId, bitmap, w, h);
+                return;
+            }
+            bitmap.recycle();
+            Log.w(TAG, "PixelCopy freeze snapshot (own window) failed with code " + result.getStatus()
+                    + ", falling back to software draw");
+            captureFreezeSoftware(requestId, w, h);
         });
     }
 
@@ -768,6 +816,10 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
                 ViewParent parent = mWebView.getParent();
                 if (parent instanceof ViewGroup) {
                     ((ViewGroup) parent).removeView(mWebView);
+                }
+                if (mOwnWindow != null) {
+                    mOwnWindow.remove();
+                    mOwnWindow = null;
                 }
                 mWebView.destroy();
                 mWebView = null;
