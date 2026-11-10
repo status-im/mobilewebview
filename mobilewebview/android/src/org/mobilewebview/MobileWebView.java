@@ -19,6 +19,7 @@ import android.view.PixelCopy;
 import android.view.ViewParent;
 import android.webkit.WebSettings;
 import android.webkit.WebBackForwardList;
+import android.webkit.WebChromeClient;
 import android.webkit.WebHistoryItem;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
@@ -66,6 +67,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
     private final PendingActionQueue mPendingActionQueue = new PendingActionQueue();
     private final BridgeScriptInjector mBridgeInjector = new BridgeScriptInjector(this);
+    private final FullscreenVideo mFullscreen = new FullscreenVideo();
 
     @FunctionalInterface
     private interface NativeCallback {
@@ -650,6 +652,9 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     public void setVisible(boolean visible, boolean grabFocus) {
         runOnMainThread(() -> {
             if (mWebView == null) return;
+            if (!visible) {
+                mFullscreen.leave();
+            }
             mWebView.setVisibility(visible ? View.VISIBLE : View.GONE);
             if (visible && grabFocus) {
                 mWebView.requestFocus();
@@ -828,6 +833,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         mLoadGeneration.incrementAndGet();
         mPreview.close();
         runOnMainThread(() -> {
+            mFullscreen.leave();
             mBridgeInjector.clearDocumentStartScripts();
             if (mWebView != null) {
                 mProfileManager.flushCookiesIfPersistent(mOffTheRecord);
@@ -855,6 +861,16 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     }
 
     // --- ChromeHost ---
+
+    @Override
+    public void onShowFullscreen(View view, WebChromeClient.CustomViewCallback callback) {
+        mFullscreen.show(resolveWindow(mContext), view, callback);
+    }
+
+    @Override
+    public void onHideFullscreen() {
+        mFullscreen.hide();
+    }
 
     @Override
     public void onTitleChanged(String title) {
