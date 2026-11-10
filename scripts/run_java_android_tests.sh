@@ -51,6 +51,7 @@ SOURCES=(
   "$ANDROID_SRC/MediaPage.java"
   "$ANDROID_SRC/PdfTextLayer.java"
   "$ANDROID_SRC/LocalPreview.java"
+  "$ANDROID_SRC/PreviewCopies.java"
   "$ANDROID_SRC/WebViewSettingsPolicy.java"
   "$ANDROID_SRC/ProbeRequest.java"
   "$ANDROID_SRC/DownloadIo.java"
@@ -77,6 +78,7 @@ SOURCES=(
   "$ANDROID_TEST/PdfViewerTest.java"
   "$ANDROID_TEST/PdfTextLayerTest.java"
   "$ANDROID_TEST/LocalPreviewTest.java"
+  "$ANDROID_TEST/PreviewCopiesTest.java"
   "$ANDROID_TEST/ProbeRequestTest.java"
   "$ANDROID_TEST/DownloadFetcherRaceTest.java"
   "$ANDROID_TEST/DownloadMediaStoreTest.java"
@@ -104,6 +106,7 @@ TESTS=(
   org.mobilewebview.PdfViewerTest
   org.mobilewebview.PdfTextLayerTest
   org.mobilewebview.LocalPreviewTest
+  org.mobilewebview.PreviewCopiesTest
   org.mobilewebview.ProbeRequestTest
   org.mobilewebview.DownloadFetcherRaceTest
   org.mobilewebview.DownloadMediaStoreTest

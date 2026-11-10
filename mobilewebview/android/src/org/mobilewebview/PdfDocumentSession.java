@@ -33,6 +33,7 @@ import java.util.List;
  * PdfRenderer opens one page at a time, so rendering is serialized.
  */
 final class PdfDocumentSession implements LocalPreview.PdfDocument {
+    private static final PreviewCopies COPIES = new PreviewCopies();
     private final String mToken = PdfViewer.newToken();
     private final String mTitle;
     private final PdfRenderer mRenderer;
@@ -243,19 +244,10 @@ final class PdfDocumentSession implements LocalPreview.PdfDocument {
     // The head already read from the stream, then the rest of it.
     private static File copyToCache(Context context, byte[] head, int headLength,
                                     ParcelFileDescriptor fd) throws IOException {
-        File dir = new File(context.getCacheDir(), "mobilewebview-pdf");
-        if (!dir.isDirectory() && !dir.mkdirs()) {
-            throw new IOException("cannot create " + dir);
-        }
-        File copy = File.createTempFile("preview", ".pdf", dir);
+        File copy = COPIES.create(context.getCacheDir());
         try (InputStream in = new FileInputStream(fd.getFileDescriptor());
              OutputStream out = new FileOutputStream(copy)) {
-            out.write(head, 0, headLength);
-            byte[] buf = new byte[64 * 1024];
-            int n;
-            while ((n = in.read(buf)) > 0) {
-                out.write(buf, 0, n);
-            }
+            PreviewCopies.copy(head, headLength, in, out, PreviewCopies.LIMIT_BYTES);
         } catch (IOException e) {
             deleteCopy(copy);
             throw e;

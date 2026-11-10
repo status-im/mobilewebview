@@ -20,6 +20,7 @@ public final class LocalPreviewTest {
         shouldPlayAVideoInAPageWithItsControls();
         shouldPlayAudioInAPageWithItsControls();
         shouldShowABitmapTheWebViewCannotNameInAnImagePage();
+        shouldRunScriptOnlyInThePdfViewer();
         shouldEscapeTheMediaUrlAndName();
         shouldShowAPdfTheRendererRefusesAsUnavailable();
         shouldRefuseAPreviewItsGrantDoesNotCover();
@@ -106,6 +107,18 @@ public final class LocalPreviewTest {
         String png = DOWNLOADS + "/pic.png";
         documents.types.put(png, "image/png");
         assertEquals(null, new LocalPreview(documents).prepare(png, "").html);
+    }
+
+    // A provider can serve text/html under any name; only the viewer page needs script.
+    private static void shouldRunScriptOnlyInThePdfViewer() {
+        FakeDocuments documents = new FakeDocuments();
+        documents.pdf(DOWNLOADS + "/a.pdf", "tokenA");
+        documents.refused.add(DOWNLOADS + "/locked.pdf");
+        LocalPreview preview = new LocalPreview(documents);
+        assertTrue(preview.prepare(DOWNLOADS + "/a.pdf", "").runsScript());
+        assertFalse(preview.prepare(DOWNLOADS + "/locked.pdf", "").runsScript());
+        assertFalse(preview.prepare(DOWNLOADS + "/clip.mp4", "").runsScript());
+        assertFalse(preview.prepare(DOWNLOADS + "/notes.txt", "").runsScript());
     }
 
     private static void shouldEscapeTheMediaUrlAndName() {

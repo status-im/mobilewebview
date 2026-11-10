@@ -35,6 +35,14 @@ final class WebViewSettingsPolicy {
         settings.setDisplayZoomControls(false);
     }
 
+    /** Script for a page load, and for the PDF viewer; not for a preview of a file itself. */
+    static void allowScripts(WebSettings settings, boolean allowed) {
+        if (settings == null) {
+            return;
+        }
+        settings.setJavaScriptEnabled(allowed);
+    }
+
     /** Opens the one scheme a preview's Read Grant needs; NONE closes both. */
     static void applyReadGrant(WebSettings settings, LocalReadGrant grant) {
         if (settings == null) {

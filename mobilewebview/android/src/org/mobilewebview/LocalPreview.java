@@ -59,6 +59,11 @@ final class LocalPreview {
             this.html = html;
             mPdf = pdf;
         }
+
+        /** Only the PDF viewer page runs script; a file's own page never does. */
+        boolean runsScript() {
+            return mPdf != null;
+        }
     }
 
     private final Documents mDocuments;

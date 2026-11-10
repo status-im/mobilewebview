@@ -35,6 +35,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -108,8 +109,9 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     private String mHttpUserAgent = "";
 
     // Opens previews off the caller's thread: a provider or a long PDF can take
-    // a while, and the caller is the Qt thread.
-    private static final ExecutorService PREVIEW_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
+    // a while, and the caller is the Qt thread. One per view, so a slow provider
+    // holds back only its own view.
+    private final ExecutorService mPreviewExecutor = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "mobilewebview-preview");
         thread.setDaemon(true);
         return thread;
@@ -326,6 +328,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
 
         runOnMainThread(() -> {
             if (mWebView == null) return;
+            WebViewSettingsPolicy.allowScripts(mWebView.getSettings(), true);
             mWebView.loadUrl(url);
         });
     }
@@ -339,41 +342,48 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     public void loadFileUrl(String requestedUrl, String readAccessUrl) {
         final int generation = mLoadGeneration.incrementAndGet();
         mPendingUrl = requestedUrl;
-        PREVIEW_EXECUTOR.execute(() -> {
-            LocalPreview.Prepared opened;
-            try {
-                opened = mPreview.prepare(requestedUrl, readAccessUrl);
-            } catch (RuntimeException e) {
-                // An exception escaping this thread would end the process.
-                Log.w(TAG, "loadFileUrl: the preview failed to open", e);
-                opened = null;
+        try {
+            mPreviewExecutor.execute(() -> openPreview(generation, requestedUrl, readAccessUrl));
+        } catch (RejectedExecutionException e) {
+            Log.w(TAG, "loadFileUrl: the view is destroyed");
+        }
+    }
+
+    private void openPreview(int generation, String requestedUrl, String readAccessUrl) {
+        LocalPreview.Prepared opened;
+        try {
+            opened = mPreview.prepare(requestedUrl, readAccessUrl);
+        } catch (RuntimeException e) {
+            // An exception escaping this thread would end the process.
+            Log.w(TAG, "loadFileUrl: the preview failed to open", e);
+            opened = null;
+        }
+        final LocalPreview.Prepared prepared = opened;
+        runOnMainThread(() -> {
+            if (generation != mLoadGeneration.get() || mWebView == null) {
+                mPreview.discard(prepared);
+                return;
             }
-            final LocalPreview.Prepared prepared = opened;
-            runOnMainThread(() -> {
-                if (generation != mLoadGeneration.get() || mWebView == null) {
-                    mPreview.discard(prepared);
-                    return;
-                }
-                if (prepared == null) {
-                    withNativePtr(ptr -> nativeOnNavigationFailed(ptr));
-                    return;
-                }
-                if (!mPreview.apply(prepared)) {
-                    return;
-                }
-                // The URL stays out of the log: a content:// URI can carry an account.
-                Log.d(TAG, "loadFileUrl: " + (prepared.grant.allowsContentScheme() ? "content" : "file")
-                        + " preview");
-                WebViewSettingsPolicy.applyReadGrant(mWebView.getSettings(), prepared.grant);
-                if (prepared.html != null) {
-                    // A PDF loads as the viewer page: the WebView would turn the
-                    // PDF itself into a download.
-                    mWebView.loadDataWithBaseURL(prepared.url, prepared.html, "text/html", "utf-8",
-                            prepared.url);
-                } else {
-                    mWebView.loadUrl(prepared.url);
-                }
-            });
+            if (prepared == null) {
+                withNativePtr(ptr -> nativeOnNavigationFailed(ptr));
+                return;
+            }
+            if (!mPreview.apply(prepared)) {
+                return;
+            }
+            // The URL stays out of the log: a content:// URI can carry an account.
+            Log.d(TAG, "loadFileUrl: " + (prepared.grant.allowsContentScheme() ? "content" : "file")
+                    + " preview");
+            WebViewSettingsPolicy.applyReadGrant(mWebView.getSettings(), prepared.grant);
+            WebViewSettingsPolicy.allowScripts(mWebView.getSettings(), prepared.runsScript());
+            if (prepared.html != null) {
+                // A PDF loads as the viewer page: the WebView would turn the
+                // PDF itself into a download.
+                mWebView.loadDataWithBaseURL(prepared.url, prepared.html, "text/html", "utf-8",
+                        prepared.url);
+            } else {
+                mWebView.loadUrl(prepared.url);
+            }
         });
     }
 
@@ -393,6 +403,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
 
         runOnMainThread(() -> {
             if (mWebView == null) return;
+            WebViewSettingsPolicy.allowScripts(mWebView.getSettings(), true);
             mWebView.loadDataWithBaseURL(baseUrl, html, "text/html", "UTF-8", null);
         });
     }
@@ -832,6 +843,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         mDownloads.cancelAll();
         mLoadGeneration.incrementAndGet();
         mPreview.close();
+        mPreviewExecutor.shutdown();
         runOnMainThread(() -> {
             mFullscreen.leave();
             mBridgeInjector.clearDocumentStartScripts();

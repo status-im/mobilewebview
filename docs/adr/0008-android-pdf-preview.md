@@ -22,14 +22,16 @@ out a seekable file descriptor, which is what `PdfRenderer` needs.
 
 `loadFileUrl()` on Android sniffs the content for a `%PDF-` signature. A PDF
 opens a `PdfRenderer` on the provider's (or the file's) own descriptor; only a
-descriptor that cannot seek is copied to the app cache first. Content that
+descriptor that cannot seek is copied to the app cache first, up to 200 MB. The
+first copy in a process clears the copies an earlier run left behind. Content that
 cannot be read before the signature (gone, a lapsed grant) is not a PDF: the
 WebView loads it and reports what it finds. The view then loads a viewer page
 with `loadDataWithBaseURL(url, html, …, historyUrl = url)`, so the Tab still
 shows the document's URL and title.
 
-Opening happens on one background thread, since the provider, a copy or a long
-document can take a while and `loadFileUrl` is called on the Qt thread. The
+Opening happens on a background thread of the view's own, since the provider,
+a copy or a long document can take a while and `loadFileUrl` is called on the
+Qt thread. The
 load is applied on the UI thread unless a later load came first; a superseded
 PDF is closed.
 
@@ -69,3 +71,10 @@ Darwin (WKWebView renders PDF itself).
 - Find-in-page matches within a run: a phrase that wraps onto the next line, or
   crosses a gap, is not found, though each of its words is.
 - The session closes with the next `loadFileUrl` or the view.
+- pdfium parses files other apps hand over inside the app's own process: a
+  crash in it closes the app, not one Tab, and before Android 15 it is only
+  patched with the OS. Accepted for now; an `isolatedProcess` service (as
+  androidx.pdf does) would contain it.
+- Only the viewer page runs script. Any other preview, the file's own page, the
+  media and image pages, loads with JavaScript off: a provider can serve
+  `text/html` under any name.

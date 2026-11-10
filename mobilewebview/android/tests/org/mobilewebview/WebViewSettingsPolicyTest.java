@@ -8,7 +8,17 @@ public final class WebViewSettingsPolicyTest {
         shouldGiveABrowsingViewNoLocalAccess();
         shouldOpenOnlyTheSchemeAPreviewGrantNeeds();
         shouldFitContentToTheScreenAndAllowPinchZoom();
+        shouldTurnScriptsOffAndOnAgain();
         System.out.println("WebViewSettingsPolicyTest passed");
+    }
+
+    // A preview other than the PDF viewer runs no script; a page load turns them back on.
+    private static void shouldTurnScriptsOffAndOnAgain() {
+        WebSettings settings = applied();
+        WebViewSettingsPolicy.allowScripts(settings, false);
+        assertEquals(Boolean.FALSE, settings.javaScriptEnabled());
+        WebViewSettingsPolicy.allowScripts(settings, true);
+        assertEquals(Boolean.TRUE, settings.javaScriptEnabled());
     }
 
     private static WebSettings applied() {
