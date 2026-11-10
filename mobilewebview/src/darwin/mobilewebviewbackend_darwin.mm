@@ -29,6 +29,8 @@
 #include <QTimer>
 #include <QFile>
 #include <QVariantMap>
+#include <atomic>
+#include <memory>
 #include <optional>
 #include <functional>
 #if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
@@ -257,6 +259,7 @@ private:
     void onDefaultHttpUserAgentFetched(const QString &userAgent);
     bool deferLoadForDefaultUserAgent();
     void loadLastContent();
+    bool reloadText();
 
     WKWebView *m_webView = nullptr;
     NavigationDelegate *m_navigationDelegate = nullptr;
@@ -272,6 +275,12 @@ private:
     // waits for it, so the first request already carries the host's override.
     bool m_defaultUaPending = false;
     bool m_loadDeferredForUa = false;
+
+    // A .txt loads as data (see loadFileUrlImpl), so a reload loads it anew.
+    QUrl m_textFileUrl;
+    QUrl m_textReadAccessUrl;
+    // Counts navigations, so a text read in the background never replaces a later one.
+    std::shared_ptr<std::atomic<quint64>> m_navigations = std::make_shared<std::atomic<quint64>>(0);
 };
 
 namespace {
@@ -510,6 +519,8 @@ void DarwinWebViewPrivate::loadUrlImpl(const QUrl &url)
     if (deferLoadForDefaultUserAgent())
         return;
 
+    ++*m_navigations;
+    m_textFileUrl.clear();
     WKWebView *webView = m_webView;
     NSURL *nsUrl = url.toNSURL();
 
@@ -564,17 +575,46 @@ void DarwinWebViewPrivate::loadFileUrlImpl(const QUrl &fileUrl, const QUrl &read
                                  ? readAccessDirUrl.toNSURL()
                                  : [nsFileUrl URLByDeletingLastPathComponent];
 
-    if (NSData *text = utf8TextData(nsFileUrl)) {
+    const quint64 navigation = ++*m_navigations;
+    const bool text = [nsFileUrl.pathExtension caseInsensitiveCompare:@"txt"] == NSOrderedSame;
+    m_textFileUrl = text ? fileUrl : QUrl();
+    m_textReadAccessUrl = text ? readAccessDirUrl : QUrl();
+    if (!text) {
         runOnMainThread(^{
-            [webView loadData:text MIMEType:@"text/plain" characterEncodingName:@"UTF-8"
-                      baseURL:nsFileUrl];
+            [webView loadFileURL:nsFileUrl allowingReadAccessToURL:nsReadAccessUrl];
         });
         return;
     }
 
-    runOnMainThread(^{
-        [webView loadFileURL:nsFileUrl allowingReadAccessToURL:nsReadAccessUrl];
+    // Reading and checking up to 16 MB stays off the main thread.
+    std::shared_ptr<std::atomic<quint64>> navigations = m_navigations;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSData *data = utf8TextData(nsFileUrl);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (navigations->load() != navigation)
+                return;
+            if (data) {
+                [webView loadData:data MIMEType:@"text/plain" characterEncodingName:@"UTF-8"
+                          baseURL:nsFileUrl];
+            } else {
+                [webView loadFileURL:nsFileUrl allowingReadAccessToURL:nsReadAccessUrl];
+            }
+        });
     });
+}
+
+// The view still shows the .txt it loaded as data, which has no file it may
+// read again: load the file anew instead of reloading its URL.
+bool DarwinWebViewPrivate::reloadText()
+{
+    if (!m_textFileUrl.isValid())
+        return false;
+    NSString *shown = m_webView.URL.URLByResolvingSymlinksInPath.path;
+    NSString *text = m_textFileUrl.toNSURL().URLByResolvingSymlinksInPath.path;
+    if (!shown || ![shown isEqualToString:text])
+        return false;
+    loadFileUrlImpl(m_textFileUrl, m_textReadAccessUrl);
+    return true;
 }
 
 void DarwinWebViewPrivate::loadHtmlImpl(const QString &html, const QUrl &baseUrl)
@@ -586,6 +626,8 @@ void DarwinWebViewPrivate::loadHtmlImpl(const QString &html, const QUrl &baseUrl
     if (deferLoadForDefaultUserAgent())
         return;
 
+    ++*m_navigations;
+    m_textFileUrl.clear();
     WKWebView *webView = m_webView;
     NSString *htmlString = html.toNSString();
     NSURL *nsBaseUrl = baseUrl.isValid() ? baseUrl.toNSURL() : nil;
@@ -601,6 +643,7 @@ void DarwinWebViewPrivate::goBackImpl()
         return;
     }
 
+    ++*m_navigations;
     WKWebView *webView = m_webView;
     runOnMainThread(^{
         if (webView.canGoBack) {
@@ -615,6 +658,7 @@ void DarwinWebViewPrivate::goForwardImpl()
         return;
     }
 
+    ++*m_navigations;
     WKWebView *webView = m_webView;
     runOnMainThread(^{
         if (webView.canGoForward) {
@@ -629,6 +673,7 @@ void DarwinWebViewPrivate::goBackOrForwardImpl(int offset)
         return;
     }
 
+    ++*m_navigations;
     WKWebView *webView = m_webView;
     runOnMainThread(^{
         WKBackForwardList *list = webView.backForwardList;
@@ -660,7 +705,7 @@ void DarwinWebViewPrivate::goBackOrForwardImpl(int offset)
 
 void DarwinWebViewPrivate::reloadImpl()
 {
-    if (!m_webView) {
+    if (!m_webView || reloadText()) {
         return;
     }
 
@@ -672,7 +717,7 @@ void DarwinWebViewPrivate::reloadImpl()
 
 void DarwinWebViewPrivate::reloadAndBypassCacheImpl()
 {
-    if (!m_webView) {
+    if (!m_webView || reloadText()) {
         return;
     }
 
@@ -713,6 +758,7 @@ void DarwinWebViewPrivate::stopImpl()
         return;
     }
 
+    ++*m_navigations;
     WKWebView *webView = m_webView;
     runOnMainThread(^{
         [webView stopLoading];

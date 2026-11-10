@@ -207,6 +207,15 @@ void MobileWebViewE2ETest::utf8PlainTextFileReadsAsUtf8()
     backend.runJavaScript(QStringLiteral("document.body.innerText"));
     QVERIFY(jsResultSpy.wait(5000));
     QCOMPARE(jsResultSpy.takeFirst().at(0).toString().trimmed(), QStringLiteral("Привет, Status"));
+
+    // The text loads as data; a reload must load it again, not its file:// URL.
+    loadSpy.clear();
+    backend.reload();
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 2 && !backend.loading(), 10000);
+    QVERIFY(backend.loaded());
+    backend.runJavaScript(QStringLiteral("document.body.innerText"));
+    QVERIFY(jsResultSpy.wait(5000));
+    QCOMPARE(jsResultSpy.takeFirst().at(0).toString().trimmed(), QStringLiteral("Привет, Status"));
 }
 
 QTEST_MAIN(MobileWebViewE2ETest)
