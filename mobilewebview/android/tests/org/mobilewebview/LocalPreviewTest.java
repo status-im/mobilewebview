@@ -19,6 +19,7 @@ public final class LocalPreviewTest {
         shouldLoadContentThatIsNotAPdfAsItIs();
         shouldPlayAVideoInAPageWithItsControls();
         shouldPlayAudioInAPageWithItsControls();
+        shouldShowABitmapTheWebViewCannotNameInAnImagePage();
         shouldEscapeTheMediaUrlAndName();
         shouldShowAPdfTheRendererRefusesAsUnavailable();
         shouldRefuseAPreviewItsGrantDoesNotCover();
@@ -90,6 +91,21 @@ public final class LocalPreviewTest {
                 new LocalPreview(new FakeDocuments()).prepare(DOWNLOADS + "/song.mp3", "");
         assertTrue(prepared.html.contains("<audio src=\"" + DOWNLOADS + "/song.mp3\" controls"));
         assertFalse(prepared.html.contains("autoplay"));
+    }
+
+    // The WebView shows an image/x-ms-bmp document blank; an <img> decodes it by its bytes.
+    private static void shouldShowABitmapTheWebViewCannotNameInAnImagePage() {
+        String url = DOWNLOADS + "/pic.bmp";
+        FakeDocuments documents = new FakeDocuments();
+        documents.types.put(url, "image/x-ms-bmp");
+        LocalPreview.Prepared prepared = new LocalPreview(documents).prepare(url, "");
+        assertTrue(prepared.html.contains("<img src=\"" + url + "\""));
+        assertTrue(prepared.html.contains("<title>pic.bmp</title>"));
+        assertFalse(prepared.html.contains("controls"));
+
+        String png = DOWNLOADS + "/pic.png";
+        documents.types.put(png, "image/png");
+        assertEquals(null, new LocalPreview(documents).prepare(png, "").html);
     }
 
     private static void shouldEscapeTheMediaUrlAndName() {
