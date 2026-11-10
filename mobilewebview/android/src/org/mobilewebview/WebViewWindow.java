@@ -7,6 +7,7 @@ import android.os.Build;
 import android.os.IBinder;
 import android.util.Log;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -35,6 +36,7 @@ final class WebViewWindow {
     private final Activity mActivity;
     private final ViewGroup mHostContent;
     private final Root mRoot;
+    private final WebView mWebView;
     private WindowManager.LayoutParams mParams;
     private boolean mAdded = false;
     private int mX, mY, mWidth = 1, mHeight = 1;
@@ -50,6 +52,7 @@ final class WebViewWindow {
     WebViewWindow(Activity activity, ViewGroup hostContent, WebView webView) {
         mActivity = activity;
         mHostContent = hostContent;
+        mWebView = webView;
         mRoot = new Root(activity);
         mRoot.addView(webView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -202,6 +205,7 @@ final class WebViewWindow {
         mFocusable = focusable;
         Log.i(TAG, "WebViewWindow focusable=" + focusable);
         update();
+        if (focusable) mWebView.requestFocus();
     }
 
     private View hostViewAbove(float rawX, float rawY) {
@@ -223,6 +227,16 @@ final class WebViewWindow {
 
         Root(Activity activity) {
             super(activity);
+        }
+
+        // Back must reach the WebView (it forwards Back to the host) even when no view in this
+        // window has focus; unhandled, the system would send the activity to the background.
+        @Override
+        public boolean dispatchKeyEvent(KeyEvent event) {
+            if (event.getKeyCode() == KeyEvent.KEYCODE_BACK && !mWebView.hasFocus()) {
+                return mWebView.dispatchKeyEvent(event);
+            }
+            return super.dispatchKeyEvent(event);
         }
 
         @Override
