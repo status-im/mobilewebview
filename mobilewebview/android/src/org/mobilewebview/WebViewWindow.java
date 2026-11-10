@@ -65,8 +65,14 @@ final class WebViewWindow {
     }
 
     void setVisible(boolean visible, boolean focusable) {
+        // Take the focus only when shown; later calls (e.g. after a popup) must not take it back
+        // from the activity window.
+        if (!visible || !focusable) {
+            mFocusable = false;
+        } else if (!mVisible) {
+            mFocusable = true;
+        }
         mVisible = visible;
-        mFocusable = visible && focusable;
         mRoot.setVisibility(visible ? View.VISIBLE : View.GONE);
         if (visible && !mAdded) {
             add();
@@ -198,6 +204,7 @@ final class WebViewWindow {
         focusable = focusable && mVisible;
         if (mFocusable == focusable) return;
         mFocusable = focusable;
+        Log.d(TAG, "WebViewWindow focusable=" + focusable);
         update();
     }
 
