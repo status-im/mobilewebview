@@ -43,6 +43,7 @@ public:
     void destroyNativeView() override;
     void loadUrlImpl(const QUrl &url) override;
     void loadHtmlImpl(const QString &html, const QUrl &baseUrl) override;
+    void loadFileUrlImpl(const QString &fileUrl, const QString &readAccessUrl) override;
     void goBackImpl() override;
     void goForwardImpl() override;
     void goBackOrForwardImpl(int offset) override;
@@ -73,6 +74,8 @@ public:
     // showFindPanelImpl/hideFindPanelImpl: base-class no-ops — the QML find
     // panel is used on Android.
     bool inPageMediaPlaybackSupportedImpl() const override;
+    bool pdfViewerSupportedImpl() const override;
+    bool readsContentUrisImpl() const override { return true; }
     void captureSnapshotImpl(quint64 requestId) override;
     void detachNativeViewFromSceneImpl() override;
     void startDownloadImpl(quint64 downloadId, const QUrl &url,
@@ -118,6 +121,7 @@ private:
     // JNI method IDs (cached for performance)
     jmethodID m_loadUrlMethod = nullptr;
     jmethodID m_loadHtmlMethod = nullptr;
+    jmethodID m_loadFileUrlMethod = nullptr;
     jmethodID m_goBackMethod = nullptr;
     jmethodID m_goForwardMethod = nullptr;
     jmethodID m_goBackOrForwardMethod = nullptr;
@@ -272,6 +276,7 @@ bool AndroidWebViewPrivate::initNativeView()
     // Cache method IDs
     m_loadUrlMethod = env->GetMethodID(m_webViewClass, "loadUrl", "(Ljava/lang/String;)V");
     m_loadHtmlMethod = env->GetMethodID(m_webViewClass, "loadHtml", "(Ljava/lang/String;Ljava/lang/String;)V");
+    m_loadFileUrlMethod = env->GetMethodID(m_webViewClass, "loadFileUrl", "(Ljava/lang/String;Ljava/lang/String;)V");
     m_goBackMethod = env->GetMethodID(m_webViewClass, "goBack", "()V");
     m_goForwardMethod = env->GetMethodID(m_webViewClass, "goForward", "()V");
     m_goBackOrForwardMethod = env->GetMethodID(m_webViewClass, "goBackOrForward", "(I)V");
@@ -334,6 +339,24 @@ void AndroidWebViewPrivate::cleanupJni()
     finishAllPendingClears();
 }
 
+namespace {
+
+// pdf_viewer.js, read once per process from the resources.
+const QByteArray &pdfViewerScript()
+{
+    static const QByteArray script = [] {
+        QFile file(QStringLiteral(":/CustomWebView/js/pdf_viewer.js"));
+        if (!file.open(QIODevice::ReadOnly)) {
+            qWarning() << "AndroidWebViewPrivate: Failed to load pdf_viewer.js";
+            return QByteArray();
+        }
+        return file.readAll();
+    }();
+    return script;
+}
+
+} // namespace
+
 jobject AndroidWebViewPrivate::createWebView()
 {
     QJniEnvironment env;
@@ -394,6 +417,14 @@ jobject AndroidWebViewPrivate::createWebView()
     // Create global reference
     jobject globalObj = env->NewGlobalRef(localObj);
     env->DeleteLocalRef(localObj);
+
+    // The PDF viewer page's script lives with the other page scripts.
+    if (jmethodID setScript = env->GetMethodID(m_webViewClass, "setPdfViewerScript",
+                                               "(Ljava/lang/String;)V")) {
+        jstring script = env->NewStringUTF(pdfViewerScript().constData());
+        env->CallVoidMethod(globalObj, setScript, script);
+        env->DeleteLocalRef(script);
+    }
 
     if (env->ExceptionCheck()) {
         env->ExceptionDescribe();
@@ -525,11 +556,6 @@ jobjectArray AndroidWebViewPrivate::createJavaStringArray(QJniEnvironment &env, 
     return array;
 }
 
-// loadFileUrlImpl is deliberately not overridden here: Android WebView loads a
-// top-level file:// through this very path (MobileWebView.setupWebView enables
-// setAllowFileAccess, and WebViewUrlPolicy lists "file" as supported), and it
-// has no read-access-directory concept to honour. The base default forwards to
-// loadUrlImpl, which is exactly what this platform needs.
 void AndroidWebViewPrivate::loadUrlImpl(const QUrl &url)
 {
     QMutexLocker locker(&m_jniMutex);
@@ -570,6 +596,32 @@ void AndroidWebViewPrivate::loadHtmlImpl(const QString &html, const QUrl &baseUr
     env->CallVoidMethod(m_webViewObject, m_loadHtmlMethod, jHtml, jBaseUrl);
     env->DeleteLocalRef(jHtml);
     env->DeleteLocalRef(jBaseUrl);
+
+    clearJniExceptionIfAny(env);
+}
+
+// The Android WebView has no read-access concept of its own: the Java side
+// records the Read Grant and opens file:// or content:// for this view only.
+void AndroidWebViewPrivate::loadFileUrlImpl(const QString &fileUrl, const QString &readAccessUrl)
+{
+    QMutexLocker locker(&m_jniMutex);
+
+    if (!m_jniInitialized) {
+        qWarning() << "AndroidWebViewPrivate: JNI not initialized";
+        return;
+    }
+
+    QJniEnvironment env;
+    if (!env.isValid() || !m_webViewObject || !m_loadFileUrlMethod) {
+        return;
+    }
+
+    // As the host named them: Java opens a content:// URI by its exact authority.
+    jstring jUrl = env->NewStringUTF(fileUrl.toUtf8().constData());
+    jstring jReadAccess = env->NewStringUTF(readAccessUrl.toUtf8().constData());
+    env->CallVoidMethod(m_webViewObject, m_loadFileUrlMethod, jUrl, jReadAccess);
+    env->DeleteLocalRef(jUrl);
+    env->DeleteLocalRef(jReadAccess);
 
     clearJniExceptionIfAny(env);
 }
@@ -1206,6 +1258,11 @@ bool AndroidWebViewPrivate::hasNativeFindPanelImpl() const
 bool AndroidWebViewPrivate::inPageMediaPlaybackSupportedImpl() const
 {
     return MobileWebViewCapabilities::isInPageMediaPlaybackSupported();
+}
+
+bool AndroidWebViewPrivate::pdfViewerSupportedImpl() const
+{
+    return MobileWebViewCapabilities::isPdfViewerSupported();
 }
 
 void AndroidWebViewPrivate::captureSnapshotImpl(quint64 requestId)

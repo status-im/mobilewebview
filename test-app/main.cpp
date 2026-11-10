@@ -11,6 +11,7 @@
 #include "MobileWebView/mobilewebviewdownload.h"
 #include "agentcontrol.h"
 #include "downloadtestsupport.h"
+#include "openedfileintake.h"
 
 static QString loadTextResource(const QString &path)
 {
@@ -37,6 +38,7 @@ int main(int argc, char *argv[])
                                             "QWebChannel is provided via WebChannel QML type");
 
     DownloadTestSupport downloadTestSupport;
+    OpenedFileIntake openedFileIntake;
     AgentControl agentControl;
 
     QQmlApplicationEngine engine;
@@ -49,6 +51,8 @@ int main(int argc, char *argv[])
         loadTextResource(QStringLiteral(":/MobileWebViewTest/web/test_webchannel.html")));
     engine.rootContext()->setContextProperty(
         QStringLiteral("_downloadTest"), &downloadTestSupport);
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("_openedFile"), &openedFileIntake);
     engine.rootContext()->setContextProperty(
         QStringLiteral("_agentPort"), 0);
 

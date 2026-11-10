@@ -2,6 +2,7 @@ package org.mobilewebview;
 
 import android.graphics.Bitmap;
 import android.util.Log;
+import android.view.View;
 import android.webkit.ConsoleMessage;
 import android.webkit.WebChromeClient;
 import android.webkit.WebView;
@@ -42,6 +43,17 @@ final class MobileWebChromeClient extends WebChromeClient {
     @Override
     public void onReceivedIcon(WebView view, Bitmap icon) {
         mHost.onFavicon(icon);
+    }
+
+    // Overriding these is what turns on the fullscreen button of a <video>.
+    @Override
+    public void onShowCustomView(View view, CustomViewCallback callback) {
+        mHost.onShowFullscreen(view, callback);
+    }
+
+    @Override
+    public void onHideCustomView() {
+        mHost.onHideFullscreen();
     }
 
     @Override

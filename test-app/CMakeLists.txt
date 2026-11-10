@@ -30,7 +30,16 @@ qt_add_executable(MobileWebViewTest
     agentcontrol.cpp
     downloadtestsupport.h
     downloadtestsupport.cpp
+    openedfileintake.h
+    openedfileintake_p.h
+    openedfileintake.cpp
 )
+
+if(APPLE)
+    target_sources(MobileWebViewTest PRIVATE openedfileintake_apple.mm)
+elseif(ANDROID)
+    target_sources(MobileWebViewTest PRIVATE openedfileintake_android.cpp)
+endif()
 
 qt_add_qml_module(MobileWebViewTest
     URI MobileWebViewTest
@@ -58,6 +67,7 @@ qt_add_qml_module(MobileWebViewTest
         qml/screens/ScriptsScreen.qml
         qml/screens/RenderingScreen.qml
         qml/screens/DownloadsScreen.qml
+        qml/screens/OpenedFileScreen.qml
     RESOURCES
         web/test_webchannel.html
         web/storage_profile_test.html
@@ -91,6 +101,8 @@ if(CMAKE_SYSTEM_NAME MATCHES "iOS")
         XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED YES
         XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED YES
         XCODE_ATTRIBUTE_CODE_SIGN_STYLE Automatic
+        # Registers the app for "Open with" (Opened file screen).
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/ios/Info.plist.in"
     )
     if(DEFINED CMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM)
         set_target_properties(MobileWebViewTest PROPERTIES
@@ -100,7 +112,9 @@ if(CMAKE_SYSTEM_NAME MATCHES "iOS")
 endif()
 
 if(ANDROID)
+    # The test-app manifest (VIEW filters for "Open with") and activity; the
+    # library's org.mobilewebview sources are copied in by `make` (android.mk).
     set_property(TARGET MobileWebViewTest APPEND PROPERTY
-        QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../mobilewebview/android"
+        QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android"
     )
 endif()

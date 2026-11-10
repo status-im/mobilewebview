@@ -73,6 +73,7 @@ and `mwv_eval_js` over guessing UI coordinates.
 | `scripts` | Scripts & isolation |
 | `rendering` | Snapshot & Freeze |
 | `downloads` | Downloads |
+| `opened-file` | Opened file ("Open with": receipt, in-place read, copy, Web View load) |
 
 ## Downloads harness (example)
 

@@ -16,6 +16,7 @@ SOURCES=(
   "$JVM_SHADOW/android/webkit/ValueCallback.java"
   "$JVM_SHADOW/android/webkit/JavascriptInterface.java"
   "$JVM_SHADOW/android/webkit/WebView.java"
+  "$JVM_SHADOW/android/webkit/WebResourceResponse.java"
   "$JVM_SHADOW/android/webkit/CookieManager.java"
   "$JVM_SHADOW/android/webkit/WebSettings.java"
   "$JVM_SHADOW/android/webkit/WebStorage.java"
@@ -44,6 +45,13 @@ SOURCES=(
   "$ANDROID_SRC/RangeFetchPolicy.java"
   "$ANDROID_SRC/DownloadProbe.java"
   "$ANDROID_SRC/RequestUserAgent.java"
+  "$ANDROID_SRC/LocalReadGrant.java"
+  "$ANDROID_SRC/PreviewHtml.java"
+  "$ANDROID_SRC/PdfViewer.java"
+  "$ANDROID_SRC/MediaPage.java"
+  "$ANDROID_SRC/PdfTextLayer.java"
+  "$ANDROID_SRC/LocalPreview.java"
+  "$ANDROID_SRC/PreviewCopies.java"
   "$ANDROID_SRC/WebViewSettingsPolicy.java"
   "$ANDROID_SRC/ProbeRequest.java"
   "$ANDROID_SRC/DownloadIo.java"
@@ -65,6 +73,12 @@ SOURCES=(
   "$ANDROID_TEST/DownloadProbeTest.java"
   "$ANDROID_TEST/RequestUserAgentTest.java"
   "$ANDROID_TEST/WebViewSettingsPolicyTest.java"
+  "$ANDROID_TEST/LocalReadGrantTest.java"
+  "$ANDROID_TEST/PdfViewerTest.java"
+  "$ANDROID_TEST/PreviewHtmlTest.java"
+  "$ANDROID_TEST/PdfTextLayerTest.java"
+  "$ANDROID_TEST/LocalPreviewTest.java"
+  "$ANDROID_TEST/PreviewCopiesTest.java"
   "$ANDROID_TEST/ProbeRequestTest.java"
   "$ANDROID_TEST/DownloadFetcherRaceTest.java"
   "$ANDROID_TEST/DownloadMediaStoreTest.java"
@@ -87,6 +101,12 @@ TESTS=(
   org.mobilewebview.DownloadProbeTest
   org.mobilewebview.RequestUserAgentTest
   org.mobilewebview.WebViewSettingsPolicyTest
+  org.mobilewebview.LocalReadGrantTest
+  org.mobilewebview.PdfViewerTest
+  org.mobilewebview.PreviewHtmlTest
+  org.mobilewebview.PdfTextLayerTest
+  org.mobilewebview.LocalPreviewTest
+  org.mobilewebview.PreviewCopiesTest
   org.mobilewebview.ProbeRequestTest
   org.mobilewebview.DownloadFetcherRaceTest
   org.mobilewebview.DownloadMediaStoreTest
@@ -96,7 +116,7 @@ TESTS=(
 
 for test in "${TESTS[@]}"; do
   echo "Running $test..."
-  java -cp "$OUT" "$test"
+  java -Dmwv.tests="$ROOT/mobilewebview/tests" -cp "$OUT" "$test"
 done
 
 echo "All Java tests passed."

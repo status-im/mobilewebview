@@ -38,6 +38,7 @@ class MobileWebViewBackend : public QQuickItem
     Q_PROPERTY(bool hasNativeFindPanel READ hasNativeFindPanel CONSTANT)
     Q_PROPERTY(bool clearSiteDataSupported READ clearSiteDataSupported CONSTANT)
     Q_PROPERTY(bool inPageMediaPlaybackSupported READ inPageMediaPlaybackSupported CONSTANT)
+    Q_PROPERTY(bool pdfViewerSupported READ pdfViewerSupported CONSTANT)
     Q_PROPERTY(bool freeze READ freeze WRITE setFreeze NOTIFY freezeChanged)
     Q_PROPERTY(bool offTheRecord READ offTheRecord WRITE setOffTheRecord NOTIFY offTheRecordChanged)
     Q_PROPERTY(QString storageName READ storageName WRITE setStorageName NOTIFY storageNameChanged)
@@ -77,6 +78,7 @@ public:
     bool hasNativeFindPanel() const;
     bool clearSiteDataSupported() const;
     bool inPageMediaPlaybackSupported() const;
+    bool pdfViewerSupported() const;
     bool freeze() const;
     void setFreeze(bool freeze);
     bool offTheRecord() const;
@@ -134,26 +136,32 @@ public slots:
 
     /// Load a local file (e.g. a finished download) as the top-level document.
     ///
-    /// \a fileUrl must be a local file URL (file://); anything else is a no-op
-    /// with a warning. Use this instead of loadUrl()/url for local content:
+    /// \a fileUrl must be a local file URL (file://), or on Android a
+    /// content:// URI (what "Open with" hands over, read in place); anything
+    /// else is a no-op with a warning. This is the only way to local content:
     /// iOS/macOS WKWebView silently ignores file:// URLs passed to
-    /// -loadRequest:, because no sandbox extension is handed to the WebContent
-    /// process, so the tab just stays blank.
+    /// -loadRequest:, and on Android a view reaches no file:// or content://
+    /// URL except through the Read Grant this call gives it.
     ///
-    /// \a readAccessUrl is a DIRECTORY the web content is additionally granted
-    /// read access to — Apple: "To read additional files related to the content
-    /// file, specify a directory"
+    /// \a readAccessUrl is the Read Grant: the file itself (only that file is
+    /// readable), or a DIRECTORY holding it (everything under it is) — Apple:
+    /// "If readAccessURL references a single file, only that file may be
+    /// loaded by WebKit"
     /// (https://developer.apple.com/documentation/webkit/wkwebview/loadfileurl(_:allowingreadaccessto:)).
-    /// An empty \a readAccessUrl means "the file's own directory", which is the
-    /// narrowest grant that still lets the page load. A non-empty
-    /// \a readAccessUrl must also be a local file URL; otherwise the call is a
-    /// no-op with a warning. Grant no more than the content needs: everything
-    /// under the directory becomes readable by the loaded page.
+    /// An empty \a readAccessUrl means "the file's own directory". A non-empty
+    /// \a readAccessUrl must be a local file URL that covers the file (for a
+    /// content:// URI: the URI itself); otherwise the call is a no-op with a
+    /// warning and the view keeps its URL. Grant no more than the content needs.
     ///
     /// The file load is recorded and replayed (through the same file path, not
     /// as a plain URL load) when the native view is recreated — a storage
     /// profile switch or a native-view rebuild does not blank the tab.
-    Q_INVOKABLE void loadFileUrl(const QUrl &fileUrl, const QUrl &readAccessUrl = QUrl());
+    ///
+    /// The URLs are strings so a content:// URI reaches the platform as it was
+    /// named: its authority is case-sensitive, and QUrl lowercases it.
+    Q_INVOKABLE void loadFileUrl(const QString &fileUrl, const QString &readAccessUrl = QString());
+    /// For C++ that already holds the URLs as QUrl (file:// ones).
+    void loadFileUrl(const QUrl &fileUrl, const QUrl &readAccessUrl = QUrl());
 
     void loadHtml(const QString &html, const QUrl &baseUrl = QUrl());
     void goBack();

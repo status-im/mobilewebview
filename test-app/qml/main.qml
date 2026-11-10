@@ -38,6 +38,29 @@ ApplicationWindow {
         return { ok: false, error: "unknown screen id: " + id }
     }
 
+    // A file handed over through "Open with" lands on the Opened file screen.
+    function openReceipt(receipt) {
+        var item = stack.currentItem
+        if (!item || !item.isOpenedFileScreen) {
+            agentOpenScreen("opened-file")
+            item = stack.currentItem
+        }
+        item.runProbes(receipt)
+    }
+
+    Connections {
+        target: _openedFile
+        function onReceived(receipt) {
+            root.openReceipt(receipt)
+        }
+    }
+
+    Component.onCompleted: {
+        var receipts = _openedFile.receipts()
+        if (receipts.length > 0)
+            openReceipt(receipts[receipts.length - 1])
+    }
+
     function agentGoHome() {
         while (stack.depth > 1)
             stack.pop()

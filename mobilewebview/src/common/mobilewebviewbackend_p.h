@@ -105,17 +105,18 @@ public:
     virtual bool clearSiteDataSupportedImpl() const { return false; }
 
     // =========================================================================
-    // Optional capability: local file loads.
-    // Default: a plain loadUrlImpl(), which is correct for engines that accept
-    // a top-level file:// through the normal load path (Android WebView, with
-    // setAllowFileAccess(true) and "file" in WebViewUrlPolicy). WKWebView
+    // Optional capability: local file loads under a Read Grant.
+    // Default: a plain loadUrlImpl(). Both platforms override it: WKWebView
     // ignores file:// URLs passed to -loadRequest: (no sandbox extension
-    // reaches the WebContent process), so Darwin overrides this with
-    // -loadFileURL:allowingReadAccessToURL:.
-    // \a readAccessDirUrl is a directory, already resolved by loadFileUrl() to
-    // the file's own directory when the caller passed an empty URL.
+    // reaches the WebContent process), so Darwin uses
+    // -loadFileURL:allowingReadAccessToURL:; Android hands the grant to the
+    // Java view, which reaches no local content without one.
+    // \a readAccessDirUrl is the granted file or directory (for a content://
+    // URI, the URI itself), already resolved by loadFileUrl() to the file's
+    // own directory when the caller passed an empty URL.
     // =========================================================================
-    virtual void loadFileUrlImpl(const QUrl &fileUrl, const QUrl &readAccessDirUrl);
+    // The URLs as the host named them (see MobileWebViewBackend::loadFileUrl).
+    virtual void loadFileUrlImpl(const QString &fileUrl, const QString &readAccessDirUrl);
 
     // =========================================================================
     // Optional capability: find-in-page. Defaults: unsupported, no-ops.
@@ -135,6 +136,19 @@ public:
     // and the static accessor cannot drift apart.
     // =========================================================================
     virtual bool inPageMediaPlaybackSupportedImpl() const { return false; }
+
+    // =========================================================================
+    // Optional capability: content:// URIs loadFileUrl() reads in place (what
+    // Android's "Open with" hands over); the Read Grant is the URI itself.
+    // Default: file:// only.
+    // =========================================================================
+    virtual bool readsContentUrisImpl() const { return false; }
+
+    // =========================================================================
+    // Optional capability: PDF rendered inside the view. Default: unsupported.
+    // Overrides answer from MobileWebViewCapabilities.
+    // =========================================================================
+    virtual bool pdfViewerSupportedImpl() const { return false; }
 
     // =========================================================================
     // Optional capability: downloads (ADR 0005).
@@ -250,8 +264,8 @@ public:
     // URL load, which iOS drops for file://) after a store recreate or a
     // native-view rebuild. Cleared as soon as the view leaves that file.
     bool m_hasLastFileUrl = false;
-    QUrl m_lastFileUrl;
-    QUrl m_lastFileReadAccessUrl;
+    QString m_lastFileUrl;
+    QString m_lastFileReadAccessUrl;
     QUrl m_url;
     QString m_title;
     bool m_canGoBack = false;
@@ -286,6 +300,9 @@ public:
     void setLoadProgress(int progress);
     void setFavicon(const QString &favicon);
     void updateUrlState(const QUrl &url);
+    // A URL loadFileUrl() may show: a local file, or a content:// URI where
+    // the platform reads those.
+    bool isLocalPreviewUrl(const QUrl &url) const;
     void updateAllowedOrigins(const QStringList &origins);
     void appendAllowedOrigin(const QString &origin);
     void ensureBridgeInstalled();
