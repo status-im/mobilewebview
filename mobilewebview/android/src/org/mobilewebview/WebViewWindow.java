@@ -2,6 +2,7 @@ package org.mobilewebview;
 
 import android.app.Activity;
 import android.graphics.PixelFormat;
+import android.graphics.Rect;
 import android.os.Build;
 import android.os.IBinder;
 import android.util.Log;
@@ -13,6 +14,11 @@ import android.view.WindowManager;
 import android.webkit.WebView;
 import android.widget.FrameLayout;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.function.Consumer;
+
 /**
  * Hosts one WebView in its own panel window attached to the activity window, sized and placed
  * like the QML item. For hosts whose activity window draws no views (it took its surface): the
@@ -20,7 +26,8 @@ import android.widget.FrameLayout;
  *
  * Host views stacked over the WebView in the activity window (elevation above 0, e.g. an edge
  * swipe strip) still get the gestures that start on them: the window routes those to the
- * activity window.
+ * activity window. The window also carries the activity window's system gesture exclusion
+ * rects: a window on top hides the exclusions of the windows below it.
  */
 final class WebViewWindow {
     private static final String TAG = "MobileWebView";
@@ -33,6 +40,12 @@ final class WebViewWindow {
     private int mX, mY, mWidth = 1, mHeight = 1;
     private boolean mVisible = false;
     private boolean mFocusable = false;
+    private List<Rect> mHostExclusion = Collections.emptyList();
+    private final Consumer<List<Rect>> mExclusionListener =
+            rects -> {
+                mHostExclusion = new ArrayList<>(rects);
+                applyExclusion();
+            };
 
     WebViewWindow(Activity activity, ViewGroup hostContent, WebView webView) {
         mActivity = activity;
@@ -65,6 +78,10 @@ final class WebViewWindow {
     void remove() {
         if (!mAdded) return;
         mAdded = false;
+        if (Build.VERSION.SDK_INT >= 29) {
+            mActivity.getWindow().getDecorView().getViewTreeObserver()
+                    .removeOnSystemGestureExclusionRectsChangedListener(mExclusionListener);
+        }
         try {
             mActivity.getWindowManager().removeViewImmediate(mRoot);
         } catch (RuntimeException e) {
@@ -93,6 +110,13 @@ final class WebViewWindow {
         try {
             mActivity.getWindowManager().addView(mRoot, mParams);
             mAdded = true;
+            if (Build.VERSION.SDK_INT >= 29) {
+                final View decor = mActivity.getWindow().getDecorView();
+                decor.getViewTreeObserver().addOnSystemGestureExclusionRectsChangedListener(mExclusionListener);
+                mHostExclusion = new ArrayList<>();
+                collectExclusion(decor, mHostExclusion);
+                applyExclusion();
+            }
         } catch (RuntimeException e) {
             Log.e(TAG, "WebViewWindow add failed", e);
         }
@@ -122,6 +146,37 @@ final class WebViewWindow {
         mParams.height = mHeight;
         mParams.flags = f;
         mActivity.getWindowManager().updateViewLayout(mRoot, mParams);
+        applyExclusion();
+    }
+
+    private static void collectExclusion(View v, List<Rect> out) {
+        if (v.getVisibility() != View.VISIBLE) return;
+        final List<Rect> own = v.getSystemGestureExclusionRects();
+        if (!own.isEmpty()) {
+            final int[] loc = new int[2];
+            v.getLocationInWindow(loc);
+            for (Rect r : own) {
+                final Rect w = new Rect(r);
+                w.offset(loc[0], loc[1]);
+                out.add(w);
+            }
+        }
+        if (v instanceof ViewGroup) {
+            final ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) collectExclusion(g.getChildAt(i), out);
+        }
+    }
+
+    // Host rects are in activity window coordinates, the panel is placed relative to that window.
+    private void applyExclusion() {
+        if (Build.VERSION.SDK_INT < 29 || !mAdded || mParams == null) return;
+        final List<Rect> local = new ArrayList<>();
+        for (Rect r : mHostExclusion) {
+            final Rect l = new Rect(r);
+            l.offset(-mParams.x, -mParams.y);
+            if (l.intersect(0, 0, mParams.width, mParams.height)) local.add(l);
+        }
+        mRoot.setSystemGestureExclusionRects(local);
     }
 
     private int hostOffsetX() {
