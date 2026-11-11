@@ -246,6 +246,7 @@ final class RemoteWebView implements WebViewEngine {
                         return;
                     }
                     mSurfaceView.setChildSurfacePackage(pkg);
+                    sendRemoteSize(true);
                     Log.i(TAG, "RemoteWebView " + mId + " surface package set");
                 });
                 return;
@@ -486,17 +487,9 @@ final class RemoteWebView implements WebViewEngine {
 
     @Override
     public void setGeometry(int x, int y, int width, int height) {
-        final boolean resized;
         synchronized (this) {
-            resized = mWidth != Math.max(1, width) || mHeight != Math.max(1, height);
             mWidth = Math.max(1, width);
             mHeight = Math.max(1, height);
-        }
-        if (resized) {
-            final Bundle b = args();
-            b.putInt("width", Math.max(1, width));
-            b.putInt("height", Math.max(1, height));
-            mClient.callIfLive(this, "resize", b);
         }
         mMain.post(() -> {
             mX = x;
@@ -504,7 +497,49 @@ final class RemoteWebView implements WebViewEngine {
             if (mWindow == null) return;
             mWindow.setGeometry(x, y, width, height);
             updatePassThrough();
+            resizeRemote();
         });
+    }
+
+    // Main thread. A per-frame relayout of the remote WebView lands frames after the panel moved
+    // (Binder + a WebView layout in the other process), so while the geometry animates (drawer)
+    // the remote WebView stays at least as large as the panel and the SurfaceView crops it; it
+    // gets the exact size once the geometry has been still for RESIZE_SETTLE_MS.
+    private static final long RESIZE_SETTLE_MS = 150;
+    private int mRemoteWidth = -1, mRemoteHeight = -1;
+    private final Runnable mSettleResize = () -> sendRemoteSize(true);
+
+    private void resizeRemote() {
+        final int w, h;
+        synchronized (this) {
+            w = mWidth;
+            h = mHeight;
+        }
+        if (w == mRemoteWidth && h == mRemoteHeight) {
+            mMain.removeCallbacks(mSettleResize);
+            return;
+        }
+        if (w > mRemoteWidth || h > mRemoteHeight) sendRemoteSize(false);
+        mMain.removeCallbacks(mSettleResize);
+        mMain.postDelayed(mSettleResize, RESIZE_SETTLE_MS);
+    }
+
+    private void sendRemoteSize(boolean exact) {
+        int w, h;
+        synchronized (this) {
+            w = mWidth;
+            h = mHeight;
+        }
+        if (!exact && mHostContent != null) {
+            w = Math.max(w, mHostContent.getWidth());
+            h = Math.max(h, mHostContent.getHeight());
+        }
+        mRemoteWidth = w;
+        mRemoteHeight = h;
+        final Bundle b = args();
+        b.putInt("width", w);
+        b.putInt("height", h);
+        mClient.callIfLive(this, "resize", b);
     }
 
     // Host views over the page (the drawer's edge strip) keep their touches.
