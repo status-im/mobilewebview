@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * Hosts one WebView in its own panel window attached to the activity window, sized and placed
+ * Hosts one WebView (or the SurfaceView of a remote one) in its own panel window attached to the activity window, sized and placed
  * like the QML item. For hosts whose activity window draws no views (it took its surface): the
  * WebView needs HWUI, and only this window gets it.
  *
@@ -36,7 +36,8 @@ final class WebViewWindow {
     private final Activity mActivity;
     private final ViewGroup mHostContent;
     private final Root mRoot;
-    private final WebView mWebView;
+    private final View mContent;
+    private final Content mHooks;
     private WindowManager.LayoutParams mParams;
     private boolean mAdded = false;
     private int mX, mY, mWidth = 1, mHeight = 1;
@@ -49,12 +50,29 @@ final class WebViewWindow {
                 applyExclusion();
             };
 
+    /** What the window needs from the view it hosts. */
+    interface Content {
+        // Back while no view in this window has focus.
+        boolean onBack(KeyEvent event);
+        void onFocusableChanged(boolean focusable);
+        void onWindowFocusChanged(boolean hasFocus);
+    }
+
     WebViewWindow(Activity activity, ViewGroup hostContent, WebView webView) {
+        this(activity, hostContent, webView, new Content() {
+            @Override public boolean onBack(KeyEvent event) { return webView.dispatchKeyEvent(event); }
+            @Override public void onFocusableChanged(boolean focusable) { if (focusable) webView.requestFocus(); }
+            @Override public void onWindowFocusChanged(boolean hasFocus) {}
+        });
+    }
+
+    WebViewWindow(Activity activity, ViewGroup hostContent, View content, Content hooks) {
         mActivity = activity;
         mHostContent = hostContent;
-        mWebView = webView;
+        mContent = content;
+        mHooks = hooks;
         mRoot = new Root(activity);
-        mRoot.addView(webView, new FrameLayout.LayoutParams(
+        mRoot.addView(content, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         mRoot.setVisibility(View.GONE);
     }
@@ -199,13 +217,41 @@ final class WebViewWindow {
 
     // The topmost focusable window keeps the focus, so while this window is focusable the
     // activity window gets no key or IME focus: give it back on any touch outside the WebView.
+    // A touch on the content that did not pass through this window (remote WebViews).
+    void contentTouched() {
+        setFocusable(true);
+    }
+
+    boolean isFocusable() {
+        return mFocusable;
+    }
+
+    // Host views stacked over this window that take their own gestures, in window coordinates.
+    List<Rect> hostRectsAbove() {
+        final List<Rect> out = new ArrayList<>();
+        if (mParams == null) return out;
+        final int[] loc = new int[2];
+        final int[] origin = new int[2];
+        mHostContent.getLocationOnScreen(origin);
+        final int ox = origin[0] - hostOffsetX() + mParams.x;
+        final int oy = origin[1] - hostOffsetY() + mParams.y;
+        for (int i = 0; i < mHostContent.getChildCount(); i++) {
+            final View v = mHostContent.getChildAt(i);
+            if (v.getVisibility() != View.VISIBLE || v.getZ() <= 0f || !v.isClickable()) continue;
+            v.getLocationOnScreen(loc);
+            final Rect r = new Rect(loc[0] - ox, loc[1] - oy, loc[0] - ox + v.getWidth(), loc[1] - oy + v.getHeight());
+            if (r.intersect(0, 0, mParams.width, mParams.height)) out.add(r);
+        }
+        return out;
+    }
+
     private void setFocusable(boolean focusable) {
         focusable = focusable && mVisible;
         if (mFocusable == focusable) return;
         mFocusable = focusable;
         Log.i(TAG, "WebViewWindow focusable=" + focusable);
         update();
-        if (focusable) mWebView.requestFocus();
+        mHooks.onFocusableChanged(focusable);
     }
 
     private View hostViewAbove(float rawX, float rawY) {
@@ -229,12 +275,18 @@ final class WebViewWindow {
             super(activity);
         }
 
+        @Override
+        public void onWindowFocusChanged(boolean hasWindowFocus) {
+            super.onWindowFocusChanged(hasWindowFocus);
+            mHooks.onWindowFocusChanged(hasWindowFocus);
+        }
+
         // Back must reach the WebView (it forwards Back to the host) even when no view in this
         // window has focus; unhandled, the system would send the activity to the background.
         @Override
         public boolean dispatchKeyEvent(KeyEvent event) {
-            if (event.getKeyCode() == KeyEvent.KEYCODE_BACK && !mWebView.hasFocus()) {
-                return mWebView.dispatchKeyEvent(event);
+            if (event.getKeyCode() == KeyEvent.KEYCODE_BACK && !mContent.hasFocus()) {
+                return mHooks.onBack(event);
             }
             return super.dispatchKeyEvent(event);
         }
