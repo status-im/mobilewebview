@@ -156,7 +156,8 @@ private:
 
 namespace {
 
-// WebSettings.getDefaultUserAgent needs no WebView, so it is safe on the Qt thread.
+// WebSettings.getDefaultUserAgent needs no WebView, so it is safe on the Qt thread. With remote
+// WebViews the Java side answers from the browser process instead (this process loads no WebView).
 QString platformDefaultHttpUserAgent()
 {
     static QString cached;
@@ -169,7 +170,7 @@ QString platformDefaultHttpUserAgent()
     }
     QJniEnvironment env;
     const QJniObject userAgent = QJniObject::callStaticObjectMethod(
-        "android/webkit/WebSettings", "getDefaultUserAgent",
+        "org/mobilewebview/MobileWebView", "defaultUserAgent",
         "(Landroid/content/Context;)Ljava/lang/String;", context.object());
     // Throws on devices with no WebView provider.
     if (env.checkAndClearExceptions() || !userAgent.isValid()) {
@@ -1684,6 +1685,16 @@ Java_org_mobilewebview_MobileWebView_nativeOnDownloadFinished(JNIEnv *env, jobje
     const bool success = ok == JNI_TRUE;
     dispatchToBackend(nativePtr, [id, success, qError](AndroidWebViewPrivate *backend) {
         backend->onDownloadFinished(id, success, qError);
+    });
+}
+
+JNIEXPORT void JNICALL
+Java_org_mobilewebview_MobileWebView_nativeOnDefaultUserAgent(JNIEnv *env, jobject,
+        jlong nativePtr, jstring userAgent)
+{
+    const QString qUserAgent = toQString(env, userAgent);
+    dispatchToBackend(nativePtr, [qUserAgent](AndroidWebViewPrivate *backend) {
+        backend->setDefaultHttpUserAgent(qUserAgent);
     });
 }
 

@@ -1,0 +1,1084 @@
+package org.mobilewebview;
+
+import android.content.Context;
+import android.content.pm.ApplicationInfo;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+
+import android.util.Base64;
+import android.util.Log;
+import android.app.Activity;
+import android.net.Uri;
+import android.content.ContextWrapper;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.Window;
+import android.view.PixelCopy;
+import android.view.ViewParent;
+import android.webkit.WebSettings;
+import android.webkit.WebBackForwardList;
+import android.webkit.WebHistoryItem;
+import android.webkit.WebView;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.Message;
+import android.graphics.Rect;
+
+import java.io.ByteArrayOutputStream;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
+/**
+ * The WebView and its logic behind {@link MobileWebView}: QWebChannel bridge, user script
+ * injection, origin validation. Reports to a {@link WebViewSink}; runs in the UI process or, for
+ * remote WebViews, in the browser process
+ */
+final class WebViewCore implements WebViewEngine, ChromeHost, NavigationHost, NativeBridgeHost, BridgeInjectorHost {
+    private static final String TAG = "MobileWebView";
+    private static final int ANDROID_CONTENT_VIEW_ID = 0x01020002; // android.R.id.content
+
+    private WebView mWebView;
+    private Context mContext;
+    private final WebViewSink mSink;
+    private volatile long mNativePtr = 1;  // 0 once destroyed: callbacks are dropped
+    private ViewGroup mRootView;
+    private WebViewWindow mOwnWindow;
+
+    private static volatile boolean sOwnWindows = false;
+
+    /**
+     * Host each WebView in its own panel window instead of the activity's content view. For
+     * activities whose window draws no views (e.g. it took its surface); set before creating
+     * WebViews.
+     */
+    static void setOwnWindows(boolean ownWindows) {
+        sOwnWindows = ownWindows;
+    }
+
+    private volatile boolean mEmbedded = false;
+
+    // Shown in a SurfaceControlViewHost window (browser process): freeze snapshots copy that window.
+    void setEmbedded() {
+        mEmbedded = true;
+    }
+
+    private final Object mBridgeLock = new Object();
+    private String mBridgeNamespace = "qt";
+    private String mInvokeKey = "";
+    private final List<String> mAllowedOrigins = new ArrayList<>();
+    private final List<String> mUserScripts = new ArrayList<>();
+    private String mBootstrapPageScript = "";
+    private String mBootstrapBridgeScript = "";
+    private String mInlineDownloadScript = "";
+    private volatile String mCurrentMainFrameOrigin = "";
+    private volatile String mActiveNavigationUrl = "";
+
+    // Navigation state
+    private boolean mBridgeInstalled = false;
+    private String mPendingUrl = null;
+    private final Handler mMainHandler = new Handler(Looper.getMainLooper());
+    private final PendingActionQueue mPendingActionQueue = new PendingActionQueue();
+    private final BridgeScriptInjector mBridgeInjector = new BridgeScriptInjector(this);
+
+    @FunctionalInterface
+    private interface NativeCallback {
+        void invoke(long ptr);
+    }
+
+    private final WebViewProfileManager mProfileManager = new WebViewProfileManager();
+    private final DataClearManager mDataClearManager = new DataClearManager();
+    private final SelfFetchDownloads mDownloads = new SelfFetchDownloads(new SelfFetchDownloads.Host() {
+        @Override
+        public String httpUserAgent() {
+            return mHttpUserAgent;
+        }
+
+        @Override
+        public boolean offTheRecord() {
+            return mOffTheRecord;
+        }
+
+        @Override
+        public Context context() {
+            return mContext;
+        }
+    }, new DownloadFetcher.Callbacks() {
+        @Override
+        public void onProgress(long downloadId, long receivedBytes, long totalBytes) {
+            withNativePtr(ptr -> mSink.onDownloadProgress(downloadId, receivedBytes, totalBytes));
+        }
+
+        @Override
+        public void onFinished(long downloadId, boolean ok, String error) {
+            withNativePtr(ptr -> mSink.onDownloadFinished(downloadId, ok, error));
+        }
+    });
+    private String mStorageName = "";
+    private boolean mOffTheRecord = false;
+    private String mActiveProfileName = null;
+    private String mHttpUserAgent = "";
+
+    // WebView-local px; HitTestResult has no coordinates.
+    private float mLastTouchX = 0f;
+    private float mLastTouchY = 0f;
+
+    /**
+     * Constructor - creates and initializes WebView
+     */
+    WebViewCore(Context context, WebViewSink sink, View rootView,
+                String storageName, boolean offTheRecord) {
+        mContext = context;
+        mSink = sink;
+        mRootView = resolveRootView(rootView);
+        mStorageName = storageName != null ? storageName : "";
+        mOffTheRecord = offTheRecord;
+
+        Log.d(TAG, "WebViewCore created");
+
+        // WebView must be created on Android main/UI thread.
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            initializeWebViewOnMainThread(context);
+            return;
+        }
+
+        mMainHandler.post(() -> initializeWebViewOnMainThread(context));
+    }
+
+    private void initializeWebViewOnMainThread(Context context) {
+        try {
+            mWebView = new WebView(context) {
+                @Override
+                public boolean dispatchKeyEvent(android.view.KeyEvent event) {
+                    if (event.getKeyCode() == android.view.KeyEvent.KEYCODE_BACK) {
+                        final int action = event.getAction();
+                        if (action == android.view.KeyEvent.ACTION_DOWN
+                                || action == android.view.KeyEvent.ACTION_UP) {
+                            final long ptr = mNativePtr;
+                            if (ptr != 0) {
+                                mSink.onBackRequested(action == android.view.KeyEvent.ACTION_DOWN);
+                                return true; // consumed only because we forwarded it
+                            }
+                        }
+                    }
+                    return super.dispatchKeyEvent(event);
+                }
+            };
+            setupWebView();
+        } catch (RuntimeException e) {
+            Log.e(TAG, "Failed to initialize WebView on main thread", e);
+            mWebView = null;
+        } finally {
+            mPendingActionQueue.markReady();
+        }
+    }
+
+    private ViewGroup resolveRootView(View rootView) {
+        if (rootView instanceof ViewGroup) {
+            return (ViewGroup) rootView;
+        }
+
+        if (mContext instanceof Activity) {
+            View content = ((Activity) mContext).findViewById(ANDROID_CONTENT_VIEW_ID);
+            if (content instanceof ViewGroup) {
+                return (ViewGroup) content;
+            }
+        }
+
+        Log.w(TAG, "Root view is not a ViewGroup; WebView will not be attached to hierarchy");
+        return null;
+    }
+
+    private void runOnMainThread(Runnable action) {
+        if (mPendingActionQueue.enqueueIfNotReady(action)) {
+            return;
+        }
+
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            action.run();
+            return;
+        }
+
+        if (mWebView != null) {
+            try {
+                // Prefer posting via the view when it is still attached to its UI thread.
+                if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.KITKAT
+                        || mWebView.isAttachedToWindow()) {
+                    if (mWebView.post(action)) {
+                        return;
+                    }
+                }
+            } catch (RuntimeException e) {
+                Log.w(TAG, "runOnMainThread: WebView.post failed, using main handler fallback", e);
+            }
+        }
+
+        mMainHandler.post(action);
+    }
+
+    /**
+     * Initialize WebView settings and clients
+     */
+    private void setupWebView() {
+        WebViewSettingsPolicy.apply(mWebView.getSettings());
+
+        // Enable WebView debugging only for debuggable app builds.
+        boolean isDebuggableBuild =
+            (mContext.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+        if (isDebuggableBuild && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
+            WebView.setWebContentsDebuggingEnabled(true);
+        }
+
+        mWebView.setWebViewClient(new MobileWebViewClient(this));
+        mWebView.setWebChromeClient(new MobileWebChromeClient(this));
+        mWebView.setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> {
+            // Scheme filter + filename guessing live in C++ DownloadPolicy; pass raw inputs.
+            withNativePtr(ptr -> mSink.onDownloadDetected(url,
+                    contentDisposition != null ? contentDisposition : "",
+                    mimeType != null ? mimeType : "",
+                    contentLength,
+                    userAgent,
+                    ""));
+        });
+
+        // Long-press → host context menu (ADR 0005). Touch only records position.
+        mWebView.setOnTouchListener((v, event) -> {
+            mLastTouchX = event.getX();
+            mLastTouchY = event.getY();
+            if (event.getActionMasked() == android.view.MotionEvent.ACTION_DOWN) {
+                withNativePtr(ptr -> mSink.onTouchDown());
+            }
+            return false;
+        });
+        mWebView.setOnLongClickListener(v -> handleLongPress());
+
+        mActiveProfileName = mProfileManager.configureProfile(mWebView, mStorageName, mOffTheRecord);
+
+        // Add to view hierarchy (initially hidden). Must happen on UI thread.
+        mWebView.setVisibility(View.GONE);
+        if (sOwnWindows && mRootView != null && mContext instanceof Activity) {
+            mOwnWindow = new WebViewWindow((Activity) mContext, mRootView, mWebView);
+        } else if (mRootView != null) {
+            ViewParent parent = mWebView.getParent();
+            if (parent instanceof ViewGroup && parent != mRootView) {
+                ((ViewGroup) parent).removeView(mWebView);
+            }
+            if (mWebView.getParent() == null) {
+                mRootView.addView(mWebView);
+            }
+        }
+
+        mWebView.addJavascriptInterface(new MobileWebViewNativeBridge(this), "NativeBridge");
+    }
+
+    /**
+     * Install WebChannel message bridge with user scripts
+     */
+    public void installMessageBridge(String namespace, String[] allowedOrigins,
+                                     String invokeKey, String[] userScripts,
+                                     String bootstrapPageScript, String bootstrapBridgeScript,
+                                     String inlineDownloadScript) {
+        synchronized (mBridgeLock) {
+            mBridgeNamespace = namespace != null ? namespace : "";
+            mInvokeKey = invokeKey != null ? invokeKey : "";
+            mAllowedOrigins.clear();
+            if (allowedOrigins != null) {
+                mAllowedOrigins.addAll(Arrays.asList(allowedOrigins));
+            }
+            mUserScripts.clear();
+            if (userScripts != null) {
+                mUserScripts.addAll(Arrays.asList(userScripts));
+            }
+            mBootstrapPageScript = bootstrapPageScript != null ? bootstrapPageScript : "";
+            mBootstrapBridgeScript = bootstrapBridgeScript != null ? bootstrapBridgeScript : "";
+            mInlineDownloadScript = inlineDownloadScript != null ? inlineDownloadScript : "";
+            mBridgeInstalled = true;
+        }
+        runOnMainThread(mBridgeInjector::configureInjectionMode);
+    }
+
+    /**
+     * Update allowed origins after bridge installation (for dynamic origin changes during navigation)
+     */
+    public void updateAllowedOrigins(String[] origins) {
+        synchronized (mBridgeLock) {
+            mAllowedOrigins.clear();
+            if (origins != null) {
+                mAllowedOrigins.addAll(Arrays.asList(origins));
+            }
+        }
+        runOnMainThread(mBridgeInjector::configureInjectionMode);
+    }
+
+    /**
+     * Load URL in WebView
+     */
+    public void loadUrl(String url) {
+        Log.d(TAG, "loadUrl: " + url);
+        mPendingUrl = url;
+
+        synchronized (mBridgeLock) {
+            if (!mBridgeInstalled) {
+                Log.w(TAG, "Bridge not installed, loading anyway");
+            }
+        }
+
+        runOnMainThread(() -> {
+            if (mWebView == null) return;
+            mWebView.loadUrl(url);
+        });
+    }
+
+    /**
+     * Load HTML content with base URL
+     */
+    public void loadHtml(String html, String baseUrl) {
+        Log.d(TAG, "loadHtml: baseUrl=" + baseUrl);
+        mPendingUrl = baseUrl;
+
+        synchronized (mBridgeLock) {
+            if (!mBridgeInstalled) {
+                Log.w(TAG, "Bridge not installed, loading anyway");
+            }
+        }
+
+        runOnMainThread(() -> {
+            if (mWebView == null) return;
+            mWebView.loadDataWithBaseURL(baseUrl, html, "text/html", "UTF-8", null);
+        });
+    }
+
+    public void goBack() {
+        runOnMainThread(() -> {
+            if (mWebView != null && mWebView.canGoBack()) {
+                mWebView.goBack();
+            }
+        });
+    }
+
+    public void goForward() {
+        runOnMainThread(() -> {
+            if (mWebView != null && mWebView.canGoForward()) {
+                mWebView.goForward();
+            }
+        });
+    }
+
+    public void goBackOrForward(int offset) {
+        runOnMainThread(() -> {
+            if (mWebView != null && mWebView.canGoBackOrForward(offset)) {
+                mWebView.goBackOrForward(offset);
+            }
+        });
+    }
+
+    public void reload() {
+        runOnMainThread(() -> {
+            if (mWebView != null) {
+                mBridgeInjector.markForceReinject();
+                mWebView.reload();
+            }
+        });
+    }
+
+    public void stop() {
+        runOnMainThread(() -> {
+            if (mWebView != null) {
+                mWebView.stopLoading();
+            }
+        });
+    }
+
+    public void clearHistory() {
+        runOnMainThread(() -> {
+            if (mWebView != null) {
+                mWebView.clearHistory();
+                notifyHistoryState(mWebView);
+            }
+        });
+    }
+
+    public void clearHttpCache(long requestId) {
+        runOnMainThread(() -> {
+            if (mWebView != null) {
+                mDataClearManager.clearHttpCache(mWebView, () ->
+                        withNativePtr(ptr -> mSink.onClearHttpCacheCompleted(requestId)));
+            } else {
+                withNativePtr(ptr -> mSink.onClearHttpCacheCompleted(requestId));
+            }
+        });
+    }
+
+    public void deleteAllCookies(long requestId) {
+        runOnMainThread(() -> {
+            mDataClearManager.deleteAllCookies(resolveActiveProfile(), () ->
+                    withNativePtr(ptr -> mSink.onDeleteAllCookiesCompleted(requestId)));
+        });
+    }
+
+    public void clearDomStorage(long requestId) {
+        runOnMainThread(() -> {
+            mDataClearManager.clearDomStorage(resolveActiveProfile(), () ->
+                    withNativePtr(ptr -> mSink.onClearDomStorageCompleted(requestId)));
+        });
+    }
+
+    public boolean isClearSiteDataSupported() {
+        return DataClearManager.isClearSiteDataSupported();
+    }
+
+    public void clearSiteData(String site, long requestId) {
+        runOnMainThread(() -> {
+            mDataClearManager.clearSiteData(resolveActiveProfile(), site, () ->
+                    withNativePtr(ptr -> mSink.onClearSiteDataCompleted(requestId)));
+        });
+    }
+
+    public void reloadAndBypassCache() {
+        runOnMainThread(() -> {
+            if (mWebView != null) {
+                mBridgeInjector.markForceReinject();
+                mDataClearManager.reloadAndBypassCache(mWebView);
+            }
+        });
+    }
+
+    private androidx.webkit.Profile resolveActiveProfile() {
+        if (mWebView == null) {
+            return null;
+        }
+        try {
+            Class<?> featureClass = Class.forName("androidx.webkit.WebViewFeature");
+            java.lang.reflect.Method isSupported =
+                    featureClass.getMethod("isFeatureSupported", String.class);
+            Object supported = isSupported.invoke(null, "MULTI_PROFILE");
+            if (!(supported instanceof Boolean) || !((Boolean) supported)) {
+                return null;
+            }
+            Class<?> compatClass = Class.forName("androidx.webkit.WebViewCompat");
+            java.lang.reflect.Method getProfile =
+                    compatClass.getMethod("getProfile", WebView.class);
+            Object profile = getProfile.invoke(null, mWebView);
+            if (profile instanceof androidx.webkit.Profile) {
+                return (androidx.webkit.Profile) profile;
+            }
+        } catch (ReflectiveOperationException e) {
+            Log.w(TAG, "resolveActiveProfile failed", e);
+        }
+        return null;
+    }
+
+    public void setZoomFactor(float factor) {
+        runOnMainThread(() -> {
+            if (mWebView == null) return;
+
+            String js = "document.documentElement.style.zoom = '" + factor + "'";
+            mWebView.evaluateJavascript(js, null);
+        });
+    }
+
+    /**
+     * Override the HTTP User-Agent for this WebView.
+     * Null or empty restores the platform default.
+     */
+    public void setHttpUserAgent(String userAgent) {
+        mHttpUserAgent = userAgent != null ? userAgent : "";
+        runOnMainThread(() -> {
+            if (mWebView == null) return;
+            WebSettings settings = mWebView.getSettings();
+            if (userAgent == null || userAgent.isEmpty()) {
+                settings.setUserAgentString(null);
+            } else {
+                settings.setUserAgentString(userAgent);
+            }
+        });
+    }
+
+    private String mCurrentFindQuery = null;
+
+    /**
+     * Find text in the page.
+     * flags: bit 0 = backwards, bit 1 = case-sensitive
+     */
+    public void findText(String text, int flags) {
+        runOnMainThread(() -> {
+            if (mWebView == null) return;
+            if (text == null || text.isEmpty()) {
+                mCurrentFindQuery = null;
+                mWebView.clearMatches();
+                withNativePtr(ptr -> mSink.onFindResultChanged(-1, 0));
+                return;
+            }
+            boolean backwards = (flags & 1) != 0;
+            if (text.equals(mCurrentFindQuery)) {
+                mWebView.findNext(!backwards);
+                return;
+            }
+            mCurrentFindQuery = text;
+            mWebView.setFindListener((activeMatchOrdinal, numberOfMatches, isDoneCounting) -> {
+                if (isDoneCounting) {
+                    withNativePtr(ptr -> mSink.onFindResultChanged(numberOfMatches > 0 ? activeMatchOrdinal : -1,
+                        numberOfMatches));
+                }
+            });
+            mWebView.findAllAsync(text);
+        });
+    }
+
+    /**
+     * Stop find-in-page and clear highlights
+     */
+    public void stopFind() {
+        runOnMainThread(() -> {
+            if (mWebView == null) return;
+            mCurrentFindQuery = null;
+            mWebView.clearMatches();
+            mWebView.setFindListener(null);
+            withNativePtr(ptr -> mSink.onFindResultChanged(-1, 0));
+        });
+    }
+
+    /**
+     * Evaluate JavaScript and notify result via callback
+     */
+    public void evaluateJavaScript(String script) {
+        runOnMainThread(() -> {
+            if (mWebView == null) return;
+            mWebView.evaluateJavascript(script, result ->
+                withNativePtr(ptr -> mSink.onJavaScriptResult(result != null ? result : "", ""))
+            );
+        });
+    }
+
+    /**
+     * Post message to JavaScript WebChannel transport
+     */
+    public void postMessageToJavaScript(String json) {
+        final String namespace;
+        synchronized (mBridgeLock) {
+            namespace = mBridgeNamespace;
+        }
+        String deliverScript = BridgeScriptBuilder.buildDeliverScript(namespace, json);
+
+        runOnMainThread(() -> {
+            if (mWebView == null) return;
+            mWebView.evaluateJavascript(deliverScript, value ->
+                Log.d(TAG, "postMessageToJavaScript result: " + value)
+            );
+        });
+    }
+
+    /**
+     * Set WebView geometry (x, y, width, height)
+     */
+    public void setGeometry(int x, int y, int width, int height) {
+        runOnMainThread(() -> {
+            if (mWebView == null) return;
+            if (mOwnWindow != null) {
+                mOwnWindow.setGeometry(x, y, width, height);
+                return;
+            }
+            ViewGroup.LayoutParams params = mWebView.getLayoutParams();
+            if (params == null) {
+                params = new ViewGroup.LayoutParams(width, height);
+            } else {
+                params.width = width;
+                params.height = height;
+            }
+            mWebView.setLayoutParams(params);
+            mWebView.setX(x);
+            mWebView.setY(y);
+        });
+    }
+
+    /**
+     * Set WebView visibility.
+     *
+     * @param grabFocus when shown, request view focus so the WebView receives
+     *                  key events (notably KEYCODE_BACK; without focus
+     *                  dispatchKeyEvent is not called and Back is never
+     *                  forwarded to QML). Native passes false while a Qt text
+     *                  input owns the soft keyboard, otherwise re-showing the
+     *                  WebView (e.g. after a popup closes) would silently
+     *                  redirect typing from that field into the page.
+     */
+    public void setVisible(boolean visible, boolean grabFocus) {
+        runOnMainThread(() -> {
+            if (mWebView == null) return;
+            mWebView.setVisibility(visible ? View.VISIBLE : View.GONE);
+            if (mOwnWindow != null) mOwnWindow.setVisible(visible, grabFocus);
+            if (visible && grabFocus) {
+                mWebView.requestFocus();
+            }
+        });
+    }
+
+    public void setVisible(boolean visible) {
+        setVisible(visible, true);
+    }
+
+    /**
+     * Capture an ARGB8888 snapshot of the WebView for freeze overlay (runs on UI thread, then notifies native).
+     */
+    public void captureSnapshotForFreeze(long requestId) {
+        runOnMainThread(() -> {
+            if (!hasNativePtr()) {
+                return;
+            }
+            if (mWebView == null) {
+                reportFreezeSnapshotFailure(requestId);
+                return;
+            }
+            final int w = mWebView.getWidth();
+            final int h = mWebView.getHeight();
+            if (w <= 0 || h <= 0) {
+                reportFreezeSnapshotFailure(requestId);
+                return;
+            }
+
+            try {
+                if (mOwnWindow != null || mEmbedded) {
+                    captureFreezeFromOwnWindow(requestId, w, h);
+                    return;
+                }
+                final Window window = resolveWindow(mWebView.getContext());
+                if (window == null) {
+                    captureFreezeSoftware(requestId, w, h);
+                    return;
+                }
+
+                final Bitmap bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                final int[] location = new int[2];
+                mWebView.getLocationInWindow(location);
+                final Rect srcRect = new Rect(location[0], location[1], location[0] + w, location[1] + h);
+
+                PixelCopy.request(window, srcRect, bitmap, result -> {
+                    if (result == PixelCopy.SUCCESS) {
+                        deliverFreezeSnapshot(requestId, bitmap, w, h);
+                        return;
+                    }
+                    bitmap.recycle();
+                    Log.w(TAG, "PixelCopy freeze snapshot failed with code " + result
+                            + ", falling back to software draw");
+                    captureFreezeSoftware(requestId, w, h);
+                }, new Handler(Looper.getMainLooper()));
+            } catch (RuntimeException e) {
+                Log.e(TAG, "captureSnapshotForFreeze failed", e);
+                reportFreezeSnapshotFailure(requestId);
+            }
+        });
+    }
+
+    // The activity Window does not hold this WebView's pixels; copy from the WebView's own window.
+    private void captureFreezeFromOwnWindow(long requestId, int w, int h) {
+        if (android.os.Build.VERSION.SDK_INT < 34) {
+            captureFreezeSoftware(requestId, w, h);
+            return;
+        }
+        final Bitmap bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        final int[] location = new int[2];
+        mWebView.getLocationInWindow(location);
+        final PixelCopy.Request request = PixelCopy.Request.Builder.ofWindow(mWebView)
+                .setSourceRect(new Rect(location[0], location[1], location[0] + w, location[1] + h))
+                .setDestinationBitmap(bitmap)
+                .build();
+        PixelCopy.request(request, mMainHandler::post, result -> {
+            if (result.getStatus() == PixelCopy.SUCCESS) {
+                deliverFreezeSnapshot(requestId, bitmap, w, h);
+                return;
+            }
+            bitmap.recycle();
+            Log.w(TAG, "PixelCopy freeze snapshot (own window) failed with code " + result.getStatus()
+                    + ", falling back to software draw");
+            captureFreezeSoftware(requestId, w, h);
+        });
+    }
+
+    private void captureFreezeSoftware(long requestId, int w, int h) {
+        try {
+            Bitmap bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            bitmap.eraseColor(android.graphics.Color.WHITE);
+            mWebView.draw(new Canvas(bitmap));
+            deliverFreezeSnapshot(requestId, bitmap, w, h);
+        } catch (RuntimeException e) {
+            Log.e(TAG, "software freeze snapshot failed", e);
+            reportFreezeSnapshotFailure(requestId);
+        }
+    }
+
+    // The sink owns the bitmap.
+    private void deliverFreezeSnapshot(long requestId, Bitmap bitmap, int w, int h) {
+        if (!hasNativePtr()) {
+            bitmap.recycle();
+            return;
+        }
+        mSink.onFreezeSnapshotReady(requestId, bitmap);
+    }
+
+    private void reportFreezeSnapshotFailure(long requestId) {
+        withNativePtr(ptr -> mSink.onFreezeSnapshotReady(requestId, null));
+    }
+
+    private Window resolveWindow(Context context) {
+        Context current = context;
+        while (current instanceof ContextWrapper) {
+            if (current instanceof Activity) {
+                return ((Activity) current).getWindow();
+            }
+            Context base = ((ContextWrapper) current).getBaseContext();
+            if (base == current) {
+                break;
+            }
+            current = base;
+        }
+        return null;
+    }
+
+    public void setInteractionEnabled(boolean enabled) {
+        runOnMainThread(() -> {
+            if (mWebView == null) return;
+            mWebView.setFocusable(enabled);
+            mWebView.setFocusableInTouchMode(enabled);
+        });
+    }
+
+    /**
+     * HEAD-probe Content-Disposition/Type for unnamed downloadUrl, then the same
+     * nativeOnDownloadDetected path as DownloadListener.
+     */
+    public void probeDownload(final String url, final String token) {
+        // Never throws: a dead WebView or missing provider degrades to an
+        // anonymous probe instead of losing the request (see ProbeRequest).
+        final ProbeRequest request = mDownloads.probeRequest(url);
+        final String ua = request.userAgent;
+        final String cookies = request.cookieHeader;
+
+        new Thread(() -> {
+            // Probe failure: empty metadata; DownloadPolicy names from the URL.
+            final DownloadProbe.Result probed = DownloadProbe.probeHeaders(url, ua, cookies);
+            withNativePtr(ptr -> mSink.onDownloadDetected(url,
+                    probed.contentDisposition,
+                    probed.mimeType,
+                    probed.contentLength,
+                    ua,
+                    token != null ? token : ""));
+        }, "MwvDownloadProbe").start();
+    }
+
+    /**
+     * Start a self-fetch download after the host accepted a Download Target.
+     */
+    public void startDownload(long downloadId, String url, String destination) {
+        mDownloads.start(downloadId, url, destination);
+    }
+
+    public void cancelDownload(long downloadId) {
+        mDownloads.cancel(downloadId);
+    }
+
+    public void pauseDownload(long downloadId) {
+        mDownloads.pause(downloadId);
+    }
+
+    public void resumeDownload(long downloadId) {
+        mDownloads.resume(downloadId);
+    }
+
+    /**
+     * Destroy WebView and cleanup
+     */
+    public void destroy() {
+        mNativePtr = 0;  // zero out immediately so JNI callbacks are ignored
+        mDownloads.cancelAll();
+        runOnMainThread(() -> {
+            mBridgeInjector.clearDocumentStartScripts();
+            if (mWebView != null) {
+                mProfileManager.flushCookiesIfPersistent(mOffTheRecord);
+                mWebView.stopLoading();
+                mWebView.loadUrl("about:blank");
+                mWebView.clearHistory();
+                mWebView.removeJavascriptInterface("NativeBridge");
+                ViewParent parent = mWebView.getParent();
+                if (parent instanceof ViewGroup) {
+                    ((ViewGroup) parent).removeView(mWebView);
+                }
+                if (mOwnWindow != null) {
+                    mOwnWindow.remove();
+                    mOwnWindow = null;
+                }
+                mWebView.destroy();
+                mWebView = null;
+            }
+            mProfileManager.destroyProfile(mActiveProfileName, mOffTheRecord);
+            mActiveProfileName = null;
+        });
+    }
+
+    /**
+     * Get WebView instance for adding to view hierarchy
+     */
+    public WebView getWebView() {
+        return mWebView;
+    }
+
+    // Main thread. Null when there is no WebView or nothing to save.
+    Bundle saveState() {
+        if (mWebView == null) return null;
+        final Bundle state = new Bundle();
+        return mWebView.saveState(state) != null ? state : null;
+    }
+
+    void restoreState(Bundle state) {
+        runOnMainThread(() -> {
+            if (mWebView != null) mWebView.restoreState(state);
+        });
+    }
+
+    // --- ChromeHost ---
+
+    @Override
+    public void onTitleChanged(String title) {
+        withNativePtr(ptr -> mSink.onTitleChanged(title));
+    }
+
+    @Override
+    public void onProgressChanged(int progress) {
+        withNativePtr(ptr -> mSink.onLoadProgressChanged(progress));
+    }
+
+    @Override
+    public void onFavicon(Bitmap icon) {
+        if (icon == null) {
+            return;
+        }
+        try {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            icon.compress(Bitmap.CompressFormat.PNG, 100, baos);
+            String base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
+            String dataUri = "data:image/png;base64," + base64;
+            withNativePtr(ptr -> mSink.onFaviconReceived(dataUri));
+        } catch (Exception e) {
+            Log.w(TAG, "onReceivedIcon: failed to encode favicon", e);
+        }
+    }
+
+    @Override
+    public void onNewWindowRequested(String url, boolean userGesture) {
+        withNativePtr(ptr -> mSink.onNewWindowRequested(url, userGesture));
+    }
+
+    // --- NavigationHost ---
+
+    @Override
+    public void onNavigationStarted(String url) {
+        final String navUrl = url != null ? url : "";
+        final boolean sameUrlReload = !navUrl.isEmpty() && navUrl.equals(mActiveNavigationUrl);
+        mActiveNavigationUrl = navUrl;
+        mBridgeInjector.resetForNavigation(sameUrlReload);
+        withNativePtr(ptr -> mSink.onNavigationStarted(navUrl));
+    }
+
+    @Override
+    public void onNavigationFinished(String url) {
+        if (mWebView != null) {
+            mDataClearManager.onPageFinished(mWebView);
+        }
+        mProfileManager.flushCookiesIfPersistent(mOffTheRecord);
+        withNativePtr(ptr -> mSink.onNavigationFinished(url));
+    }
+
+    @Override
+    public void onMainFrameError() {
+        withNativePtr(ptr -> mSink.onNavigationFailed());
+    }
+
+    @Override
+    public void onNavigationLifecycle(WebView view, String url, boolean warnIfBridgeMissing,
+                                      ScriptInjectionPhase injectionPhase) {
+        handleNavigationLifecycle(view, url, warnIfBridgeMissing, injectionPhase);
+    }
+
+    @Override
+    public boolean handleCustomScheme(WebView view, Uri uri) {
+        return CustomSchemeUrlHandler.handle(view, uri);
+    }
+
+    // --- NativeBridgeHost ---
+
+    @Override
+    public long nativePtr() {
+        return mNativePtr;
+    }
+
+    @Override
+    public String currentMainFrameOrigin() {
+        return mCurrentMainFrameOrigin;
+    }
+
+    @Override
+    public List<String> allowedOriginsSnapshot() {
+        synchronized (mBridgeLock) {
+            return new ArrayList<>(mAllowedOrigins);
+        }
+    }
+
+    @Override
+    public WebView webView() {
+        return mWebView;
+    }
+
+    @Override
+    public void onWebMessage(String message, String origin) {
+        withNativePtr(ptr -> mSink.onWebMessageReceived(message, origin, false));
+    }
+
+    // --- BridgeInjectorHost ---
+
+    @Override
+    public BridgeState snapshot() {
+        synchronized (mBridgeLock) {
+            return new BridgeState(
+                mBridgeInstalled,
+                new ArrayList<>(mUserScripts),
+                mBootstrapPageScript,
+                mBootstrapBridgeScript,
+                mInlineDownloadScript,
+                new ArrayList<>(mAllowedOrigins));
+        }
+    }
+
+    @Override
+    public String currentOrigin() {
+        return mCurrentMainFrameOrigin;
+    }
+
+    private boolean hasNativePtr() {
+        return mNativePtr != 0;
+    }
+
+    private void withNativePtr(NativeCallback callback) {
+        long ptr = mNativePtr;
+        if (ptr != 0) {
+            callback.invoke(ptr);
+        }
+    }
+
+    private void handleNavigationLifecycle(WebView view, String url, boolean warnWhenBridgeMissing,
+                                           ScriptInjectionPhase injectionPhase) {
+        final String newOrigin = OriginUtils.extractOrigin(url);
+        mCurrentMainFrameOrigin = newOrigin;
+        final boolean installed;
+        synchronized (mBridgeLock) {
+            installed = mBridgeInstalled;
+        }
+
+        // Track redirect targets (e.g. opensea.io -> www.opensea.io) for NativeBridge and
+        // document-start re-registration.
+        if (newOrigin != null && !newOrigin.isEmpty()) {
+            boolean originsExpanded = false;
+            synchronized (mBridgeLock) {
+                if (!OriginUtils.isOriginAllowed(newOrigin, mAllowedOrigins)) {
+                    mAllowedOrigins.add(newOrigin);
+                    originsExpanded = true;
+                }
+            }
+            if (originsExpanded) {
+                mBridgeInjector.configureInjectionMode();
+            }
+        }
+
+        if (installed) {
+            mBridgeInjector.injectOnce(injectionPhase);
+        } else if (warnWhenBridgeMissing) {
+            Log.w(TAG, "onPageStarted: bridge not installed yet");
+        }
+        withNativePtr(ptr -> mSink.onNavigationStateChanged(view.canGoBack(), view.canGoForward()));
+        notifyHistoryState(view);
+    }
+
+    private void notifyHistoryState(WebView view) {
+        if (view == null) {
+            return;
+        }
+
+        WebBackForwardList list = view.copyBackForwardList();
+        if (list == null) {
+            withNativePtr(ptr -> mSink.onHistoryChanged(new String[0], new String[0], -1));
+            return;
+        }
+
+        int size = list.getSize();
+        String[] urls = new String[size];
+        String[] titles = new String[size];
+        for (int i = 0; i < size; i++) {
+            WebHistoryItem item = list.getItemAtIndex(i);
+            if (item == null) {
+                urls[i] = "";
+                titles[i] = "";
+                continue;
+            }
+            String itemUrl = item.getUrl();
+            String itemTitle = item.getTitle();
+            urls[i] = itemUrl != null ? itemUrl : "";
+            titles[i] = itemTitle != null ? itemTitle : "";
+        }
+
+        withNativePtr(ptr -> mSink.onHistoryChanged(urls, titles, list.getCurrentIndex()));
+    }
+    /**
+     * Link/image long-press: notify host and consume; else fall through (selection).
+     */
+    private boolean handleLongPress() {
+        if (mWebView == null) {
+            return false;
+        }
+        final WebView.HitTestResult hit = mWebView.getHitTestResult();
+        if (hit == null) {
+            return false;
+        }
+        final float x = mLastTouchX;
+        final float y = mLastTouchY;
+        final String extra = hit.getExtra();
+
+        switch (hit.getType()) {
+            case WebView.HitTestResult.SRC_ANCHOR_TYPE: {
+                if (extra == null || extra.isEmpty()) {
+                    return false;
+                }
+                notifyLinkLongPressed(extra, "", x, y);
+                return true;
+            }
+            case WebView.HitTestResult.IMAGE_TYPE: {
+                if (extra == null || extra.isEmpty()) {
+                    return false;
+                }
+                notifyLinkLongPressed("", extra, x, y);
+                return true;
+            }
+            case WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE: {
+                // SRC_IMAGE_ANCHOR: extra is img src; href via requestFocusNodeHref.
+                final Message hrefMsg = new Handler(Looper.getMainLooper()) {
+                    @Override
+                    public void handleMessage(Message m) {
+                        final Bundle data = m.getData();
+                        final String href = data != null ? data.getString("url") : null;
+                        final String src = data != null ? data.getString("src") : null;
+                        notifyLinkLongPressed(
+                                href != null ? href : "",
+                                src != null ? src : (extra != null ? extra : ""),
+                                x, y);
+                    }
+                }.obtainMessage();
+                mWebView.requestFocusNodeHref(hrefMsg);
+                return true;
+            }
+            default:
+                return false;
+        }
+    }
+
+    private void notifyLinkLongPressed(String linkUrl, String imageUrl, float x, float y) {
+        withNativePtr(ptr -> mSink.onLinkLongPressed(linkUrl, imageUrl, x, y));
+    }
+}

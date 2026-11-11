@@ -21,6 +21,18 @@ public final class DataClearManager {
 
     private boolean mRestoreDefaultCacheModeOnNextPageFinish;
 
+    // In a process that runs no WebView (remote WebViews) the browser process answers instead.
+    private static volatile boolean sClientProcess = false;
+    private static volatile boolean sClientSupported = false;
+
+    static void setClientProcess(boolean client) {
+        sClientProcess = client;
+    }
+
+    static void setClientAnswer(boolean supported) {
+        sClientSupported = supported;
+    }
+
     public void clearHttpCache(WebView webView) {
         clearHttpCache(webView, null);
     }
@@ -135,6 +147,9 @@ public final class DataClearManager {
     }
 
     public static boolean isClearSiteDataSupported() {
+        if (sClientProcess) {
+            return sClientSupported;
+        }
         try {
             Class<?> featureClass = Class.forName("androidx.webkit.WebViewFeature");
             Method isSupported = featureClass.getMethod("isFeatureSupported", String.class);
