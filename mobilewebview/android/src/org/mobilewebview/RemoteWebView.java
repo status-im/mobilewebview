@@ -246,7 +246,6 @@ final class RemoteWebView implements WebViewEngine {
                         return;
                     }
                     mSurfaceView.setChildSurfacePackage(pkg);
-                    sendRemoteSize(true);
                     Log.i(TAG, "RemoteWebView " + mId + " surface package set");
                 });
                 return;
@@ -487,59 +486,58 @@ final class RemoteWebView implements WebViewEngine {
 
     @Override
     public void setGeometry(int x, int y, int width, int height) {
-        synchronized (this) {
-            mWidth = Math.max(1, width);
-            mHeight = Math.max(1, height);
-        }
         mMain.post(() -> {
             mX = x;
             mY = y;
             if (mWindow == null) return;
-            mWindow.setGeometry(x, y, width, height);
-            updatePassThrough();
-            resizeRemote();
+            applyGeometry(x, y, Math.max(1, width), Math.max(1, height));
         });
     }
 
-    // Main thread. A per-frame relayout of the remote WebView lands frames after the panel moved
-    // (Binder + a WebView layout in the other process), so while the geometry animates (drawer)
-    // the remote WebView stays at least as large as the panel and the SurfaceView crops it; it
-    // gets the exact size once the geometry has been still for RESIZE_SETTLE_MS.
-    private static final long RESIZE_SETTLE_MS = 150;
-    private int mRemoteWidth = -1, mRemoteHeight = -1;
-    private final Runnable mSettleResize = () -> sendRemoteSize(true);
+    // Main thread. Host chrome sliding over the page (the navbar) shrinks the item, but the
+    // remote WebView keeps its full size: the panel window takes the item rect and crops the
+    // SurfaceView, which stays put at the full rect. Only a new full rect (the host content was
+    // resized, e.g. rotation, or the item grew) relayouts the browser process.
+    private final Rect mFull = new Rect();
+    private int mHostW = -1, mHostH = -1;
 
-    private void resizeRemote() {
-        final int w, h;
-        synchronized (this) {
-            w = mWidth;
-            h = mHeight;
+    private void applyGeometry(int x, int y, int w, int h) {
+        final Rect item = new Rect(x, y, x + w, y + h);
+        final int hw = mHostContent.getWidth(), hh = mHostContent.getHeight();
+        final boolean newFull;
+        if (hw != mHostW || hh != mHostH || mFull.isEmpty()) {
+            mHostW = hw;
+            mHostH = hh;
+            newFull = !item.equals(mFull);
+            mFull.set(item);
+        } else {
+            final Rect u = new Rect(mFull);
+            u.union(item);
+            newFull = !u.equals(mFull);
+            mFull.set(u);
         }
-        if (w == mRemoteWidth && h == mRemoteHeight) {
-            mMain.removeCallbacks(mSettleResize);
-            return;
+        mWindow.setGeometry(x, y, w, h);
+        final android.widget.FrameLayout.LayoutParams lp =
+                (android.widget.FrameLayout.LayoutParams) mSurfaceView.getLayoutParams();
+        if (lp.width != mFull.width() || lp.height != mFull.height()) {
+            lp.width = mFull.width();
+            lp.height = mFull.height();
+            mSurfaceView.setLayoutParams(lp);
         }
-        if (w > mRemoteWidth || h > mRemoteHeight) sendRemoteSize(false);
-        mMain.removeCallbacks(mSettleResize);
-        mMain.postDelayed(mSettleResize, RESIZE_SETTLE_MS);
-    }
-
-    private void sendRemoteSize(boolean exact) {
-        int w, h;
-        synchronized (this) {
-            w = mWidth;
-            h = mHeight;
+        mSurfaceView.setTranslationX(mFull.left - x);
+        mSurfaceView.setTranslationY(mFull.top - y);
+        if (newFull) {
+            synchronized (this) {
+                mWidth = mFull.width();
+                mHeight = mFull.height();
+            }
+            final Bundle b = args();
+            b.putInt("width", mFull.width());
+            b.putInt("height", mFull.height());
+            mClient.callIfLive(this, "resize", b);
+            Log.i(TAG, "RemoteWebView " + mId + " full rect " + mFull);
         }
-        if (!exact && mHostContent != null) {
-            w = Math.max(w, mHostContent.getWidth());
-            h = Math.max(h, mHostContent.getHeight());
-        }
-        mRemoteWidth = w;
-        mRemoteHeight = h;
-        final Bundle b = args();
-        b.putInt("width", w);
-        b.putInt("height", h);
-        mClient.callIfLive(this, "resize", b);
+        updatePassThrough();
     }
 
     // Host views over the page (the drawer's edge strip) keep their touches.

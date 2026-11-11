@@ -32,6 +32,7 @@ import java.util.function.Consumer;
  */
 final class WebViewWindow {
     private static final String TAG = "MobileWebView";
+    private static final boolean DEBUG_HOST_VIEWS = true;
 
     private final Activity mActivity;
     private final ViewGroup mHostContent;
@@ -237,6 +238,7 @@ final class WebViewWindow {
         final int oy = origin[1] - hostOffsetY() + mParams.y;
         for (int i = 0; i < mHostContent.getChildCount(); i++) {
             final View v = mHostContent.getChildAt(i);
+            if (DEBUG_HOST_VIEWS) Log.i(TAG, "host view " + v.getClass().getSimpleName() + " vis=" + v.getVisibility() + " z=" + v.getZ() + " clickable=" + v.isClickable() + " " + v.getWidth() + "x" + v.getHeight() + " at " + v.getX() + "," + v.getY());
             if (v.getVisibility() != View.VISIBLE || v.getZ() <= 0f || !v.isClickable()) continue;
             v.getLocationOnScreen(loc);
             final Rect r = new Rect(loc[0] - ox, loc[1] - oy, loc[0] - ox + v.getWidth(), loc[1] - oy + v.getHeight());
