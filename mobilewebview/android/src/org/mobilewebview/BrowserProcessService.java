@@ -232,7 +232,12 @@ public final class BrowserProcessService extends Service {
 
         // Touches on host views over the page (passThrough) fall through to the UI process.
         private void applyTouchable() {
-            if (Build.VERSION.SDK_INT < 34 || host == null || root.getRootSurfaceControl() == null) return;
+            if (Build.VERSION.SDK_INT < 34 || host == null) return;
+            // The root has no root surface control until its first traversal: try again then.
+            if (root.getRootSurfaceControl() == null) {
+                root.post(this::applyTouchable);
+                return;
+            }
             if (passThrough.isEmpty()) {
                 root.getRootSurfaceControl().setTouchableRegion(null);
                 return;

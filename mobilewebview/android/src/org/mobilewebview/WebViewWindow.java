@@ -32,7 +32,7 @@ import java.util.function.Consumer;
  */
 final class WebViewWindow {
     private static final String TAG = "MobileWebView";
-    private static final boolean DEBUG_HOST_VIEWS = true;
+    private static final boolean DEBUG_HOST_VIEWS = false;
 
     private final Activity mActivity;
     private final ViewGroup mHostContent;

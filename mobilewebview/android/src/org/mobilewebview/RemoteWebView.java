@@ -504,18 +504,23 @@ final class RemoteWebView implements WebViewEngine {
     private void applyGeometry(int x, int y, int w, int h) {
         final Rect item = new Rect(x, y, x + w, y + h);
         final int hw = mHostContent.getWidth(), hh = mHostContent.getHeight();
-        final boolean newFull;
+        final Rect host = new Rect(0, 0, hw > 0 ? hw : x + w, hh > 0 ? hh : y + h);
+        final Rect full = new Rect(mFull);
         if (hw != mHostW || hh != mHostH || mFull.isEmpty()) {
             mHostW = hw;
             mHostH = hh;
-            newFull = !item.equals(mFull);
-            mFull.set(item);
+            full.set(item);
         } else {
-            final Rect u = new Rect(mFull);
-            u.union(item);
-            newFull = !u.equals(mFull);
-            mFull.set(u);
+            // Growing past the full rect (a bar sliding away): take the room up to the host edge
+            // at once, so the animation does not relayout every frame.
+            if (item.left < full.left) full.left = host.left;
+            if (item.top < full.top) full.top = host.top;
+            if (item.right > full.right) full.right = host.right;
+            if (item.bottom > full.bottom) full.bottom = host.bottom;
         }
+        if (!full.intersect(host)) full.set(item);
+        final boolean newFull = !full.equals(mFull);
+        mFull.set(full);
         mWindow.setGeometry(x, y, w, h);
         final android.widget.FrameLayout.LayoutParams lp =
                 (android.widget.FrameLayout.LayoutParams) mSurfaceView.getLayoutParams();
@@ -543,7 +548,12 @@ final class RemoteWebView implements WebViewEngine {
     // Host views over the page (the drawer's edge strip) keep their touches.
     private void updatePassThrough() {
         if (mWindow == null || android.os.Build.VERSION.SDK_INT < 34) return;
-        final ArrayList<Rect> rects = new ArrayList<>(mWindow.hostRectsAbove());
+        // Panel coordinates to the embedded window, which sits at the SurfaceView translation.
+        final ArrayList<Rect> rects = new ArrayList<>();
+        for (Rect r : mWindow.hostRectsAbove()) {
+            r.offset(-(int) mSurfaceView.getTranslationX(), -(int) mSurfaceView.getTranslationY());
+            rects.add(r);
+        }
         synchronized (this) {
             if (rects.equals(mPassThrough)) return;
             mPassThrough = rects;
