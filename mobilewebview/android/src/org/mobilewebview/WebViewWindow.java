@@ -299,6 +299,7 @@ final class WebViewWindow {
             }
             if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) {
                 mRouteTo = hostViewAbove(ev.getRawX(), ev.getRawY());
+                Log.i(TAG, "WebViewWindow down at " + ev.getRawX() + "," + ev.getRawY() + " route=" + mRouteTo);
                 setFocusable(mRouteTo == null);
             }
             if (mRouteTo != null) {

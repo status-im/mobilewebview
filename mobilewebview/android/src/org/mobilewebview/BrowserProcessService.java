@@ -240,6 +240,7 @@ public final class BrowserProcessService extends Service {
             final Region region = new Region(0, 0, width, height);
             for (Rect r : passThrough) region.op(r, Region.Op.DIFFERENCE);
             root.getRootSurfaceControl().setTouchableRegion(region);
+            Log.i(TAG, "browser process: WebView " + id + " touchable " + region);
         }
 
         void destroy() {

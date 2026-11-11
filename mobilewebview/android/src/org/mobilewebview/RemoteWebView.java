@@ -152,6 +152,8 @@ final class RemoteWebView implements WebViewEngine {
         }
         mWindow.setGeometry(mX, mY, w, h);
         mWindow.setVisible(visible, false);
+        // The edge strip and other host views over the page move without a geometry change here.
+        mHostContent.getViewTreeObserver().addOnGlobalLayoutListener(this::updatePassThrough);
     }
 
     private int mX, mY;  // main thread
@@ -254,6 +256,7 @@ final class RemoteWebView implements WebViewEngine {
                 }
                 return;
             case "onTouchDown":
+                Log.i(TAG, "RemoteWebView " + mId + " touch down in the browser process");
                 mMain.post(() -> {
                     if (mWindow != null) mWindow.contentTouched();
                 });
@@ -512,6 +515,7 @@ final class RemoteWebView implements WebViewEngine {
             if (rects.equals(mPassThrough)) return;
             mPassThrough = rects;
         }
+        Log.i(TAG, "RemoteWebView " + mId + " pass-through " + rects);
         final Bundle b = args();
         b.putParcelableArrayList("rects", rects);
         mClient.callIfLive(this, "passThrough", b);
