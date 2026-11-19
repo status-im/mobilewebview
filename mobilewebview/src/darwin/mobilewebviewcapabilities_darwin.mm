@@ -65,4 +65,9 @@ bool MobileWebViewCapabilities::isStateRestoreSupported()
     return false;
 }
 
+bool MobileWebViewCapabilities::isTerminateRendererSupported()
+{
+    return false;
+}
+
 #endif // Q_OS_MACOS || Q_OS_IOS

@@ -3,6 +3,7 @@
 #if defined(Q_OS_ANDROID)
 
 #include <QJniEnvironment>
+#include <android/api-level.h>
 
 bool MobileWebViewCapabilities::isFindSupported()
 {
@@ -67,6 +68,12 @@ bool MobileWebViewCapabilities::isPlayingAudioSupported()
 bool MobileWebViewCapabilities::isStateRestoreSupported()
 {
     return true;
+}
+
+bool MobileWebViewCapabilities::isTerminateRendererSupported()
+{
+    // WebViewRenderProcess.terminate() is API 29.
+    return android_get_device_api_level() >= 29;
 }
 
 #endif // Q_OS_ANDROID

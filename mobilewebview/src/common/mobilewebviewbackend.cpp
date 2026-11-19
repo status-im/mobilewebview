@@ -1126,6 +1126,12 @@ void MobileWebViewBackend::restoreState(const QByteArray &state)
     d->restoreStateImpl(state);
 }
 
+void MobileWebViewBackend::terminateRenderer()
+{
+    Q_D(MobileWebViewBackend);
+    d->terminateRendererImpl();
+}
+
 void MobileWebViewBackendPrivate::setPlayingAudio(bool playing)
 {
     if (m_playingAudio == playing)

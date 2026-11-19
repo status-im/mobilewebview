@@ -27,6 +27,7 @@ class MobileWebViewCapabilities : public QObject
     Q_PROPERTY(bool inPageMediaPlaybackSupported READ inPageMediaPlaybackSupported CONSTANT)
     Q_PROPERTY(bool playingAudioSupported READ playingAudioSupported CONSTANT)
     Q_PROPERTY(bool stateRestoreSupported READ stateRestoreSupported CONSTANT)
+    Q_PROPERTY(bool terminateRendererSupported READ terminateRendererSupported CONSTANT)
 
 public:
     explicit MobileWebViewCapabilities(QObject *parent = nullptr);
@@ -54,9 +55,13 @@ public:
     /// Do saveState()/restoreState() hand back/forward history over?
     static bool isStateRestoreSupported();
 
+    /// Can terminateRenderer() end a renderer process?
+    static bool isTerminateRendererSupported();
+
     bool findSupported() const { return isFindSupported(); }
     bool playingAudioSupported() const { return isPlayingAudioSupported(); }
     bool stateRestoreSupported() const { return isStateRestoreSupported(); }
+    bool terminateRendererSupported() const { return isTerminateRendererSupported(); }
     bool clearSiteDataSupported() const { return isClearSiteDataSupported(); }
     bool inPageMediaPlaybackSupported() const { return isInPageMediaPlaybackSupported(); }
 };

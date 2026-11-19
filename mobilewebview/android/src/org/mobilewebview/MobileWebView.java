@@ -881,6 +881,25 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         });
     }
 
+    /**
+     * Ends this view's renderer (API 29+). The renderer is shared by every
+     * WebView of the same storage profile (by all of them where WebView runs a
+     * single renderer); each gets onRenderProcessGone(crashed=false).
+     */
+    public void terminateRenderer() {
+        runOnMainThread(() -> {
+            if (mWebView == null
+                    || android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) {
+                return;
+            }
+            final android.webkit.WebViewRenderProcess renderer = mWebView.getWebViewRenderProcess();
+            if (renderer == null) {
+                return;
+            }
+            Log.i(TAG, "terminateRenderer: " + (renderer.terminate() ? "terminated" : "refused"));
+        });
+    }
+
     private void saveHistoryState() {
         if (mWebView == null) {
             return;

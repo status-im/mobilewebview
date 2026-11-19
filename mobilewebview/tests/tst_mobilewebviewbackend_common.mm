@@ -72,6 +72,7 @@ public:
     void reloadAndBypassCacheImpl() override { ++reloadAndBypassCacheCalls; }
     void stopImpl() override { ++stopCalls; }
     void clearHistoryImpl() override { ++clearHistoryCalls; }
+    void terminateRendererImpl() override { ++terminateRendererCalls; }
     void restoreStateImpl(const QByteArray &state) override
     {
         ++restoreStateCalls;
@@ -226,6 +227,7 @@ public:
     int stopCalls = 0;
     int clearHistoryCalls = 0;
     int restoreStateCalls = 0;
+    int terminateRendererCalls = 0;
     QByteArray lastRestoredState;
     int clearHttpCacheCalls = 0;
     int deleteAllCookiesCalls = 0;
@@ -350,6 +352,7 @@ private slots:
     void saveStateReturnsNewestState();
     void renderProcessGoneEmitsAndEndsPageActivity();
     void playingAudioNotifiesOnChangeOnly();
+    void terminateRendererReachesThePlatform();
     void dropCapabilitiesAreReadableWithoutABackend();
 };
 
@@ -1870,15 +1873,29 @@ void MobileWebViewBackendCommonTest::playingAudioNotifiesOnChangeOnly()
     QCOMPARE(spy.count(), 2);
 }
 
+void MobileWebViewBackendCommonTest::terminateRendererReachesThePlatform()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d != nullptr);
+
+    backend.terminateRenderer();
+
+    QCOMPARE(d->terminateRendererCalls, 1);
+}
+
 // Darwin wires none of them up; the answer must say so, not assume Android.
 void MobileWebViewBackendCommonTest::dropCapabilitiesAreReadableWithoutABackend()
 {
     QVERIFY(!MobileWebViewCapabilities::isPlayingAudioSupported());
     QVERIFY(!MobileWebViewCapabilities::isStateRestoreSupported());
+    QVERIFY(!MobileWebViewCapabilities::isTerminateRendererSupported());
 
     MobileWebViewCapabilities capabilities;
     QCOMPARE(capabilities.property("playingAudioSupported").toBool(), false);
     QCOMPARE(capabilities.property("stateRestoreSupported").toBool(), false);
+    QCOMPARE(capabilities.property("terminateRendererSupported").toBool(), false);
 }
 
 QTEST_MAIN(MobileWebViewBackendCommonTest)

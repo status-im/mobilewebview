@@ -108,6 +108,14 @@ public:
     /// a view that already has history of its own, and where unsupported.
     Q_INVOKABLE void restoreState(const QByteArray &state);
 
+    /// Ends the renderer process of this view (Android API 29+, no-op
+    /// elsewhere; see isTerminateRendererSupported), e.g. before the last view
+    /// of its storage profile goes. The renderer is shared by every view of
+    /// the same storage profile, in this process and any other host code
+    /// using WebView in it (all of them where WebView runs a single renderer):
+    /// each sees renderProcessGone(false, ...).
+    Q_INVOKABLE void terminateRenderer();
+
     /// Async native snapshot. On success, snapshotReady carries a stable
     /// image://mobilewebview-snapshot/<key> URL for this backend instance (Image.source).
     /// \a targetSize, if set, is in logical (device-independent) points like QML item sizes;

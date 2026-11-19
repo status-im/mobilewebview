@@ -122,6 +122,7 @@ public:
     // platform reports captured history through setSavedState().
     // =========================================================================
     virtual void restoreStateImpl(const QByteArray &) {}
+    virtual void terminateRendererImpl() {}
 
     // =========================================================================
     // Optional capability: find-in-page. Defaults: unsupported, no-ops.

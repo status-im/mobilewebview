@@ -81,6 +81,7 @@ public:
     void pauseDownloadImpl(quint64 downloadId) override;
     void resumeDownloadImpl(quint64 downloadId) override;
     void restoreStateImpl(const QByteArray &state) override;
+    void terminateRendererImpl() override;
 
     // JNI helper methods
     void cleanupJni();
@@ -147,6 +148,7 @@ private:
     jmethodID m_pauseDownloadMethod = nullptr;
     jmethodID m_resumeDownloadMethod = nullptr;
     jmethodID m_restoreStateMethod = nullptr;
+    jmethodID m_terminateRendererMethod = nullptr;
 
     bool m_jniInitialized = false;
     QMutex m_jniMutex;  // Protect JNI calls
@@ -304,6 +306,7 @@ bool AndroidWebViewPrivate::initNativeView()
     m_pauseDownloadMethod = env->GetMethodID(m_webViewClass, "pauseDownload", "(J)V");
     m_resumeDownloadMethod = env->GetMethodID(m_webViewClass, "resumeDownload", "(J)V");
     m_restoreStateMethod = env->GetMethodID(m_webViewClass, "restoreState", "([BLjava/lang/String;)V");
+    m_terminateRendererMethod = env->GetMethodID(m_webViewClass, "terminateRenderer", "()V");
 
     m_jniInitialized = true;
 
@@ -1343,6 +1346,11 @@ void AndroidWebViewPrivate::onLoadProgressChanged(int progress)
 void AndroidWebViewPrivate::onFaviconReceived(const QString &faviconUrl)
 {
     setFavicon(faviconUrl);
+}
+
+void AndroidWebViewPrivate::terminateRendererImpl()
+{
+    callSimpleVoidMethod(m_terminateRendererMethod);
 }
 
 void AndroidWebViewPrivate::restoreStateImpl(const QByteArray &state)
