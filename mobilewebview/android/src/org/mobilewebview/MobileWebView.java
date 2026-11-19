@@ -25,6 +25,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.os.Parcel;
 import android.graphics.Rect;
 
 import java.io.ByteArrayOutputStream;
@@ -53,6 +54,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     private String mBootstrapPageScript = "";
     private String mBootstrapBridgeScript = "";
     private String mInlineDownloadScript = "";
+    private String mMediaPlaybackScript = "";
     private volatile String mCurrentMainFrameOrigin = "";
     private volatile String mActiveNavigationUrl = "";
 
@@ -62,6 +64,15 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
     private final PendingActionQueue mPendingActionQueue = new PendingActionQueue();
     private final BridgeScriptInjector mBridgeInjector = new BridgeScriptInjector(this);
+    private final MediaPlaybackTracker mMediaPlayback = new MediaPlaybackTracker();
+    private final RendererRecovery mRendererRecovery = new RendererRecovery();
+    // Reapplied to a WebView revived after its renderer died.
+    private int[] mGeometry = null;
+    private boolean mInteractionEnabled = true;
+    private boolean mShown = false;
+    // Where the WebView sat among its parent's children, kept for a revive.
+    private int mViewIndex = -1;
+    private android.view.ViewTreeObserver.OnWindowFocusChangeListener mReviveOnFocus = null;
 
     @FunctionalInterface
     private interface NativeCallback {
@@ -129,6 +140,14 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
 
     private void initializeWebViewOnMainThread(Context context) {
         try {
+            createWebView(context);
+        } finally {
+            mPendingActionQueue.markReady();
+        }
+    }
+
+    private boolean createWebView(Context context) {
+        try {
             mWebView = new WebView(context) {
                 @Override
                 public boolean dispatchKeyEvent(android.view.KeyEvent event) {
@@ -147,12 +166,58 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
                 }
             };
             setupWebView();
+            return true;
         } catch (RuntimeException e) {
             Log.e(TAG, "Failed to initialize WebView on main thread", e);
             mWebView = null;
-        } finally {
-            mPendingActionQueue.markReady();
+            return false;
         }
+    }
+
+    /**
+     * Brings back a WebView whose renderer died (see onRenderProcessGone), with
+     * its saved history or last URL when restoreContent is set. Returns false when
+     * there was nothing to revive.
+     */
+    private boolean reviveIfRendererGone(boolean restoreContent) {
+        final RendererRecovery.Revive revive = mRendererRecovery.takeRevive();
+        if (revive == RendererRecovery.Revive.NOT_GONE) {
+            return false;
+        }
+        stopReviveOnFocus();
+        Log.i(TAG, "Reviving WebView after renderer loss: " + revive);
+        if (!createWebView(mContext)) {
+            return true;
+        }
+        if (!mHttpUserAgent.isEmpty()) {
+            mWebView.getSettings().setUserAgentString(mHttpUserAgent);
+        }
+        if (mGeometry != null) {
+            applyGeometry(mGeometry[0], mGeometry[1], mGeometry[2], mGeometry[3]);
+        }
+        mWebView.setFocusable(mInteractionEnabled);
+        mWebView.setFocusableInTouchMode(mInteractionEnabled);
+        mActiveNavigationUrl = "";
+        mBridgeInjector.configureInjectionMode();
+        mWebView.setVisibility(RendererRecovery.visibleAfterRevive(mShown) ? View.VISIBLE : View.GONE);
+
+        if (!restoreContent) {
+            return true;
+        }
+        if (revive == RendererRecovery.Revive.RESTORE_STATE
+                && restoreHistoryState(mRendererRecovery.state())) {
+            return true;
+        }
+        if (revive == RendererRecovery.Revive.LOAD_HTML) {
+            final String baseUrl = mRendererRecovery.htmlBaseUrl();
+            mWebView.loadDataWithBaseURL(baseUrl.isEmpty() ? null : baseUrl,
+                    mRendererRecovery.html(), "text/html", "UTF-8", null);
+            return true;
+        }
+        if (!mRendererRecovery.url().isEmpty()) {
+            mWebView.loadUrl(mRendererRecovery.url());
+        }
+        return true;
     }
 
     private ViewGroup resolveRootView(View rootView) {
@@ -211,6 +276,12 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
             WebView.setWebContentsDebuggingEnabled(true);
         }
 
+        // Hidden WebViews leave the renderer to the system; its loss is handled
+        // in onRenderProcessGone.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            mWebView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, true);
+        }
+
         mWebView.setWebViewClient(new MobileWebViewClient(this));
         mWebView.setWebChromeClient(new MobileWebChromeClient(this));
         mWebView.setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> {
@@ -243,7 +314,11 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
                 ((ViewGroup) parent).removeView(mWebView);
             }
             if (mWebView.getParent() == null) {
-                mRootView.addView(mWebView);
+                if (mViewIndex >= 0 && mViewIndex <= mRootView.getChildCount()) {
+                    mRootView.addView(mWebView, mViewIndex);
+                } else {
+                    mRootView.addView(mWebView);
+                }
             }
         }
 
@@ -256,7 +331,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     public void installMessageBridge(String namespace, String[] allowedOrigins,
                                      String invokeKey, String[] userScripts,
                                      String bootstrapPageScript, String bootstrapBridgeScript,
-                                     String inlineDownloadScript) {
+                                     String inlineDownloadScript, String mediaPlaybackScript) {
         synchronized (mBridgeLock) {
             mBridgeNamespace = namespace != null ? namespace : "";
             mInvokeKey = invokeKey != null ? invokeKey : "";
@@ -271,6 +346,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
             mBootstrapPageScript = bootstrapPageScript != null ? bootstrapPageScript : "";
             mBootstrapBridgeScript = bootstrapBridgeScript != null ? bootstrapBridgeScript : "";
             mInlineDownloadScript = inlineDownloadScript != null ? inlineDownloadScript : "";
+            mMediaPlaybackScript = mediaPlaybackScript != null ? mediaPlaybackScript : "";
             mBridgeInstalled = true;
         }
         runOnMainThread(mBridgeInjector::configureInjectionMode);
@@ -303,6 +379,9 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         }
 
         runOnMainThread(() -> {
+            mRendererRecovery.onUserAction();
+            mRendererRecovery.onLoadUrl();
+            reviveIfRendererGone(false);
             if (mWebView == null) return;
             mWebView.loadUrl(url);
         });
@@ -322,6 +401,9 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         }
 
         runOnMainThread(() -> {
+            mRendererRecovery.onUserAction();
+            mRendererRecovery.onHtml(html, baseUrl);
+            reviveIfRendererGone(false);
             if (mWebView == null) return;
             mWebView.loadDataWithBaseURL(baseUrl, html, "text/html", "UTF-8", null);
         });
@@ -353,6 +435,10 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
 
     public void reload() {
         runOnMainThread(() -> {
+            mRendererRecovery.onUserAction();
+            if (reviveIfRendererGone(true)) {
+                return;
+            }
             if (mWebView != null) {
                 mBridgeInjector.markForceReinject();
                 mWebView.reload();
@@ -370,6 +456,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
 
     public void clearHistory() {
         runOnMainThread(() -> {
+            mRendererRecovery.clearState();
             if (mWebView != null) {
                 mWebView.clearHistory();
                 notifyHistoryState(mWebView);
@@ -390,15 +477,25 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
 
     public void deleteAllCookies(long requestId) {
         runOnMainThread(() -> {
-            mDataClearManager.deleteAllCookies(resolveActiveProfile(), () ->
-                    withNativePtr(ptr -> nativeOnDeleteAllCookiesCompleted(ptr, requestId)));
+            final Runnable done = () -> withNativePtr(ptr -> nativeOnDeleteAllCookiesCompleted(ptr, requestId));
+            final WebViewProfileManager.ClearTarget target = clearTarget();
+            if (target.skip) {
+                done.run();
+                return;
+            }
+            mDataClearManager.deleteAllCookies(target.profile, done);
         });
     }
 
     public void clearDomStorage(long requestId) {
         runOnMainThread(() -> {
-            mDataClearManager.clearDomStorage(resolveActiveProfile(), () ->
-                    withNativePtr(ptr -> nativeOnClearDomStorageCompleted(ptr, requestId)));
+            final Runnable done = () -> withNativePtr(ptr -> nativeOnClearDomStorageCompleted(ptr, requestId));
+            final WebViewProfileManager.ClearTarget target = clearTarget();
+            if (target.skip) {
+                done.run();
+                return;
+            }
+            mDataClearManager.clearDomStorage(target.profile, done);
         });
     }
 
@@ -408,13 +505,22 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
 
     public void clearSiteData(String site, long requestId) {
         runOnMainThread(() -> {
-            mDataClearManager.clearSiteData(resolveActiveProfile(), site, () ->
-                    withNativePtr(ptr -> nativeOnClearSiteDataCompleted(ptr, requestId)));
+            final Runnable done = () -> withNativePtr(ptr -> nativeOnClearSiteDataCompleted(ptr, requestId));
+            final WebViewProfileManager.ClearTarget target = clearTarget();
+            if (target.skip) {
+                done.run();
+                return;
+            }
+            mDataClearManager.clearSiteData(target.profile, site, done);
         });
     }
 
     public void reloadAndBypassCache() {
         runOnMainThread(() -> {
+            mRendererRecovery.onUserAction();
+            if (reviveIfRendererGone(true)) {
+                return;
+            }
             if (mWebView != null) {
                 mBridgeInjector.markForceReinject();
                 mDataClearManager.reloadAndBypassCache(mWebView);
@@ -422,29 +528,8 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         });
     }
 
-    private androidx.webkit.Profile resolveActiveProfile() {
-        if (mWebView == null) {
-            return null;
-        }
-        try {
-            Class<?> featureClass = Class.forName("androidx.webkit.WebViewFeature");
-            java.lang.reflect.Method isSupported =
-                    featureClass.getMethod("isFeatureSupported", String.class);
-            Object supported = isSupported.invoke(null, "MULTI_PROFILE");
-            if (!(supported instanceof Boolean) || !((Boolean) supported)) {
-                return null;
-            }
-            Class<?> compatClass = Class.forName("androidx.webkit.WebViewCompat");
-            java.lang.reflect.Method getProfile =
-                    compatClass.getMethod("getProfile", WebView.class);
-            Object profile = getProfile.invoke(null, mWebView);
-            if (profile instanceof androidx.webkit.Profile) {
-                return (androidx.webkit.Profile) profile;
-            }
-        } catch (ReflectiveOperationException e) {
-            Log.w(TAG, "resolveActiveProfile failed", e);
-        }
-        return null;
+    private WebViewProfileManager.ClearTarget clearTarget() {
+        return mProfileManager.clearTarget(mWebView, mActiveProfileName, mOffTheRecord);
     }
 
     public void setZoomFactor(float factor) {
@@ -554,18 +639,23 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
      */
     public void setGeometry(int x, int y, int width, int height) {
         runOnMainThread(() -> {
+            mGeometry = new int[] { x, y, width, height };
             if (mWebView == null) return;
-            ViewGroup.LayoutParams params = mWebView.getLayoutParams();
-            if (params == null) {
-                params = new ViewGroup.LayoutParams(width, height);
-            } else {
-                params.width = width;
-                params.height = height;
-            }
-            mWebView.setLayoutParams(params);
-            mWebView.setX(x);
-            mWebView.setY(y);
+            applyGeometry(x, y, width, height);
         });
+    }
+
+    private void applyGeometry(int x, int y, int width, int height) {
+        ViewGroup.LayoutParams params = mWebView.getLayoutParams();
+        if (params == null) {
+            params = new ViewGroup.LayoutParams(width, height);
+        } else {
+            params.width = width;
+            params.height = height;
+        }
+        mWebView.setLayoutParams(params);
+        mWebView.setX(x);
+        mWebView.setY(y);
     }
 
     /**
@@ -581,6 +671,15 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
      */
     public void setVisible(boolean visible, boolean grabFocus) {
         runOnMainThread(() -> {
+            if (visible != mShown) {
+                mRendererRecovery.onUserAction();
+            }
+            mShown = visible;
+            if (visible) {
+                reviveIfRendererGone(true);
+            } else {
+                saveHistoryState();
+            }
             if (mWebView == null) return;
             mWebView.setVisibility(visible ? View.VISIBLE : View.GONE);
             if (visible && grabFocus) {
@@ -691,6 +790,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
 
     public void setInteractionEnabled(boolean enabled) {
         runOnMainThread(() -> {
+            mInteractionEnabled = enabled;
             if (mWebView == null) return;
             mWebView.setFocusable(enabled);
             mWebView.setFocusableInTouchMode(enabled);
@@ -752,12 +852,104 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     }
 
     /**
+     * Restores back/forward history captured by saveHistoryState (delivered
+     * through nativeOnStateSaved); loads fallbackUrl when the state is
+     * unusable. Meant for a WebView that has not loaded anything yet.
+     */
+    public void restoreState(byte[] state, String fallbackUrl) {
+        runOnMainThread(() -> {
+            if (mWebView == null) {
+                // Gone: the revive restores it.
+                mRendererRecovery.onStateSaved(state);
+                return;
+            }
+            final WebBackForwardList history = mWebView.copyBackForwardList();
+            if (history != null && history.getSize() > 0) {
+                // WebView documents undefined results on a view with history of its own.
+                Log.w(TAG, "restoreState ignored: the WebView already has history");
+                return;
+            }
+            if (restoreHistoryState(state)) {
+                mRendererRecovery.onStateSaved(state);
+                return;
+            }
+            final String url = fallbackUrl != null && !fallbackUrl.isEmpty()
+                    ? fallbackUrl : mRendererRecovery.url();
+            if (!url.isEmpty()) {
+                mWebView.loadUrl(url);
+            }
+        });
+    }
+
+    /**
+     * Ends this view's renderer (API 29+). The renderer is shared by every
+     * WebView of the same storage profile (by all of them where WebView runs a
+     * single renderer); each gets onRenderProcessGone(crashed=false).
+     */
+    public void terminateRenderer() {
+        runOnMainThread(() -> {
+            if (mWebView == null
+                    || android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) {
+                return;
+            }
+            final android.webkit.WebViewRenderProcess renderer = mWebView.getWebViewRenderProcess();
+            if (renderer == null) {
+                return;
+            }
+            Log.i(TAG, "terminateRenderer: " + (renderer.terminate() ? "terminated" : "refused"));
+        });
+    }
+
+    private void saveHistoryState() {
+        if (mWebView == null) {
+            return;
+        }
+        final byte[] bytes;
+        final Parcel parcel = Parcel.obtain();
+        try {
+            final Bundle bundle = new Bundle();
+            if (mWebView.saveState(bundle) == null) {
+                return;
+            }
+            parcel.writeBundle(bundle);
+            bytes = parcel.marshall();
+        } catch (RuntimeException e) {
+            Log.w(TAG, "saveHistoryState failed", e);
+            return;
+        } finally {
+            parcel.recycle();
+        }
+        mRendererRecovery.onStateSaved(bytes);
+        withNativePtr(ptr -> nativeOnStateSaved(ptr, bytes));
+    }
+
+    private boolean restoreHistoryState(byte[] state) {
+        if (mWebView == null || state == null || state.length == 0) {
+            return false;
+        }
+        final Parcel parcel = Parcel.obtain();
+        try {
+            parcel.unmarshall(state, 0, state.length);
+            parcel.setDataPosition(0);
+            final Bundle bundle = parcel.readBundle(MobileWebView.class.getClassLoader());
+            return bundle != null && mWebView.restoreState(bundle) != null;
+        } catch (RuntimeException e) {
+            Log.w(TAG, "restoreHistoryState failed", e);
+            return false;
+        } finally {
+            parcel.recycle();
+        }
+    }
+
+    /**
      * Destroy WebView and cleanup
      */
     public void destroy() {
         mNativePtr = 0;  // zero out immediately so JNI callbacks are ignored
+        mRendererRecovery.onDestroyed();
         mDownloads.cancelAll();
         runOnMainThread(() -> {
+            stopReviveOnFocus();
             mBridgeInjector.clearDocumentStartScripts();
             if (mWebView != null) {
                 mProfileManager.flushCookiesIfPersistent(mOffTheRecord);
@@ -824,6 +1016,10 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         final String navUrl = url != null ? url : "";
         final boolean sameUrlReload = !navUrl.isEmpty() && navUrl.equals(mActiveNavigationUrl);
         mActiveNavigationUrl = navUrl;
+        mRendererRecovery.onUrl(navUrl);
+        if (mMediaPlayback.reset()) {
+            withNativePtr(ptr -> nativeOnMediaPlaybackChanged(ptr, false));
+        }
         mBridgeInjector.resetForNavigation(sameUrlReload);
         withNativePtr(ptr -> nativeOnNavigationStarted(ptr, navUrl));
     }
@@ -846,6 +1042,86 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
     public void onNavigationLifecycle(WebView view, String url, boolean warnIfBridgeMissing,
                                       ScriptInjectionPhase injectionPhase) {
         handleNavigationLifecycle(view, url, warnIfBridgeMissing, injectionPhase);
+    }
+
+    /**
+     * The renderer died (crash or low-memory kill). The WebView cannot be used
+     * again: drop it, keep this object (and its Downloads), and revive it the
+     * next time it is shown, loaded or reloaded. A killed renderer under a
+     * shown WebView revives as soon as its window is in front again; a crashed
+     * one stays down until the host reloads it, so a page that crashes its
+     * renderer never reloads in a loop. Returning true keeps the app.
+     */
+    @Override
+    public boolean onRenderProcessGone(WebView view, boolean crashed) {
+        if (view != mWebView) {
+            return true;
+        }
+        // The navigation entries live in this process, so the history is still readable.
+        saveHistoryState();
+        final boolean autoRevive = mRendererRecovery.shouldAutoRevive(crashed, mShown);
+        Log.w(TAG, "Renderer gone (crashed=" + crashed + ", autoRevive=" + autoRevive
+                + ", history=" + (mRendererRecovery.state() != null ? mRendererRecovery.state().length : 0)
+                + " bytes); WebView dropped until needed again");
+        mBridgeInjector.clearDocumentStartScripts();
+        ViewParent parent = view.getParent();
+        if (parent instanceof ViewGroup) {
+            mViewIndex = ((ViewGroup) parent).indexOfChild(view);
+            ((ViewGroup) parent).removeView(view);
+        }
+        view.destroy();
+        mWebView = null;
+        mCurrentFindQuery = null;
+        if (mOffTheRecord) {
+            mProfileManager.destroyProfile(mActiveProfileName, true);
+            mActiveProfileName = null;
+        }
+        mMediaPlayback.reset();
+        mRendererRecovery.onGone();
+        final boolean willRevive = !mShown || autoRevive;
+        withNativePtr(ptr -> nativeOnRenderProcessGone(ptr, crashed, willRevive));
+        if (autoRevive) {
+            reviveWhenWindowFocused();
+        }
+        return true;
+    }
+
+    private void reviveWhenWindowFocused() {
+        if (mRootView == null) {
+            return;
+        }
+        mRendererRecovery.scheduleAutoRevive();
+        if (mRootView.hasWindowFocus()) {
+            mMainHandler.post(this::autoRevive);
+            return;
+        }
+        stopReviveOnFocus();
+        mReviveOnFocus = hasFocus -> {
+            if (!hasFocus) {
+                return;
+            }
+            stopReviveOnFocus();
+            autoRevive();
+        };
+        mRootView.getViewTreeObserver().addOnWindowFocusChangeListener(mReviveOnFocus);
+    }
+
+    private void autoRevive() {
+        if (!mRendererRecovery.takeScheduledAutoRevive()) {
+            return;
+        }
+        if (mShown && reviveIfRendererGone(true)) {
+            mRendererRecovery.onAutoRevived();
+        }
+    }
+
+    private void stopReviveOnFocus() {
+        if (mReviveOnFocus == null || mRootView == null) {
+            return;
+        }
+        // Removal inside the callback itself is allowed (the observer copies its listeners).
+        mRootView.getViewTreeObserver().removeOnWindowFocusChangeListener(mReviveOnFocus);
+        mReviveOnFocus = null;
     }
 
     @Override
@@ -882,6 +1158,16 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
         withNativePtr(ptr -> nativeOnWebMessageReceived(ptr, message, origin, false));
     }
 
+    @Override
+    public void onMediaPlaybackChanged(String documentId, boolean playing) {
+        mMainHandler.post(() -> {
+            if (mMediaPlayback.report(documentId, playing)) {
+                final boolean now = mMediaPlayback.isPlaying();
+                withNativePtr(ptr -> nativeOnMediaPlaybackChanged(ptr, now));
+            }
+        });
+    }
+
     // --- BridgeInjectorHost ---
 
     @Override
@@ -893,6 +1179,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
                 mBootstrapPageScript,
                 mBootstrapBridgeScript,
                 mInlineDownloadScript,
+                mMediaPlaybackScript,
                 new ArrayList<>(mAllowedOrigins));
         }
     }
@@ -1062,4 +1349,7 @@ public class MobileWebView implements ChromeHost, NavigationHost, NativeBridgeHo
                                                  boolean ok, String error);
     private native void nativeOnLinkLongPressed(long nativePtr, String linkUrl, String imageUrl,
                                                 float x, float y);
+    private native void nativeOnRenderProcessGone(long nativePtr, boolean crashed, boolean willRevive);
+    private native void nativeOnMediaPlaybackChanged(long nativePtr, boolean playing);
+    private native void nativeOnStateSaved(long nativePtr, byte[] state);
 }

@@ -7,4 +7,6 @@ interface NativeBridgeHost {
     String currentMainFrameOrigin();
     List<String> allowedOriginsSnapshot();
     void onWebMessage(String message, String origin);
+    /** JavaBridge thread. */
+    void onMediaPlaybackChanged(String documentId, boolean playing);
 }

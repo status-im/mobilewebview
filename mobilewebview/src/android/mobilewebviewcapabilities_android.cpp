@@ -3,6 +3,7 @@
 #if defined(Q_OS_ANDROID)
 
 #include <QJniEnvironment>
+#include <android/api-level.h>
 
 bool MobileWebViewCapabilities::isFindSupported()
 {
@@ -57,6 +58,22 @@ bool MobileWebViewCapabilities::isInPageMediaPlaybackSupported()
     // page across the whole range this library supports (WebView 113+), so
     // there is no runtime gate to apply.
     return true;
+}
+
+bool MobileWebViewCapabilities::isPlayingAudioSupported()
+{
+    return true;
+}
+
+bool MobileWebViewCapabilities::isStateRestoreSupported()
+{
+    return true;
+}
+
+bool MobileWebViewCapabilities::isTerminateRendererSupported()
+{
+    // WebViewRenderProcess.terminate() is API 29.
+    return android_get_device_api_level() >= 29;
 }
 
 #endif // Q_OS_ANDROID

@@ -5,7 +5,8 @@ import android.webkit.CookieManager;
 import android.webkit.WebView;
 
 import java.lang.reflect.Method;
-import java.util.Set;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.UUID;
 
 /**
@@ -17,6 +18,20 @@ final class WebViewProfileManager {
     private static final String MULTI_PROFILE = "MULTI_PROFILE";
     private static final String INCOGNITO_PREFIX = "Incognito_";
     private static volatile boolean sSweepDone = false;
+    private static final int MAX_DELETE_ATTEMPTS = 5;
+    private static final long DELETE_RETRY_MS = 1000;
+
+    /** Runs a delayed task on the main thread; replaceable for tests. */
+    interface RetryScheduler {
+        void postDelayed(Runnable task, long delayMs);
+    }
+
+    private static RetryScheduler sRetryScheduler = (task, delayMs) ->
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(task, delayMs);
+
+    static void setRetryScheduler(RetryScheduler scheduler) {
+        sRetryScheduler = scheduler;
+    }
 
     static void ensureOrphanIncognitoProfilesSwept() {
         if (sSweepDone) {
@@ -36,12 +51,13 @@ final class WebViewProfileManager {
                 return;
             }
             Method getAll = store.getClass().getMethod("getAllProfileNames");
+            // androidx.webkit returns a List.
             Object namesObj = getAll.invoke(store);
-            if (!(namesObj instanceof Set)) {
+            if (!(namesObj instanceof Collection)) {
                 return;
             }
             @SuppressWarnings("unchecked")
-            Set<String> names = (Set<String>) namesObj;
+            Collection<String> names = new ArrayList<>((Collection<String>) namesObj);
             for (String name : names) {
                 if (name != null && name.startsWith(INCOGNITO_PREFIX)) {
                     deleteProfile(name);
@@ -92,11 +108,71 @@ final class WebViewProfileManager {
         }
     }
 
+    /** What a data clear acts on; skip when its profile is gone with its view. */
+    static final class ClearTarget {
+        final boolean skip;
+        final androidx.webkit.Profile profile;
+
+        ClearTarget(boolean skip, androidx.webkit.Profile profile) {
+            this.skip = skip;
+            this.profile = profile;
+        }
+    }
+
+    /**
+     * The live view's profile; while the view is gone (renderer loss), its
+     * named profile, never the process default; an incognito profile dies with
+     * its view, so there is nothing left to clear. Null profile = the default.
+     */
+    ClearTarget clearTarget(WebView webView, String profileName, boolean offTheRecord) {
+        if (!isMultiProfileSupported()) {
+            return new ClearTarget(false, null);
+        }
+        try {
+            if (webView != null) {
+                Class<?> compatClass = Class.forName("androidx.webkit.WebViewCompat");
+                Object profile = compatClass.getMethod("getProfile", WebView.class).invoke(null, webView);
+                return new ClearTarget(false,
+                        profile instanceof androidx.webkit.Profile ? (androidx.webkit.Profile) profile : null);
+            }
+            if (offTheRecord) {
+                return new ClearTarget(true, null);
+            }
+            if (profileName == null) {
+                return new ClearTarget(false, null);
+            }
+            Object store = getProfileStore();
+            Object profile = store != null
+                    ? store.getClass().getMethod("getProfile", String.class).invoke(store, profileName)
+                    : null;
+            if (profile instanceof androidx.webkit.Profile) {
+                return new ClearTarget(false, (androidx.webkit.Profile) profile);
+            }
+            return new ClearTarget(true, null);
+        } catch (ReflectiveOperationException e) {
+            Log.e(TAG, "clearTarget failed", e);
+            return new ClearTarget(webView == null, null);
+        }
+    }
+
+    /**
+     * Deletes an incognito profile. WebView releases a destroyed view's profile
+     * only later, so a delete refused while it is still in use is retried; one
+     * never released is left to the next process's sweep.
+     */
     void destroyProfile(String profileName, boolean offTheRecord) {
         if (profileName == null || !offTheRecord) {
             return;
         }
-        deleteProfile(profileName);
+        deleteWhenReleased(profileName, 1);
+    }
+
+    private static void deleteWhenReleased(String profileName, int attempt) {
+        if (deleteProfile(profileName) || attempt >= MAX_DELETE_ATTEMPTS) {
+            return;
+        }
+        sRetryScheduler.postDelayed(() -> deleteWhenReleased(profileName, attempt + 1),
+                DELETE_RETRY_MS * attempt);
     }
 
     void flushCookiesIfPersistent(boolean offTheRecord) {
@@ -127,16 +203,22 @@ final class WebViewProfileManager {
         return getInstance.invoke(null);
     }
 
-    private static void deleteProfile(String profileName) {
+    /** False while WebView still holds the profile ("Cannot delete in-use profile"). */
+    private static boolean deleteProfile(String profileName) {
         try {
             Object store = getProfileStore();
             if (store == null) {
-                return;
+                return true;
             }
             Method deleteProfile = store.getClass().getMethod("deleteProfile", String.class);
             deleteProfile.invoke(store, profileName);
+            return true;
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            Log.w(TAG, "deleteProfile deferred for " + profileName + ": " + e.getCause());
+            return false;
         } catch (ReflectiveOperationException e) {
             Log.w(TAG, "deleteProfile failed for " + profileName, e);
+            return true;
         }
     }
 }

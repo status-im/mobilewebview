@@ -44,6 +44,7 @@ class MobileWebViewBackend : public QQuickItem
     Q_PROPERTY(QString httpUserAgent READ httpUserAgent WRITE setHttpUserAgent NOTIFY httpUserAgentChanged)
     Q_PROPERTY(QString defaultHttpUserAgent READ defaultHttpUserAgent NOTIFY defaultHttpUserAgentChanged)
     Q_PROPERTY(bool clearing READ clearing NOTIFY clearingChanged)
+    Q_PROPERTY(bool playingAudio READ playingAudio NOTIFY playingAudioChanged)
 
 public:
     explicit MobileWebViewBackend(QQuickItem *parent = nullptr);
@@ -88,6 +89,32 @@ public:
     // What the engine sends with no override; empty until the platform reports it.
     QString defaultHttpUserAgent() const;
     bool clearing() const;
+    /// True while the page plays audible media (Android; false elsewhere; see
+    /// MobileWebViewCapabilities::isPlayingAudioSupported). Not seen: Web Audio
+    /// API output, media autoplaying inside a shadow root without play(), and
+    /// frames the script injection does not reach.
+    bool playingAudio() const;
+
+    /// The newest back/forward history of this view, opaque and valid only
+    /// inside this app process: never persist it. For an off-the-record view
+    /// it holds that view's private history, so keep it in memory only.
+    /// Empty until the platform has captured one (Android: on hide and when
+    /// the renderer dies; empty elsewhere, see isStateRestoreSupported).
+    Q_INVOKABLE QByteArray saveState() const;
+
+    /// Rebuilds the back/forward history from saveState() of another view and
+    /// loads its current entry. Called before the native view exists, it
+    /// replaces the initial URL load (the url stays the fallback). Ignored on
+    /// a view that already has history of its own, and where unsupported.
+    Q_INVOKABLE void restoreState(const QByteArray &state);
+
+    /// Ends the renderer process of this view (Android API 29+, no-op
+    /// elsewhere; see isTerminateRendererSupported), e.g. before the last view
+    /// of its storage profile goes. The renderer is shared by every view of
+    /// the same storage profile, in this process and any other host code
+    /// using WebView in it (all of them where WebView runs a single renderer):
+    /// each sees renderProcessGone(false, ...).
+    Q_INVOKABLE void terminateRenderer();
 
     /// Async native snapshot. On success, snapshotReady carries a stable
     /// image://mobilewebview-snapshot/<key> URL for this backend instance (Image.source).
@@ -219,6 +246,17 @@ signals:
     void httpUserAgentChanged();
     void defaultHttpUserAgentChanged();
     void clearingChanged();
+    void playingAudioChanged();
+
+    /// The page's renderer died (\a crashed false: killed by the system). The
+    /// native view is dropped and comes back, with its history, the next time
+    /// the item is shown, loaded or reloaded; meanwhile the other navigation
+    /// calls (back, forward, stop, find, JavaScript) do nothing. \a willRevive:
+    /// it comes back without the host: a hidden view on its next show, a view
+    /// the system killed while shown right away (once per user action). False
+    /// for a crash on screen, or a repeated kill before the user acted again:
+    /// only the host's load or reload brings it back. Android only.
+    void renderProcessGone(bool crashed, bool willRevive);
 
     void clearHttpCacheCompleted();
     void deleteAllCookiesCompleted();

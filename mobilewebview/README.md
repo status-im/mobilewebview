@@ -20,6 +20,19 @@ Cross-platform native WebView component for Qt/QML applications with WebChannel 
   statics — `isFindSupported()`, `hasNativeFindPanel()`, `isClearSiteDataSupported()` and
   `isInPageMediaPlaybackSupported()`, each mirrored as a property on both the singleton and
   `MobileWebViewBackend`
+- Renderer loss survives the app (Android): a dead renderer drops only its WebView, and
+  `renderProcessGone(crashed, willRevive)` tells the host. The view comes back with its history when shown
+  again; a system kill under a shown view comes back at once, once per user action; a crash on screen waits
+  for the host's reload. Hidden WebViews leave their renderer's priority to the system
+- `terminateRenderer()` ends the renderer shared by every WebView of the same storage profile in the process
+  (all of them where WebView runs a single renderer), API 29+
+- Back/forward history hand-over between views of one app process: `saveState()` / `restoreState()` (Android).
+  The bytes are in-memory only, never to be persisted; for an off-the-record view they hold its private
+  history
+- `playingAudio`: whether the page plays audible media (Android). Web Audio and media autoplaying inside a
+  shadow root without `play()` are not seen
+- Capabilities for the above: `isPlayingAudioSupported()`, `isStateRestoreSupported()`,
+  `isTerminateRendererSupported()`
 
 ## Usage
 

@@ -72,6 +72,12 @@ public:
     void reloadAndBypassCacheImpl() override { ++reloadAndBypassCacheCalls; }
     void stopImpl() override { ++stopCalls; }
     void clearHistoryImpl() override { ++clearHistoryCalls; }
+    void terminateRendererImpl() override { ++terminateRendererCalls; }
+    void restoreStateImpl(const QByteArray &state) override
+    {
+        ++restoreStateCalls;
+        lastRestoredState = state;
+    }
     void clearHttpCacheImpl(std::function<void()> completion) override
     {
         ++clearHttpCacheCalls;
@@ -220,6 +226,9 @@ public:
     int reloadAndBypassCacheCalls = 0;
     int stopCalls = 0;
     int clearHistoryCalls = 0;
+    int restoreStateCalls = 0;
+    int terminateRendererCalls = 0;
+    QByteArray lastRestoredState;
     int clearHttpCacheCalls = 0;
     int deleteAllCookiesCalls = 0;
     int clearDomStorageCalls = 0;
@@ -338,6 +347,13 @@ private slots:
     void findCapabilitiesAreReadableWithoutABackend();
     void clearSiteDataSupportedReflectsPlatformImpl();
     void clearSiteDataSupportedIsReadableWithoutABackend();
+    void restoreStateBeforeSetupReplacesInitialLoad();
+    void restoreStateOnLiveViewAppliesNow();
+    void saveStateReturnsNewestState();
+    void renderProcessGoneEmitsAndEndsPageActivity();
+    void playingAudioNotifiesOnChangeOnly();
+    void terminateRendererReachesThePlatform();
+    void dropCapabilitiesAreReadableWithoutABackend();
 };
 
 void MobileWebViewBackendCommonTest::forwardsCallsAndStateChanges()
@@ -1765,6 +1781,121 @@ void MobileWebViewBackendCommonTest::clearSiteDataSupportedIsReadableWithoutABac
     MobileWebViewCapabilities capabilities;
     QCOMPARE(capabilities.clearSiteDataSupported(), supported);
     QCOMPARE(capabilities.property("clearSiteDataSupported").toBool(), supported);
+}
+
+void MobileWebViewBackendCommonTest::restoreStateBeforeSetupReplacesInitialLoad()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d != nullptr);
+
+    backend.setUrl(QUrl(QStringLiteral("https://example.com/b")));
+    backend.restoreState(QByteArrayLiteral("history"));
+    QCOMPARE(d->restoreStateCalls, 0);
+
+    const int loadsBefore = d->loadUrlCalls;
+    d->loadInitialContent();
+    QCOMPARE(d->restoreStateCalls, 1);
+    QCOMPARE(d->lastRestoredState, QByteArrayLiteral("history"));
+    QCOMPARE(d->loadUrlCalls, loadsBefore);
+
+    // Restored once; a later rebuild loads the url again.
+    d->loadInitialContent();
+    QCOMPARE(d->restoreStateCalls, 1);
+    QCOMPARE(d->loadUrlCalls, loadsBefore + 1);
+}
+
+void MobileWebViewBackendCommonTest::restoreStateOnLiveViewAppliesNow()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d != nullptr);
+    d->m_nativeViewSetup = true;
+
+    backend.restoreState(QByteArray());
+    QCOMPARE(d->restoreStateCalls, 0);
+
+    backend.restoreState(QByteArrayLiteral("history"));
+    QCOMPARE(d->restoreStateCalls, 1);
+}
+
+void MobileWebViewBackendCommonTest::saveStateReturnsNewestState()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d != nullptr);
+
+    QVERIFY(backend.saveState().isEmpty());
+
+    d->setSavedState(QByteArrayLiteral("captured"));
+    QCOMPARE(backend.saveState(), QByteArrayLiteral("captured"));
+
+    // Handed on before the platform captured anything of its own.
+    backend.restoreState(QByteArrayLiteral("restored"));
+    QCOMPARE(backend.saveState(), QByteArrayLiteral("restored"));
+}
+
+void MobileWebViewBackendCommonTest::renderProcessGoneEmitsAndEndsPageActivity()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d != nullptr);
+    QSignalSpy goneSpy(&backend, &MobileWebViewBackend::renderProcessGone);
+
+    d->setLoading(true);
+    d->setPlayingAudio(true);
+    d->notifyRenderProcessGone(true, false);
+
+    QCOMPARE(goneSpy.count(), 1);
+    QCOMPARE(goneSpy.at(0).at(0).toBool(), true);
+    QCOMPARE(goneSpy.at(0).at(1).toBool(), false);
+    QVERIFY(!backend.loading());
+    QVERIFY(!backend.playingAudio());
+}
+
+void MobileWebViewBackendCommonTest::playingAudioNotifiesOnChangeOnly()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d != nullptr);
+    QSignalSpy spy(&backend, &MobileWebViewBackend::playingAudioChanged);
+
+    QVERIFY(!backend.playingAudio());
+    d->setPlayingAudio(true);
+    d->setPlayingAudio(true);
+    QVERIFY(backend.playingAudio());
+    d->setPlayingAudio(false);
+    QCOMPARE(spy.count(), 2);
+}
+
+void MobileWebViewBackendCommonTest::terminateRendererReachesThePlatform()
+{
+    g_lastCreatedPrivate = nullptr;
+    MobileWebViewBackend backend;
+    auto *d = g_lastCreatedPrivate;
+    QVERIFY(d != nullptr);
+
+    backend.terminateRenderer();
+
+    QCOMPARE(d->terminateRendererCalls, 1);
+}
+
+// Darwin wires none of them up; the answer must say so, not assume Android.
+void MobileWebViewBackendCommonTest::dropCapabilitiesAreReadableWithoutABackend()
+{
+    QVERIFY(!MobileWebViewCapabilities::isPlayingAudioSupported());
+    QVERIFY(!MobileWebViewCapabilities::isStateRestoreSupported());
+    QVERIFY(!MobileWebViewCapabilities::isTerminateRendererSupported());
+
+    MobileWebViewCapabilities capabilities;
+    QCOMPARE(capabilities.property("playingAudioSupported").toBool(), false);
+    QCOMPARE(capabilities.property("stateRestoreSupported").toBool(), false);
+    QCOMPARE(capabilities.property("terminateRendererSupported").toBool(), false);
 }
 
 QTEST_MAIN(MobileWebViewBackendCommonTest)
