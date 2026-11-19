@@ -43,7 +43,7 @@ public final class BridgeScriptInjectorTest {
 
     private static void injectOnceSkipsWhenBridgeNotInstalled() {
         FakeBridgeInjectorHost host = hostWithWebView();
-        host.state = new BridgeState(false, Collections.emptyList(), "", "", "", Collections.emptyList());
+        host.state = new BridgeState(false, Collections.emptyList(), "", "", "", "", Collections.emptyList());
         BridgeScriptInjector injector = new BridgeScriptInjector(host);
 
         injector.injectOnce(ScriptInjectionPhase.ON_PAGE_STARTED);
@@ -115,7 +115,7 @@ public final class BridgeScriptInjectorTest {
 
     private static void configureInjectionModeBridgeNotInstalled() {
         FakeBridgeInjectorHost host = hostWithWebView();
-        host.state = new BridgeState(false, Collections.emptyList(), "", "", "", Collections.emptyList());
+        host.state = new BridgeState(false, Collections.emptyList(), "", "", "", "", Collections.emptyList());
         BridgeScriptInjector injector = new BridgeScriptInjector(host);
         injector.configureInjectionMode();
         TestAssert.assertEquals(0, host.webView.evaluatedScripts().size());
@@ -206,6 +206,7 @@ public final class BridgeScriptInjectorTest {
             null,
             "",
             "",
+            "",
             Arrays.asList("https://app.example", "https://other.example"));
         BridgeScriptInjector injector = new BridgeScriptInjector(host);
 
@@ -219,6 +220,7 @@ public final class BridgeScriptInjectorTest {
             TestAssert.assertFalse(script.contains("bootstrapPage"));
             TestAssert.assertFalse(script.contains("bootstrapBridge"));
             TestAssert.assertFalse(script.contains("inlineDownload"));
+            TestAssert.assertFalse(script.contains("mediaPlayback"));
         }
     }
 
@@ -253,6 +255,7 @@ public final class BridgeScriptInjectorTest {
             "window.bootstrapPage=true;",
             "window.bootstrapBridge=true;",
             "window.inlineDownload=true;",
+            "window.mediaPlayback=true;",
             Arrays.asList("https://app.example"));
         BridgeScriptInjector injector = new BridgeScriptInjector(host);
 
@@ -269,8 +272,8 @@ public final class BridgeScriptInjectorTest {
             }
         }
         TestAssert.assertEquals(2, userScriptEvals);
-        // page + bridge + inline download + 2 user scripts + load marker
-        TestAssert.assertEquals(6, scripts.size());
+        // page + bridge + inline download + media playback + 2 user scripts + load marker
+        TestAssert.assertEquals(7, scripts.size());
     }
 
     private static void documentStartRegistrationIncludesMarker() throws Exception {
@@ -288,13 +291,14 @@ public final class BridgeScriptInjectorTest {
             }
         }
         TestAssert.assertTrue(hasMarker);
+        TestAssert.assertTrue(scripts.contains("window.mediaPlayback=true;"));
 
         Field handlersField = BridgeScriptInjector.class.getDeclaredField("mDocumentStartScriptHandlers");
         handlersField.setAccessible(true);
         @SuppressWarnings("unchecked")
         List<Object> handlers = (List<Object>) handlersField.get(injector);
-        // page + bridge + inline download + user script + load marker
-        TestAssert.assertEquals(5, handlers.size());
+        // page + bridge + inline download + media playback + user script + load marker
+        TestAssert.assertEquals(6, handlers.size());
     }
 
     private static void injectNullWebViewDoesNotFlipInjectedFlag() throws Exception {

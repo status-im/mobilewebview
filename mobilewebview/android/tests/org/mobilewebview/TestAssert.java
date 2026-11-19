@@ -15,6 +15,12 @@ final class TestAssert {
         }
     }
 
+    static void assertFalse(String message, boolean value) {
+        if (value) {
+            throw new AssertionError(message);
+        }
+    }
+
     static void assertFalse(boolean value) {
         if (value) {
             throw new AssertionError("Expected false");

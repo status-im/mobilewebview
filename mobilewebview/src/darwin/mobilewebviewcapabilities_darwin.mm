@@ -53,4 +53,16 @@ bool MobileWebViewCapabilities::isInPageMediaPlaybackSupported()
 #endif
 }
 
+// WKWebView runs its content out of process and the library wires none of
+// these up on Darwin.
+bool MobileWebViewCapabilities::isPlayingAudioSupported()
+{
+    return false;
+}
+
+bool MobileWebViewCapabilities::isStateRestoreSupported()
+{
+    return false;
+}
+
 #endif // Q_OS_MACOS || Q_OS_IOS

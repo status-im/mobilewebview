@@ -12,6 +12,7 @@
 #include "inlinedownloadmessage.h"
 
 #include <QUuid>
+#include <utility>
 #include <QDebug>
 #include <QFileInfo>
 #include <QMutex>
@@ -1096,6 +1097,68 @@ bool MobileWebViewBackend::clearing() const
 {
     Q_D(const MobileWebViewBackend);
     return d->m_pendingClears > 0;
+}
+
+bool MobileWebViewBackend::playingAudio() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_playingAudio;
+}
+
+QByteArray MobileWebViewBackend::saveState() const
+{
+    Q_D(const MobileWebViewBackend);
+    return d->m_savedState;
+}
+
+void MobileWebViewBackend::restoreState(const QByteArray &state)
+{
+    Q_D(MobileWebViewBackend);
+    if (state.isEmpty())
+        return;
+
+    d->m_savedState = state;
+    if (!d->m_nativeViewSetup) {
+        d->m_pendingRestoreState = state;
+        return;
+    }
+    d->ensureBridgeInstalled();
+    d->restoreStateImpl(state);
+}
+
+void MobileWebViewBackendPrivate::setPlayingAudio(bool playing)
+{
+    if (m_playingAudio == playing)
+        return;
+    m_playingAudio = playing;
+    emit q_ptr->playingAudioChanged();
+}
+
+void MobileWebViewBackendPrivate::setSavedState(const QByteArray &state)
+{
+    if (!state.isEmpty())
+        m_savedState = state;
+}
+
+void MobileWebViewBackendPrivate::notifyRenderProcessGone(bool crashed, bool willRevive)
+{
+    setLoading(false);
+    setPlayingAudio(false);
+    emit q_ptr->renderProcessGone(crashed, willRevive);
+}
+
+void MobileWebViewBackendPrivate::loadInitialContent()
+{
+    if (!m_pendingRestoreState.isEmpty()) {
+        const QByteArray state = std::exchange(m_pendingRestoreState, QByteArray());
+        restoreStateImpl(state);
+    } else if (m_hasLastHtml) {
+        loadHtmlImpl(m_lastHtml, m_lastHtmlBaseUrl);
+    } else if (m_hasLastFileUrl) {
+        loadFileUrlImpl(m_lastFileUrl, m_lastFileReadAccessUrl);
+    } else if (m_url.isValid() && !m_url.isEmpty()) {
+        loadUrlImpl(m_url);
+    }
 }
 
 void MobileWebViewBackend::setFreeze(bool freeze)

@@ -15,6 +15,7 @@ final class FakeBridgeInjectorHost implements BridgeInjectorHost {
         "window.bootstrapPage=true;",
         "window.bootstrapBridge=true;",
         "window.inlineDownload=true;",
+        "window.mediaPlayback=true;",
         Arrays.asList("https://app.example", "https://other.example"));
 
     @Override

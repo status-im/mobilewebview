@@ -80,6 +80,7 @@ public:
     void cancelDownloadImpl(quint64 downloadId) override;
     void pauseDownloadImpl(quint64 downloadId) override;
     void resumeDownloadImpl(quint64 downloadId) override;
+    void restoreStateImpl(const QByteArray &state) override;
 
     // JNI helper methods
     void cleanupJni();
@@ -145,6 +146,7 @@ private:
     jmethodID m_cancelDownloadMethod = nullptr;
     jmethodID m_pauseDownloadMethod = nullptr;
     jmethodID m_resumeDownloadMethod = nullptr;
+    jmethodID m_restoreStateMethod = nullptr;
 
     bool m_jniInitialized = false;
     QMutex m_jniMutex;  // Protect JNI calls
@@ -301,6 +303,7 @@ bool AndroidWebViewPrivate::initNativeView()
     m_cancelDownloadMethod = env->GetMethodID(m_webViewClass, "cancelDownload", "(J)V");
     m_pauseDownloadMethod = env->GetMethodID(m_webViewClass, "pauseDownload", "(J)V");
     m_resumeDownloadMethod = env->GetMethodID(m_webViewClass, "resumeDownload", "(J)V");
+    m_restoreStateMethod = env->GetMethodID(m_webViewClass, "restoreState", "([BLjava/lang/String;)V");
 
     m_jniInitialized = true;
 
@@ -816,6 +819,15 @@ bool AndroidWebViewPrivate::installBridgeImpl(const QString &ns, const QStringLi
         qWarning() << "AndroidWebViewPrivate: Failed to load inline_download_interceptor.js";
     }
 
+    QFile mediaPlaybackFile(QStringLiteral(":/CustomWebView/js/media_playback_watcher.js"));
+    QString mediaPlaybackScript;
+    if (mediaPlaybackFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        mediaPlaybackScript = QString::fromUtf8(mediaPlaybackFile.readAll());
+        mediaPlaybackFile.close();
+    } else {
+        qWarning() << "AndroidWebViewPrivate: Failed to load media_playback_watcher.js";
+    }
+
     // Load user scripts content
     QStringList scriptContents;
     for (const QVariant &scriptVariant : m_userScripts) {
@@ -869,16 +881,17 @@ bool AndroidWebViewPrivate::installBridgeImpl(const QString &ns, const QStringLi
     jstring jBootstrapPage = env->NewStringUTF(bootstrapPageScript.toUtf8().constData());
     jstring jBootstrapBridge = env->NewStringUTF(bootstrapBridgeScript.toUtf8().constData());
     jstring jInlineDownload = env->NewStringUTF(inlineDownloadScript.toUtf8().constData());
+    jstring jMediaPlayback = env->NewStringUTF(mediaPlaybackScript.toUtf8().constData());
 
     jmethodID installMethod = env->GetMethodID(m_webViewClass, "installMessageBridge",
         "(Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;"
-        "Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
+        "Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
     
     bool success = false;
     if (installMethod) {
         env->CallVoidMethod(m_webViewObject, installMethod, jNamespace, 
                            jAllowedOrigins, jInvokeKey, jUserScripts,
-                           jBootstrapPage, jBootstrapBridge, jInlineDownload);
+                           jBootstrapPage, jBootstrapBridge, jInlineDownload, jMediaPlayback);
         success = true;
     }
 
@@ -887,6 +900,7 @@ bool AndroidWebViewPrivate::installBridgeImpl(const QString &ns, const QStringLi
     env->DeleteLocalRef(jBootstrapPage);
     env->DeleteLocalRef(jBootstrapBridge);
     env->DeleteLocalRef(jInlineDownload);
+    env->DeleteLocalRef(jMediaPlayback);
     env->DeleteLocalRef(jAllowedOrigins);
     env->DeleteLocalRef(jUserScripts);
 
@@ -942,13 +956,7 @@ void AndroidWebViewPrivate::setupNativeViewImpl()
 
     if (createdNow) {
         ensureBridgeInstalled();
-        if (m_hasLastHtml) {
-            loadHtmlImpl(m_lastHtml, m_lastHtmlBaseUrl);
-        } else if (m_hasLastFileUrl) {
-            loadFileUrlImpl(m_lastFileUrl, m_lastFileReadAccessUrl);
-        } else if (m_url.isValid() && !m_url.isEmpty()) {
-            loadUrlImpl(m_url);
-        }
+        loadInitialContent();
     }
 }
 
@@ -1337,6 +1345,33 @@ void AndroidWebViewPrivate::onFaviconReceived(const QString &faviconUrl)
     setFavicon(faviconUrl);
 }
 
+void AndroidWebViewPrivate::restoreStateImpl(const QByteArray &state)
+{
+    QMutexLocker locker(&m_jniMutex);
+    if (!m_jniInitialized) {
+        return;
+    }
+
+    QJniEnvironment env;
+    if (!env.isValid() || !m_webViewObject || !m_restoreStateMethod) {
+        return;
+    }
+
+    jbyteArray jState = env->NewByteArray(state.size());
+    if (!jState) {
+        clearJniExceptionIfAny(env);
+        return;
+    }
+    env->SetByteArrayRegion(jState, 0, state.size(),
+                            reinterpret_cast<const jbyte *>(state.constData()));
+    jstring jFallbackUrl = env->NewStringUTF(m_url.toString().toUtf8().constData());
+    env->CallVoidMethod(m_webViewObject, m_restoreStateMethod, jState, jFallbackUrl);
+    env->DeleteLocalRef(jState);
+    env->DeleteLocalRef(jFallbackUrl);
+
+    clearJniExceptionIfAny(env);
+}
+
 // =============================================================================
 // Factory function for Android
 // =============================================================================
@@ -1684,6 +1719,42 @@ Java_org_mobilewebview_MobileWebView_nativeOnDownloadFinished(JNIEnv *env, jobje
     const bool success = ok == JNI_TRUE;
     dispatchToBackend(nativePtr, [id, success, qError](AndroidWebViewPrivate *backend) {
         backend->onDownloadFinished(id, success, qError);
+    });
+}
+
+JNIEXPORT void JNICALL
+Java_org_mobilewebview_MobileWebView_nativeOnRenderProcessGone(JNIEnv *, jobject,
+        jlong nativePtr, jboolean crashed, jboolean willRevive)
+{
+    const bool didCrash = crashed == JNI_TRUE;
+    const bool revives = willRevive == JNI_TRUE;
+    dispatchToBackend(nativePtr, [didCrash, revives](AndroidWebViewPrivate *backend) {
+        backend->notifyRenderProcessGone(didCrash, revives);
+    });
+}
+
+JNIEXPORT void JNICALL
+Java_org_mobilewebview_MobileWebView_nativeOnMediaPlaybackChanged(JNIEnv *, jobject,
+        jlong nativePtr, jboolean playing)
+{
+    const bool isPlaying = playing == JNI_TRUE;
+    dispatchToBackend(nativePtr, [isPlaying](AndroidWebViewPrivate *backend) {
+        backend->setPlayingAudio(isPlaying);
+    });
+}
+
+JNIEXPORT void JNICALL
+Java_org_mobilewebview_MobileWebView_nativeOnStateSaved(JNIEnv *env, jobject,
+        jlong nativePtr, jbyteArray state)
+{
+    QByteArray bytes;
+    if (state) {
+        const jsize len = env->GetArrayLength(state);
+        bytes.resize(len);
+        env->GetByteArrayRegion(state, 0, len, reinterpret_cast<jbyte *>(bytes.data()));
+    }
+    dispatchToBackend(nativePtr, [bytes](AndroidWebViewPrivate *backend) {
+        backend->setSavedState(bytes);
     });
 }
 

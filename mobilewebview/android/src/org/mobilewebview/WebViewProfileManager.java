@@ -92,6 +92,53 @@ final class WebViewProfileManager {
         }
     }
 
+    /** What a data clear acts on; skip when its profile is gone with its view. */
+    static final class ClearTarget {
+        final boolean skip;
+        final androidx.webkit.Profile profile;
+
+        ClearTarget(boolean skip, androidx.webkit.Profile profile) {
+            this.skip = skip;
+            this.profile = profile;
+        }
+    }
+
+    /**
+     * The live view's profile; while the view is gone (renderer loss), its
+     * named profile, never the process default; an incognito profile dies with
+     * its view, so there is nothing left to clear. Null profile = the default.
+     */
+    ClearTarget clearTarget(WebView webView, String profileName, boolean offTheRecord) {
+        if (!isMultiProfileSupported()) {
+            return new ClearTarget(false, null);
+        }
+        try {
+            if (webView != null) {
+                Class<?> compatClass = Class.forName("androidx.webkit.WebViewCompat");
+                Object profile = compatClass.getMethod("getProfile", WebView.class).invoke(null, webView);
+                return new ClearTarget(false,
+                        profile instanceof androidx.webkit.Profile ? (androidx.webkit.Profile) profile : null);
+            }
+            if (offTheRecord) {
+                return new ClearTarget(true, null);
+            }
+            if (profileName == null) {
+                return new ClearTarget(false, null);
+            }
+            Object store = getProfileStore();
+            Object profile = store != null
+                    ? store.getClass().getMethod("getProfile", String.class).invoke(store, profileName)
+                    : null;
+            if (profile instanceof androidx.webkit.Profile) {
+                return new ClearTarget(false, (androidx.webkit.Profile) profile);
+            }
+            return new ClearTarget(true, null);
+        } catch (ReflectiveOperationException e) {
+            Log.e(TAG, "clearTarget failed", e);
+            return new ClearTarget(webView == null, null);
+        }
+    }
+
     void destroyProfile(String profileName, boolean offTheRecord) {
         if (profileName == null || !offTheRecord) {
             return;

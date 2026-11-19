@@ -59,4 +59,14 @@ bool MobileWebViewCapabilities::isInPageMediaPlaybackSupported()
     return true;
 }
 
+bool MobileWebViewCapabilities::isPlayingAudioSupported()
+{
+    return true;
+}
+
+bool MobileWebViewCapabilities::isStateRestoreSupported()
+{
+    return true;
+}
+
 #endif // Q_OS_ANDROID

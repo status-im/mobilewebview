@@ -118,6 +118,12 @@ public:
     virtual void loadFileUrlImpl(const QUrl &fileUrl, const QUrl &readAccessDirUrl);
 
     // =========================================================================
+    // Optional capability: back/forward history restore. Default: no-op. The
+    // platform reports captured history through setSavedState().
+    // =========================================================================
+    virtual void restoreStateImpl(const QByteArray &) {}
+
+    // =========================================================================
     // Optional capability: find-in-page. Defaults: unsupported, no-ops.
     // The two supported-ness overrides answer from MobileWebViewCapabilities,
     // so the instance properties and the static accessors cannot drift apart.
@@ -172,6 +178,15 @@ public:
     virtual void setZoomFactorImpl(qreal) {}
     virtual void setHttpUserAgentImpl(const QString &) {}
     void setDefaultHttpUserAgent(const QString &userAgent);
+
+    // Platform reports (Qt thread).
+    void setPlayingAudio(bool playing);
+    void setSavedState(const QByteArray &state);
+    void notifyRenderProcessGone(bool crashed, bool willRevive);
+
+    /// First content of a just-created native view: a pending restoreState(),
+    /// else the last html, local file or URL.
+    void loadInitialContent();
 
     // Called when platform snapshot is ready (Qt thread)
     void notifySnapshotReady(quint64 requestId, const QImage &image);
@@ -253,6 +268,9 @@ public:
     QUrl m_lastFileUrl;
     QUrl m_lastFileReadAccessUrl;
     QUrl m_url;
+    QByteArray m_savedState;
+    QByteArray m_pendingRestoreState;
+    bool m_playingAudio = false;
     QString m_title;
     bool m_canGoBack = false;
     bool m_canGoForward = false;

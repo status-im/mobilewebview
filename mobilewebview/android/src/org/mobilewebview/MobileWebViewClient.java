@@ -3,6 +3,7 @@ package org.mobilewebview;
 import android.net.Uri;
 import android.os.Build;
 import android.util.Log;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
@@ -45,6 +46,11 @@ final class MobileWebViewClient extends WebViewClient {
             Log.e(TAG, "onReceivedError: " + error.getDescription());
             mHost.onMainFrameError();
         }
+    }
+
+    @Override
+    public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+        return mHost.onRenderProcessGone(view, detail != null && detail.didCrash());
     }
 
     @SuppressWarnings("deprecation")

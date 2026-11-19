@@ -14,6 +14,10 @@ public final class WebViewProfileManagerTest {
         incognitoDestroyDeletesProfile();
         standardModeFlushesCookiesOnNavigationFinish();
         incognitoDoesNotFlushCookies();
+        clearsReachTheLiveViewsProfile();
+        clearsReachTheNamedProfileWhileTheViewIsGone();
+        clearsSkipAnIncognitoProfileGoneWithItsView();
+        clearsUseTheDefaultWithoutAProfile();
         System.out.println("WebViewProfileManagerTest passed");
     }
 
@@ -73,6 +77,47 @@ public final class WebViewProfileManagerTest {
         manager.flushCookiesIfPersistent(true);
 
         assertEquals(0, CookieManager.flushCount());
+    }
+
+    private static void clearsReachTheLiveViewsProfile() {
+        resetState();
+        WebViewProfileManager manager = new WebViewProfileManager();
+        WebView webView = new WebView(null);
+        manager.configureProfile(webView, "Profile_A", false);
+
+        WebViewProfileManager.ClearTarget target = manager.clearTarget(webView, "Profile_A", false);
+
+        assertFalse(target.skip);
+        assertEquals("Profile_A", target.profile.getName());
+    }
+
+    // The renderer is gone, the view with it: clears must not fall to the default profile.
+    private static void clearsReachTheNamedProfileWhileTheViewIsGone() {
+        resetState();
+        WebViewProfileManager manager = new WebViewProfileManager();
+        manager.configureProfile(new WebView(null), "Profile_A", false);
+
+        WebViewProfileManager.ClearTarget target = manager.clearTarget(null, "Profile_A", false);
+
+        assertFalse(target.skip);
+        assertEquals("Profile_A", target.profile.getName());
+    }
+
+    private static void clearsSkipAnIncognitoProfileGoneWithItsView() {
+        resetState();
+        WebViewProfileManager manager = new WebViewProfileManager();
+
+        assertTrue(manager.clearTarget(null, null, true).skip);
+    }
+
+    private static void clearsUseTheDefaultWithoutAProfile() {
+        resetState();
+        WebViewProfileManager manager = new WebViewProfileManager();
+
+        WebViewProfileManager.ClearTarget target = manager.clearTarget(null, null, false);
+
+        assertFalse(target.skip);
+        assertTrue(target.profile == null);
     }
 
     private static void resetState() {

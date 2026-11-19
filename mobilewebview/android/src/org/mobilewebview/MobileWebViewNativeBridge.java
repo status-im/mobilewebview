@@ -35,4 +35,17 @@ final class MobileWebViewNativeBridge {
 
         mHost.onWebMessage(message, origin);
     }
+
+    /**
+     * Called from every document's media_playback_watcher.js when it starts or
+     * stops playing audible media. Carries no page data, so any origin may
+     * report; the worst a page can do is keep its own view alive.
+     */
+    @JavascriptInterface
+    public void mediaPlaybackChanged(String documentId, boolean playing) {
+        if (mHost.nativePtr() == 0 || documentId == null || documentId.isEmpty()) {
+            return;
+        }
+        mHost.onMediaPlaybackChanged(documentId, playing);
+    }
 }

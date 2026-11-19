@@ -25,6 +25,8 @@ class MobileWebViewCapabilities : public QObject
     Q_PROPERTY(bool hasNativeFindPanel READ hasNativeFindPanel CONSTANT)
     Q_PROPERTY(bool clearSiteDataSupported READ clearSiteDataSupported CONSTANT)
     Q_PROPERTY(bool inPageMediaPlaybackSupported READ inPageMediaPlaybackSupported CONSTANT)
+    Q_PROPERTY(bool playingAudioSupported READ playingAudioSupported CONSTANT)
+    Q_PROPERTY(bool stateRestoreSupported READ stateRestoreSupported CONSTANT)
 
 public:
     explicit MobileWebViewCapabilities(QObject *parent = nullptr);
@@ -46,7 +48,15 @@ public:
     /// should hand the file to the OS instead.
     static bool isInPageMediaPlaybackSupported();
 
+    /// Does MobileWebViewBackend::playingAudio follow the page?
+    static bool isPlayingAudioSupported();
+
+    /// Do saveState()/restoreState() hand back/forward history over?
+    static bool isStateRestoreSupported();
+
     bool findSupported() const { return isFindSupported(); }
+    bool playingAudioSupported() const { return isPlayingAudioSupported(); }
+    bool stateRestoreSupported() const { return isStateRestoreSupported(); }
     bool clearSiteDataSupported() const { return isClearSiteDataSupported(); }
     bool inPageMediaPlaybackSupported() const { return isInPageMediaPlaybackSupported(); }
 };
