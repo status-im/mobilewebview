@@ -18,6 +18,8 @@ public final class WebViewProfileManagerTest {
         clearsReachTheNamedProfileWhileTheViewIsGone();
         clearsSkipAnIncognitoProfileGoneWithItsView();
         clearsUseTheDefaultWithoutAProfile();
+        anIncognitoProfileStillInUseIsDeletedOnceReleased();
+        anIncognitoProfileNeverReleasedIsLeftToTheSweep();
         System.out.println("WebViewProfileManagerTest passed");
     }
 
@@ -120,11 +122,60 @@ public final class WebViewProfileManagerTest {
         assertTrue(target.profile == null);
     }
 
+    // WebView releases a destroyed view's profile only later: the delete is retried.
+    private static void anIncognitoProfileStillInUseIsDeletedOnceReleased() {
+        resetState();
+        final java.util.List<Runnable> retries = new java.util.ArrayList<>();
+        WebViewProfileManager.setRetryScheduler((task, delayMs) -> retries.add(task));
+        WebViewProfileManager manager = new WebViewProfileManager();
+        String name = manager.configureProfile(new WebView(null), "Profile_A", true);
+        ProfileStore.setInUse(name, true);
+
+        manager.destroyProfile(name, true);
+        assertTrue(ProfileStore.getInstance().getAllProfileNames().contains(name));
+        assertTrue(retries.size() == 1);
+
+        ProfileStore.setInUse(name, false);
+        retries.remove(0).run();
+
+        assertFalse(ProfileStore.getInstance().getAllProfileNames().contains(name));
+        assertTrue(retries.isEmpty());
+    }
+
+    private static void anIncognitoProfileNeverReleasedIsLeftToTheSweep() {
+        resetState();
+        final java.util.List<Runnable> retries = new java.util.ArrayList<>();
+        WebViewProfileManager.setRetryScheduler((task, delayMs) -> retries.add(task));
+        WebViewProfileManager manager = new WebViewProfileManager();
+        String name = manager.configureProfile(new WebView(null), "Profile_A", true);
+        ProfileStore.setInUse(name, true);
+
+        manager.destroyProfile(name, true);
+        int runs = 0;
+        while (!retries.isEmpty() && runs < 100) {
+            retries.remove(0).run();
+            ++runs;
+        }
+
+        assertTrue("retries stop", runs < 100);
+        assertTrue(ProfileStore.getInstance().getAllProfileNames().contains(name));
+        ProfileStore.setInUse(name, false);
+        WebViewProfileManager.sweepOrphanedIncognitoProfiles();
+        assertFalse(ProfileStore.getInstance().getAllProfileNames().contains(name));
+    }
+
     private static void resetState() {
         ProfileStore.reset();
         WebViewCompat.reset();
         CookieManager.resetFlushCount();
         WebViewFeature.setMultiProfileSupported(true);
+        WebViewProfileManager.setRetryScheduler((task, delayMs) -> { });
+    }
+
+    private static void assertTrue(String message, boolean condition) {
+        if (!condition) {
+            throw new AssertionError(message);
+        }
     }
 
     private static void assertTrue(boolean condition) {

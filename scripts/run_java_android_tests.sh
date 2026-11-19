@@ -29,6 +29,8 @@ SOURCES=(
   "$JVM_SHADOW/android/content/ContentValues.java"
   "$JVM_SHADOW/android/media/MediaScannerConnection.java"
   "$JVM_SHADOW/android/os/Build.java"
+  "$JVM_SHADOW/android/os/Handler.java"
+  "$JVM_SHADOW/android/os/Looper.java"
   "$JVM_SHADOW/android/os/Environment.java"
   "$JVM_SHADOW/android/provider/MediaStore.java"
   "$ANDROID_SRC/WebViewProfileManager.java"
